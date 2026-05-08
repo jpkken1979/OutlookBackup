@@ -1,0 +1,71 @@
+name: Build Windows Installer v3.0
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build pywebview .exe + Installer (v3.0)
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate icon
+        run: |
+          if (-not (Test-Path "assets/icon.ico")) {
+            python build/generate_icon.py
+          }
+
+      - name: Build .exe with PyInstaller
+        run: pyinstaller build/pyinstaller.spec --clean --noconfirm
+
+      - name: Verify exe
+        run: |
+          if (-not (Test-Path "dist/UNS-Outlook-Backup.exe")) { exit 1 }
+          $size = (Get-Item "dist/UNS-Outlook-Backup.exe").Length / 1MB
+          Write-Host "OK: UNS-Outlook-Backup.exe ($([math]::Round($size, 2)) MB)"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" build/installer.iss'
+
+      - name: Upload portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: UNS-Outlook-Backup-v3.0-portable
+          path: dist/UNS-Outlook-Backup.exe
+          retention-days: 90
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: UNS-Outlook-Backup-v3.0-installer
+          path: dist/UNS-Outlook-Backup-Setup-*.exe
+          retention-days: 90
+
+      - name: Create release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: |
+            dist/UNS-Outlook-Backup.exe
+            dist/UNS-Outlook-Backup-Setup-*.exe

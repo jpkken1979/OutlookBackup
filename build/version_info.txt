@@ -1,0 +1,23 @@
+# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(3, 1, 0, 0),
+    prodvers=(3, 1, 0, 0),
+    mask=0x3f, flags=0x0, OS=0x40004,
+    fileType=0x1, subtype=0x0, date=(0, 0)
+    ),
+  kids=[
+    StringFileInfo([
+      StringTable(u'041104B0', [
+        StringStruct(u'CompanyName', u'\u30e6\u30cb\u30d0\u30fc\u30b5\u30eb\u4f01\u753b\u682a\u5f0f\u4f1a\u793e'),
+        StringStruct(u'FileDescription', u'UNS \u30e1\u30fc\u30eb\u30d0\u30c3\u30af\u30a2\u30c3\u30d7'),
+        StringStruct(u'FileVersion', u'3.1.0.0'),
+        StringStruct(u'InternalName', u'UNS-Outlook-Backup'),
+        StringStruct(u'LegalCopyright', u'\u00a9 2026 UNS-Kikaku'),
+        StringStruct(u'OriginalFilename', u'UNS-Outlook-Backup.exe'),
+        StringStruct(u'ProductName', u'UNS \u30e1\u30fc\u30eb\u30d0\u30c3\u30af\u30a2\u30c3\u30d7'),
+        StringStruct(u'ProductVersion', u'3.1.0.0')])
+      ]),
+    VarFileInfo([VarStruct(u'Translation', [1041, 1200])])
+  ]
+)
