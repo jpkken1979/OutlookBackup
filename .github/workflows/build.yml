@@ -11,6 +11,8 @@ jobs:
     name: Build pywebview .exe + Installer (v3.1)
     runs-on: windows-latest
     timeout-minutes: 25
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
