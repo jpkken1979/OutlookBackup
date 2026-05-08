@@ -1,4 +1,4 @@
-name: Build Windows Installer v3.0
+name: Build Windows Installer v3.1
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-windows:
-    name: Build pywebview .exe + Installer (v3.0)
+    name: Build pywebview .exe + Installer (v3.1)
     runs-on: windows-latest
     timeout-minutes: 25
 
@@ -50,14 +50,14 @@ jobs:
       - name: Upload portable
         uses: actions/upload-artifact@v4
         with:
-          name: UNS-Outlook-Backup-v3.0-portable
+          name: UNS-Outlook-Backup-v3.1-portable
           path: dist/UNS-Outlook-Backup.exe
           retention-days: 90
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: UNS-Outlook-Backup-v3.0-installer
+          name: UNS-Outlook-Backup-v3.1-installer
           path: dist/UNS-Outlook-Backup-Setup-*.exe
           retention-days: 90
 

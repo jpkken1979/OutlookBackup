@@ -1,7 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""UNS Outlook Backup v3.0 - PyInstaller spec (pywebview)"""
+"""UNS Outlook Backup v3.1 - PyInstaller spec (pywebview)"""
 
+import os
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+
+ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 
 block_cipher = None
 
@@ -24,16 +27,15 @@ hidden += [
     'account_inventory', 'cache_backup',
 ]
 
-# Datos: carpeta web entera
 datas = [
-    ('src/web', 'web'),
-    ('assets/*.ico', 'assets'),
+    (os.path.join(ROOT, 'src', 'web'), 'web'),
+    (os.path.join(ROOT, 'assets', '*.ico'), 'assets'),
 ]
 datas += collect_data_files('webview', include_py_files=False)
 
 a = Analysis(
-    ['src/main.py'],
-    pathex=['src'],
+    [os.path.join(ROOT, 'src', 'main.py')],
+    pathex=[os.path.join(ROOT, 'src')],
     binaries=[],
     datas=datas,
     hiddenimports=hidden,
@@ -74,6 +76,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/icon.ico',
-    version='build/version_info.txt',
+    icon=os.path.join(ROOT, 'assets', 'icon.ico'),
+    version=os.path.join(ROOT, 'build', 'version_info.txt'),
 )

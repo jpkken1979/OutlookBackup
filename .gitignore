@@ -35,3 +35,6 @@ Thumbs.db
 # OS
 *.tmp
 *.log
+
+# OMC cache
+.omc/
