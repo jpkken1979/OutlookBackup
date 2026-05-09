@@ -1,0 +1,148 @@
+{
+  "experimental": {
+    "modelContextProtocolServers": [
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "py",
+          "args": [
+            "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\mcp-server\\server.py"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "py",
+          "args": [
+            "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\agents-server.py"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "py",
+          "args": [
+            "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\skills-server.py"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "py",
+          "args": [
+            "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\observations-server.py"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "py",
+          "args": [
+            "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\intelligence-server.py"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "py",
+          "args": [
+            "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\ui-server.py"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "py",
+          "args": [
+            "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\memory-server.py"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "py",
+          "args": [
+            "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\watcher-server.py"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "py",
+          "args": [
+            "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\context-engine-server.py"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "cmd",
+          "args": [
+            "/c",
+            "npx",
+            "-y",
+            "stitch-mcp"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "cmd",
+          "args": [
+            "/c",
+            "npx",
+            "-y",
+            "@upstash/context7-mcp@latest"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "cmd",
+          "args": [
+            "/c",
+            "uvx",
+            "mcp-server-git"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "cmd",
+          "args": [
+            "/c",
+            "npx",
+            "-y",
+            "chrome-devtools-mcp@latest",
+            "--no-usage-statistics"
+          ]
+        }
+      },
+      {
+        "transport": {
+          "type": "stdio",
+          "command": "cmd",
+          "args": [
+            "/c",
+            "npx",
+            "-y",
+            "@modelcontextprotocol/server-filesystem",
+            "C:/Users/kenji/Github/Jpkken1979/uns-backup-app-v3.1"
+          ]
+        }
+      }
+    ]
+  }
+}

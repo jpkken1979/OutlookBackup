@@ -1,0 +1,7 @@
+# Aider configuration — Antigravity Ecosystem
+# https://aider.chat/docs/config/aider_conf.html
+read:
+  - RULES.md
+  - .antigravity/rules.md
+  - ESTADO_PROYECTO.md
+auto-commits: false

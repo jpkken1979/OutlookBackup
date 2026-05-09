@@ -1,0 +1,1 @@
+Get-ChildItem -Path 'C:\Users\kenji\Desktop','C:\Users\kenji\Pictures','C:\Users\kenji\OneDrive\Pictures' -Recurse -Include '*.png','*.jpg','*.jpeg','*.webp','*.gif' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object FullName, LastWriteTime, @{N='SizeMB';E={[math]::Round($_.Length/1MB,2)}} -First 20 | Format-Table -AutoSize
