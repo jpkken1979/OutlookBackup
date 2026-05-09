@@ -868,7 +868,7 @@ class API:
 
     def get_app_info(self) -> Dict:
         return {
-            "version": "3.1.0",
+            "version": "3.1.1",
             "company": "ユニバーサル企画株式会社",
             "company_short": "UNS-Kikaku",
         }
