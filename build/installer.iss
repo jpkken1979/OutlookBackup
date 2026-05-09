@@ -2,7 +2,7 @@
 
 #define MyAppName "UNS \u30e1\u30fc\u30eb\u30d0\u30c3\u30af\u30a2\u30c3\u30d7"
 #define MyAppNameASCII "UNS Outlook Backup"
-#define MyAppVersion "3.1.0"
+#define MyAppVersion "3.1.1"
 #define MyAppPublisher "\u30e6\u30cb\u30d0\u30fc\u30b5\u30eb\u4f01\u753b\u682a\u5f0f\u4f1a\u793e"
 #define MyAppURL "https://www.uns-kikaku.com"
 #define MyAppExeName "UNS-Outlook-Backup.exe"
