@@ -1,6 +1,6 @@
 # ESTADO DEL PROYECTO — uns-backup-app-v3.1
 
-> Última actualización: 2026-05-09
+> Última actualización: 2026-05-10
 
 ---
 
@@ -13,6 +13,27 @@
 ---
 
 ## Estado Operativo — Lo Real vs Lo Pendiente
+
+## Sesión 2026-05-10 — Release v3.1.1
+
+### Cambios realizados
+
+| Área | Estado |
+|---|---|
+| Release | **COMPLETADO** — v3.1.1 taggeado y pusheado |
+| Version | **ACTUALIZADO** — api.py e installer.iss a 3.1.1 |
+| Build | **COMPLETADO** — PyInstaller .exe (24.5 MB) |
+| Security | **AUDITADO** — escapeHtml en todos los pages |
+| Lazy loading | **VERIFICADO** — Ya implementado |
+
+### Resultado operativo
+
+- dist/UNS-Outlook-Backup.exe (24.5 MB) listo para distribución
+- Tag v3.1.1 en origin/main
+- 7 commits en la sesion
+- Build ejecutando en background completado exit 0
+
+---
 
 ## Sesión 2026-05-09 — Full Redesign UI/UX v3.1
 
