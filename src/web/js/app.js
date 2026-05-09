@@ -11,6 +11,7 @@ const App = {
     currentTab: 'backup',
     backupPolling: null,
     importPolling: null,
+    accountSettingsPolling: null,
 
     // Wait for pywebview to be ready
     async init() {
@@ -133,6 +134,9 @@ const App = {
         document.getElementById('btn-cache-folder').addEventListener('click', () => this.chooseCacheFolder());
         document.getElementById('btn-cache-backup').addEventListener('click', () => this.startCacheBackup());
         document.getElementById('btn-cache-cancel').addEventListener('click', () => this.cancelBackup());
+
+        // Account Settings tab
+        this.bindAccountSettings();
     },
 
     switchTab(tabName) {
@@ -142,6 +146,7 @@ const App = {
 
         if (tabName === 'history') this.loadHistory();
         if (tabName === 'auto') this.loadScheduleStatus();
+        if (tabName === 'accounts') this.loadAccountSettings();
     },
 
     // ===== Config persistence =====
@@ -1059,6 +1064,126 @@ Continue?`);
 
     async openToolsFolder() {
         await this.api.open_extracted_folder();
+    },
+
+    // ===== ACCOUNT SETTINGS =====
+    bindAccountSettings() {
+        // Domain filter save button
+        document.getElementById('save-domain').addEventListener('click', () => this.persistAccountSettings());
+        // Format radios
+        document.querySelectorAll('input[name="settings-format"]').forEach(r => {
+            r.addEventListener('change', () => this.persistAccountSettings());
+        });
+        // Import mode radios
+        document.querySelectorAll('input[name="settings-import-mode"]').forEach(r => {
+            r.addEventListener('change', () => this.persistAccountSettings());
+        });
+    },
+
+    async loadAccountSettings() {
+        this.setStatus('🔍 Loading accounts...');
+        const r = await this.api.get_account_details();
+        if (!r.success) {
+            this.showToast('Failed to load accounts: ' + r.error, 'error');
+            return;
+        }
+        this.accountAccounts = r.accounts || [];
+        this.renderAccountSettingsList();
+        this.setStatus(`✓ Loaded ${this.accountAccounts.length} accounts`);
+    },
+
+    renderAccountSettingsList() {
+        const grid = document.getElementById('account-settings-grid');
+        if (this.accountAccounts.length === 0) {
+            grid.innerHTML = `<div class="empty-state"><div style="font-size:48px;">📭</div><p>No accounts found</p></div>`;
+            return;
+        }
+        grid.innerHTML = this.accountAccounts.map((a, i) => {
+            const initial = (a.smtp || '?').charAt(0).toUpperCase();
+            const colorClass = (a.smtp || '').startsWith('info') ? 'style="background: linear-gradient(135deg, #ff3838, #b91c1c);"' : '';
+            return `
+                <div class="account-item" data-idx="${i}">
+                    <div class="acc-icon" ${colorClass}>${this.escape(initial)}</div>
+                    <div class="acc-info">
+                        <div class="acc-email">${this.escape(a.smtp || '')}</div>
+                        <div class="acc-meta">${this.escape(a.type || 'IMAP')} · ${this.escape(a.display_name || '')}</div>
+                    </div>
+                    <div class="acc-actions">
+                        <button class="btn btn-secondary" onclick="App.openAccountDetail('${this.escape(a.smtp || '')}')">詳細</button>
+                        <button class="btn btn-secondary" onclick="App.testAccountConnection('${this.escape(a.smtp || '')}')">テスト</button>
+                        <button class="btn btn-primary" onclick="App.exportSingleAccount('${this.escape(a.smtp || '')}')">Export</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    },
+
+    async openAccountDetail(smtp) {
+        this.setStatus('🔍 Loading account details...');
+        const r = await this.api.get_account_details(smtp);
+        if (!r.success) {
+            this.showToast('Failed to load details: ' + r.error, 'error');
+            return;
+        }
+        const a = r.account || {};
+        let body = `SMTP: ${this.escape(a.smtp || smtp)}\n`;
+        body += `Display Name: ${this.escape(a.display_name || '—')}\n`;
+        body += `Account Type: ${this.escape(a.type || '—')}\n\n`;
+        if (a.server) {
+            body += `Server: ${this.escape(a.server)}\n`;
+            body += `Port: ${a.port || '—'}\n`;
+            body += `Security: ${a.security || '—'}\n`;
+        }
+        this.alert('📧 ACCOUNT DETAILS', body);
+    },
+
+    async testAccountConnection(smtp) {
+        const ok = await this.confirm('TEST CONNECTION', `Test connection for ${smtp}?`);
+        if (!ok) return;
+
+        this.showProgress();
+        document.getElementById('progress-status').textContent = '接続テスト中...';
+
+        const r = await this.api.test_connection({smtp: smtp});
+
+        this.hideProgress();
+        if (r.success) {
+            this.alert('✅ CONNECTION TEST', `Connection to ${smtp} successful!\n\nResponse time: ${r.response_time || '?'} ms`);
+        } else {
+            this.alert('❌ CONNECTION FAILED', `Could not connect to ${smtp}.\n\nError: ${this.escape(r.error || 'Unknown error')}`);
+        }
+    },
+
+    async exportSingleAccount(smtp) {
+        const ok = await this.confirm('EXPORT ACCOUNT', `Export inventory for ${smtp}?`);
+        if (!ok) return;
+
+        this.showProgress();
+        document.getElementById('progress-status').textContent = 'エクスポート中...';
+
+        const r = await this.api.export_account_inventory({smtp: smtp});
+
+        this.hideProgress();
+        if (r.success) {
+            this.alert('✅ EXPORT COMPLETE', `Account inventory exported to:\n${this.escape(r.path || '')}`);
+            this.setStatus('✓ Export complete');
+        } else {
+            this.showToast('Export failed: ' + (r.error || 'Unknown'), 'error');
+        }
+    },
+
+    async persistAccountSettings() {
+        const domainFilter = document.getElementById('account-domain-filter').value;
+        const format = document.querySelector('input[name="settings-format"]:checked')?.value || 'pst';
+        const importMode = document.querySelector('input[name="settings-import-mode"]:checked')?.value || 'separate_folder';
+
+        await this.persistConfig({
+            domain_filter: domainFilter,
+            default_format: format,
+            default_import_mode: importMode,
+        });
+
+        this.showToast('設定が保存されました', 'success');
     },
 };
 

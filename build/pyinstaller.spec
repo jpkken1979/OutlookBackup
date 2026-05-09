@@ -26,7 +26,7 @@ hidden += [
     'import_engine', 'pst_inspector',
     'history_manager', 'scheduler',
     'account_inventory', 'cache_backup',
-    'shell_extractor',
+    'shell_extractor', 'src.connection_tester',
 ]
 
 datas = [

@@ -289,19 +289,14 @@ class API:
                                   include_servers, include_passwords,
                                   master_password):
         try:
-            from account_inventory import (
-                build_inventory, export_inventory_file,
-                get_default_inventory_path,
-            )
+            from account_inventory import build_inventory, save_inventory
             inventory = build_inventory(
                 outlook_client=self.outlook_client,
                 selected_smtps=smtp_list,
                 include_servers=include_servers,
                 include_passwords=include_passwords,
             )
-            path = get_default_inventory_path(backup_dir)
-            export_inventory_file(inventory, path,
-                                    master_password=master_password)
+            path = save_inventory(inventory, backup_dir, master_password)
             self._backup_log.append({
                 "ts": datetime.datetime.now().isoformat(),
                 "msg": f"📋 Inventario exportado: {os.path.basename(path)}",
@@ -512,10 +507,7 @@ class API:
 
     def export_inventory(self, params: Dict) -> Dict:
         try:
-            from account_inventory import (
-                build_inventory, export_inventory_file,
-                get_default_inventory_path,
-            )
+            from account_inventory import build_inventory, save_inventory
             output_dir = params.get("output_dir")
             smtp_list = params.get("accounts", [])
             include_servers = params.get("include_servers", True)
@@ -533,13 +525,149 @@ class API:
             )
 
             os.makedirs(output_dir, exist_ok=True)
-            path = get_default_inventory_path(output_dir)
-            saved = export_inventory_file(
-                inventory, path, master_password=master_password
-            )
-            return {"success": True, "path": saved, "count": len(inventory)}
+            path = save_inventory(inventory, output_dir, master_password)
+            return {"success": True, "path": path, "count": len(inventory)}
         except Exception as e:
             log.exception("export_inventory")
+            return {"success": False, "error": str(e)}
+
+    # ========================================================
+    # ACCOUNT DETAILS (single account)
+    # ========================================================
+
+    def get_account_details(self, smtp: str) -> Dict:
+        """Devuelve detalles completos de una cuenta."""
+        try:
+            from outlook_client import WIN32_AVAILABLE
+
+            if not self.outlook_client:
+                self.connect_outlook()
+
+            # Buscar en las cuentas ya detectadas
+            account = None
+            for a in self.accounts:
+                if a.smtp_address == smtp:
+                    account = a
+                    break
+
+            if not account:
+                return {"success": False, "error": "Account not found"}
+
+            from account_inventory import _read_registry_servers, _read_credential_vault
+
+            servers = _read_registry_servers(smtp) if WIN32_AVAILABLE else None
+            creds = _read_credential_vault(smtp) if WIN32_AVAILABLE else None
+
+            return {
+                "success": True,
+                "smtp": smtp,
+                "display_name": account.display_name,
+                "account_type": account.account_type,
+                "matches_domain": account.matches_domain(self.config.get("domain_filter", "uns-kikaku.com")),
+                "server_settings": servers or {},
+                "credential_count": len(creds) if creds else 0,
+                "inventory_exportable": True,
+            }
+        except Exception as e:
+            log.exception("get_account_details")
+            return {"success": False, "error": str(e)}
+
+    # ========================================================
+    # CONNECTION TESTER
+    # ========================================================
+
+    def test_connection(self, params: Dict) -> Dict:
+        """Testea conectividad IMAP/SMTP de una cuenta."""
+        try:
+            smtp = params.get("smtp")
+            if not smtp:
+                return {"success": False, "error": "smtp required"}
+
+            from connection_tester import ConnectionTester
+            from account_inventory import _read_registry_servers, _read_credential_vault
+            from outlook_client import WIN32_AVAILABLE
+
+            timeout = params.get("timeout", 10)
+            protocol = params.get("protocol", "auto")  # "auto", "imap", "smtp"
+
+            servers = _read_registry_servers(smtp) if WIN32_AVAILABLE else None
+            if not servers:
+                return {"success": False, "error": "No server settings found for this account"}
+
+            tester = ConnectionTester(timeout=timeout)
+            results = {"imap": None, "smtp": None}
+
+            if protocol in ("auto", "imap"):
+                imap_s = servers.get("imap_server", "")
+                imap_p = servers.get("imap_port", 993)
+                imap_ssl = servers.get("imap_ssl", True)
+                if imap_s:
+                    imap_creds = _read_credential_vault(smtp) if WIN32_AVAILABLE else None
+                    password = imap_creds[0].get("password", "") if imap_creds else ""
+                    result = tester.test_imap(imap_s, imap_p, imap_ssl, smtp, password)
+                    results["imap"] = {
+                        "success": result.success,
+                        "message": result.message,
+                        "latency_ms": result.latency_ms,
+                        "server_banner": result.server_banner,
+                    }
+
+            if protocol in ("auto", "smtp"):
+                smtp_s = servers.get("smtp_server", "")
+                smtp_p = servers.get("smtp_port", 587)
+                smtp_ssl = servers.get("smtp_ssl", False)
+                if smtp_s:
+                    smtp_creds = _read_credential_vault(smtp) if WIN32_AVAILABLE else None
+                    password = smtp_creds[0].get("password", "") if smtp_creds else ""
+                    result = tester.test_smtp(smtp_s, smtp_p, smtp_ssl, smtp, password)
+                    results["smtp"] = {
+                        "success": result.success,
+                        "message": result.message,
+                        "latency_ms": result.latency_ms,
+                        "server_banner": result.server_banner,
+                    }
+
+            return {"success": True, "smtp": smtp, "results": results}
+        except Exception as e:
+            log.exception("test_connection")
+            return {"success": False, "error": str(e)}
+
+    # ========================================================
+    # EXPORT SINGLE ACCOUNT INVENTORY
+    # ========================================================
+
+    def export_account_inventory(self, params: Dict) -> Dict:
+        """Exporta inventario de UNA cuenta especifica."""
+        try:
+            smtp = params.get("smtp")
+            if not smtp:
+                return {"success": False, "error": "smtp required"}
+
+            from account_inventory import build_inventory, save_inventory
+
+            if not self.outlook_client:
+                self.connect_outlook()
+
+            include_passwords = params.get("include_passwords", False)
+            master_password = params.get("master_password")
+
+            if include_passwords and not master_password:
+                return {"success": False, "error": "Master password required"}
+
+            inventory = build_inventory(
+                outlook_client=self.outlook_client,
+                selected_smtp_addresses=[smtp],
+                include_servers=True,
+                include_passwords=include_passwords,
+            )
+
+            output_dir = params.get("output_dir", self.config.get("default_backup_dir", str(Path.home())))
+            os.makedirs(output_dir, exist_ok=True)
+
+            saved = save_inventory(inventory, output_dir, master_password)
+            return {"success": True, "path": saved, "count": len(inventory.get("accounts", []))}
+        except Exception as e:
+            log.exception("export_account_inventory")
             return {"success": False, "error": str(e)}
 
     # ========================================================
