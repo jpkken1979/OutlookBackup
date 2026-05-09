@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""Skill: llm-app-patterns"""
+import argparse
+import logging
+import sys
+
+logger = logging.getLogger(__name__)
+
+def main():
+    parser = argparse.ArgumentParser(description="Skill: llm-app-patterns")
+    parser.parse_args()
+    logger.info("Skill %s invoked", "llm-app-patterns")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,10 @@
+{
+  "name": "ce-figma-design-sync",
+  "description": "Design-to-code sync specialist — Figma MCP + agent-browser comparison",
+  "tier": "quality",
+  "color": "purple",
+  "version": "1.0.0",
+  "origin": "everyinc/compound-engineering-plugin",
+  "adapted": "2026-04-19",
+  "entry_point": "main.py"
+}

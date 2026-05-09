@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=210mm, height=297mm">
+    <title>労働者派遣契約書 - {{ contract.contract_number }}</title>
+    <link rel="stylesheet" href="base.css">
+</head>
+<body>
+    <div class="document">
+        <!-- Header -->
+        <div class="document-header">
+            <div class="contract-number">
+                契約番号: {{ contract.contract_number }}
+            </div>
+            <div class="contract-date">
+                {{ contract.contract_date.strftime('%Y年%m月%d日') }}
+            </div>
+        </div>
+
+        <!-- Title -->
+        <h1 class="document-title">労働者派遣契約書</h1>
+        <p class="document-subtitle">（雇用契約書兼労働条件通知書）</p>
+
+        <!-- Worker Name -->
+        <div class="parties-section">
+            <p style="text-align: right; font-size: 12pt; margin-bottom: 10mm;">
+                <strong>{{ contract.worker.name }}</strong> 殿
+            </p>
+
+            <p class="article">
+                {{ contract.agency.name }}（以下「甲」という）は、{{ contract.worker.name }}（以下「乙」という）を
+                下記の条件にて雇用し、労働者派遣を行うことを約する。
+            </p>
+        </div>
+
+        <!-- Employment Contract Table -->
+        <table class="contract-table">
+            <tbody>
+                <!-- 雇用期間 -->
+                <tr>
+                    <th>雇用期間</th>
+                    <td>
+                        {{ contract.placement.start_date.strftime('%Y年%m月%d日') }} ～
+                        {{ contract.placement.end_date.strftime('%Y年%m月%d日') }}
+                        <br>
+                        <span style="font-size: 9pt;">
+                            （{{ contract.employment_period_type }}）
+                        </span>
+                    </td>
+                </tr>
+
+                <!-- 雇用形態 -->
+                <tr>
+                    <th>雇用形態</th>
+                    <td>{{ contract.employment_type }}</td>
+                </tr>
+
+                <!-- 派遣先 -->
+                <tr>
+                    <th>派遣先</th>
+                    <td>
+                        {{ contract.client.name }}
+                        {% if contract.client.department %}
+                        （{{ contract.client.department }}）
+                        {% endif %}
+                    </td>
+                </tr>
+
+                <!-- 就業場所 -->
+                <tr>
+                    <th>就業場所</th>
+                    <td>{{ contract.placement.work_location }}</td>
+                </tr>
+
+                <!-- 業務内容 -->
+                <tr>
+                    <th>業務内容</th>
+                    <td>{{ contract.placement.work_description }}</td>
+                </tr>
+
+                <!-- 就業時間 -->
+                <tr>
+                    <th>就業時間</th>
+                    <td>
+                        {{ contract.placement.work_hours.start }} ～ {{ contract.placement.work_hours.end }}
+                        （休憩 {{ contract.placement.work_hours.break_minutes }}分）
+                        <br>
+                        <span style="font-size: 9pt;">
+                            ※ 実働 {{ contract.placement.work_hours.scheduled_hours }}時間
+                        </span>
+                    </td>
+                </tr>
+
+                <!-- 就業日 -->
+                <tr>
+                    <th>就業日</th>
+                    <td>{{ contract.placement.work_days }}</td>
+                </tr>
+
+                <!-- 休日 -->
+                <tr>
+                    <th>休日</th>
+                    <td>{{ contract.holidays }}</td>
+                </tr>
+
+                <!-- 賃金 -->
+                <tr>
+                    <th>賃金</th>
+                    <td>
+                        <table class="inner-table">
+                            <tr>
+                                <td>基本時給</td>
+                                <td><strong>{{ "{:,}".format(contract.placement.worker_wage|int) }}円/時</strong></td>
+                            </tr>
+                            <tr>
+                                <td>時間外手当（125%）</td>
+                                <td>{{ "{:,}".format(contract.placement.worker_wage_overtime|int) }}円/時</td>
+                            </tr>
+                            {% if contract.placement.transport_allowance > 0 %}
+                            <tr>
+                                <td>通勤手当</td>
+                                <td>{{ "{:,}".format(contract.placement.transport_allowance|int) }}円/月（上限）</td>
+                            </tr>
+                            {% endif %}
+                            {% if contract.placement.other_allowances %}
+                            <tr>
+                                <td>その他手当</td>
+                                <td>{{ contract.placement.other_allowances }}</td>
+                            </tr>
+                            {% endif %}
+                        </table>
+                    </td>
+                </tr>
+
+                <!-- 賃金締切・支払日 -->
+                <tr>
+                    <th>賃金締切日・支払日</th>
+                    <td>
+                        締切日：毎月末日<br>
+                        支払日：翌月25日<br>
+                        <span style="font-size: 9pt;">※ 支払日が休日の場合は前営業日</span>
+                    </td>
+                </tr>
+
+                <!-- 賃金支払方法 -->
+                <tr>
+                    <th>賃金支払方法</th>
+                    <td>銀行振込</td>
+                </tr>
+
+                <!-- 社会保険 -->
+                <tr>
+                    <th>社会保険</th>
+                    <td>
+                        {{ contract.social_insurance_note }}<br>
+                        <table class="inner-table" style="margin-top: 2mm;">
+                            <tr>
+                                <td>健康保険</td>
+                                <td>{{ contract.worker.health_insurance.value }}</td>
+                            </tr>
+                            <tr>
+                                <td>厚生年金</td>
+                                <td>{{ contract.worker.pension.value }}</td>
+                            </tr>
+                            <tr>
+                                <td>雇用保険</td>
+                                <td>{{ contract.worker.employment_insurance.value }}</td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+
+                <!-- 年次有給休暇 -->
+                <tr>
+                    <th>年次有給休暇</th>
+                    <td>
+                        {% if contract.paid_leave_days > 0 %}
+                        {{ contract.paid_leave_days }}日
+                        {% else %}
+                        労働基準法の定めによる<br>
+                        <span style="font-size: 9pt;">
+                            ※ 6ヶ月継続勤務し、全労働日の8割以上出勤した場合に付与
+                        </span>
+                        {% endif %}
+                    </td>
+                </tr>
+
+                <!-- 指揮命令者 -->
+                <tr>
+                    <th>派遣先指揮命令者</th>
+                    <td>
+                        {{ contract.client.supervisor }}
+                        {% if contract.client.supervisor_position %}
+                        （{{ contract.client.supervisor_position }}）
+                        {% endif %}
+                    </td>
+                </tr>
+
+                <!-- 派遣元責任者 -->
+                <tr>
+                    <th>派遣元責任者</th>
+                    <td>
+                        {{ contract.agency.responsible_person }}<br>
+                        TEL: {{ contract.agency.responsible_phone }}
+                    </td>
+                </tr>
+
+                <!-- 苦情申出先 -->
+                <tr>
+                    <th>苦情申出先</th>
+                    <td>
+                        <strong>派遣元：</strong>{{ contract.agency.complaint_handler }}
+                        （TEL: {{ contract.agency.complaint_phone }}）<br>
+                        <strong>派遣先：</strong>{{ contract.client.complaint_handler or contract.client.supervisor }}
+                        （TEL: {{ contract.client.complaint_phone or contract.client.phone }}）
+                    </td>
+                </tr>
+
+                <!-- 退職 -->
+                <tr>
+                    <th>退職に関する事項</th>
+                    <td>
+                        退職を希望する場合は、少なくとも{{ contract.resignation_notice_days }}日前までに
+                        派遣元責任者に届け出ること。
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- Special Conditions -->
+        {% if contract.special_conditions %}
+        <div class="section mt-2">
+            <h2 class="section-title">特記事項</h2>
+            <div class="section-content">
+                {{ contract.special_conditions }}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Agreement Text -->
+        <div class="section mt-3">
+            <h2 class="section-title">同意事項</h2>
+            <div class="section-content">
+                <ol style="padding-left: 5mm;">
+                    <li>乙は、甲の就業規則その他の規程を遵守し、誠実に業務を遂行する。</li>
+                    <li>乙は、派遣先の指揮命令に従い、安全衛生に留意して業務を行う。</li>
+                    <li>乙は、業務上知り得た秘密を漏洩しない。</li>
+                    <li>乙は、派遣期間終了後も、業務上知り得た情報を第三者に開示しない。</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- Signature Section -->
+        <div class="signature-section">
+            <p class="signature-intro">
+                上記の労働条件に同意し、本契約を締結します。
+            </p>
+
+            <div class="signature-block">
+                <!-- 派遣元 (甲) -->
+                <div class="signature-party">
+                    <div class="signature-label">甲（派遣元）</div>
+                    <div class="signature-details">
+                        <div class="stamp-area">印</div>
+                        {{ contract.agency.name }}<br>
+                        {{ contract.agency.address }}<br>
+                        {{ contract.agency.representative }}<br>
+                        <span style="font-size: 9pt;">
+                            許可番号: {{ contract.agency.permit_number }}
+                        </span>
+                    </div>
+                </div>
+
+                <!-- 労働者 (乙) -->
+                <div class="signature-party">
+                    <div class="signature-label">乙（労働者）</div>
+                    <div class="signature-details">
+                        <div class="stamp-area">印</div>
+                        氏名: {{ contract.worker.name }}<br>
+                        住所: {{ contract.worker.address or "____________________" }}<br>
+                        <br>
+                        署名: _________________
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer Note -->
+        <div class="mt-3" style="font-size: 8pt; color: #666; border-top: 1px solid #ccc; padding-top: 3mm;">
+            <p>
+                【注意事項】<br>
+                ・本契約書は2部作成し、甲乙それぞれ1部を保管してください。<br>
+                ・就業条件に変更が生じた場合は、速やかに書面にて通知します。<br>
+                ・ご不明な点は派遣元責任者までお問い合わせください。
+            </p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,90 @@
+{
+  "name": "local-executor",
+  "description": "Ejecuta comandos y scripts en el sistema local del usuario",
+  "version": "1.0.0",
+  "tier": 3,
+  "entry_point": "scripts/local_executor.py",
+  "capabilities": [
+    "execute_command",
+    "execute_script",
+    "read_file",
+    "write_file",
+    "list_processes",
+    "system_info",
+    "spawn_process",
+    "kill_process"
+  ],
+  "security": {
+    "allowed_paths": [
+      "${HOME}",
+      "${ANTIGRAVITY_ROOT}",
+      "/tmp",
+      "/var/tmp"
+    ],
+    "blocked_commands": [
+      "rm -rf /",
+      "dd if=",
+      "> /dev/sda"
+    ],
+    "max_timeout_seconds": 120
+  },
+  "mcp_tools": [
+    {
+      "name": "execute_command",
+      "description": "Ejecuta un comando shell en el sistema local",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Comando a ejecutar"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Directorio de trabajo (opcional)"
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Timeout en segundos (default 30, max 120)"
+          }
+        },
+        "required": ["command"]
+      }
+    },
+    {
+      "name": "execute_script",
+      "description": "Ejecuta un script (Python, Bash, PowerShell)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "script_path": {
+            "type": "string",
+            "description": "Ruta al script"
+          },
+          "args": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Argumentos del script"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Directorio de trabajo"
+          },
+          "timeout": {
+            "type": "number",
+            "description": "Timeout en segundos"
+          }
+        },
+        "required": ["script_path"]
+      }
+    },
+    {
+      "name": "system_info",
+      "description": "Obtiene informacion del sistema",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ]
+}

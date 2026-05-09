@@ -1,0 +1,120 @@
+---
+name: payroll-processor
+version: 1.0.0
+type: skill
+status: active
+category: hr
+
+author:
+  name: K. Kaneshiro
+  email: k.kaneshiro@uns-kikaku.com
+  organization: UNS Antigravity
+
+description: >
+  Payroll calculation and reporting system for UNS dispatch and salary management.
+  Handles gross pay (regular + overtime + bonus), Japanese tax deductions, and
+  multi-format payslip generation (JSON, HTML, Excel).
+
+keywords:
+  - payroll
+  - salary
+  - japanese-taxes
+  - hr
+  - dispatch
+  - 給与
+  - 派遣
+
+compatible_agents:
+  - accounting-specialist
+  - finance-officer
+  - hr-specialist
+  - payroll-manager
+
+parameters:
+  operation:
+    type: string
+    required: true
+    enum:
+      - calculate
+      - generate_payslip
+      - export_report
+    description: Operation to perform
+
+  employee_id:
+    type: string
+    required: true
+    description: Employee ID (e.g., W001)
+
+  regular_hours:
+    type: number
+    required: true
+    minimum: 0
+    maximum: 200
+    description: Regular work hours per month
+
+  overtime_hours:
+    type: number
+    required: false
+    default: 0.0
+    minimum: 0
+    maximum: 45
+    description: Overtime hours (36協定 limit)
+
+  bonus:
+    type: number
+    required: false
+    default: 0.0
+    minimum: 0
+    description: Bonus amount in JPY
+
+  year:
+    type: integer
+    required: false
+    default: 2026
+    minimum: 2000
+    maximum: 2099
+    description: Fiscal year
+
+  month:
+    type: integer
+    required: false
+    default: 1
+    minimum: 1
+    maximum: 12
+    description: Fiscal month
+
+  output_format:
+    type: string
+    required: false
+    default: json
+    enum:
+      - json
+      - html
+      - excel
+    description: Output format for generate_payslip
+
+  output_path:
+    type: string
+    required: false
+    description: File path for HTML/Excel output
+
+execution:
+  entry_point: payroll_processor.scripts.main:execute
+  timeout_seconds: 30
+
+sandbox:
+  network_allowed: false
+  file_access: limited
+  max_memory_mb: 256
+
+dependencies:
+  - pydantic>=2.0.0
+  - jinja2>=3.0.0
+  - openpyxl>=3.0.0
+
+database:
+  type: sqlite
+  schema_file: sql_schema.sql
+
+license: proprietary
+license_file: LICENSE

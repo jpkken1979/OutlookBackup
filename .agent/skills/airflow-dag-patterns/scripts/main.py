@@ -1,0 +1,9 @@
+"""airflow-dag-patterns skill - main entry point."""
+
+def main() -> None:
+    """Run the airflow-dag-patterns skill."""
+    pass
+
+
+if __name__ == "__main__":
+    main()

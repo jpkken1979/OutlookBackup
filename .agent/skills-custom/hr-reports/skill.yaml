@@ -1,0 +1,258 @@
+# HR Reports Generator Skill Configuration
+# WEEK 2 Implementation
+
+skill:
+  id: hr-reports
+  name: HR Reports Generator
+  version: 1.0.0
+  tier: 6
+  category: hr
+  status: production
+  description: Generate professional HR reports (roster, hours, dispatch, absence) with Excel export
+
+metadata:
+  author: Antigravity Team
+  organization: UNS
+  created: 2024-03-01
+  updated: 2024-03-01
+  maturity: stable
+  language: en
+  region: ja_JP
+
+capabilities:
+  - id: generate_roster
+    name: Generate Roster Report
+    description: Create attendance summary by employee
+    operation: generate_roster
+
+  - id: generate_hours
+    name: Generate Hours Report
+    description: Create payroll detail report with hours and earnings
+    operation: generate_hours
+
+  - id: generate_dispatch
+    name: Generate Dispatch Report
+    description: Create dispatch assignment summary
+    operation: generate_dispatch
+
+  - id: generate_absence
+    name: Generate Absence Report
+    description: Create absence/leave tracking report
+    operation: generate_absence
+
+parameters:
+  start_date:
+    type: date
+    required: true
+    description: Report period start (YYYY-MM-DD)
+
+  end_date:
+    type: date
+    required: true
+    description: Report period end (YYYY-MM-DD)
+
+  report_type:
+    type: string
+    required: true
+    description: Type of report to generate
+    enum:
+      - roster
+      - hours
+      - dispatch
+      - absence
+
+  employee_id:
+    type: string
+    required: false
+    description: Optional employee filter
+
+  output_path:
+    type: string
+    required: false
+    description: Path where to save report file
+
+  file_format:
+    type: string
+    required: false
+    default: xlsx
+    enum:
+      - xlsx
+      - html
+      - csv
+
+  include_summary:
+    type: boolean
+    required: false
+    default: true
+    description: Include summary statistics section
+
+  generated_by:
+    type: string
+    required: false
+    default: system
+    description: User or system identifier for audit trail
+
+dependencies:
+  python:
+    - pandas >= 1.5.0
+    - openpyxl >= 3.10.0
+    - jinja2 >= 3.1.0
+    - pydantic >= 2.0.0
+
+  databases:
+    - sqlite3
+    - tables:
+        - employees
+        - attendance_records
+        - dispatch_assignments
+
+performance:
+  max_records_per_report: 100000
+  typical_execution_time_ms: 2000
+  max_execution_time_ms: 30000
+  memory_per_1000_rows_mb: 5
+
+export_formats:
+  xlsx:
+    description: Microsoft Excel Workbook
+    mime_type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+    features:
+      - multi_sheet: true
+      - formatting: true
+      - formulas: true
+
+  html:
+    description: HTML Report (responsive)
+    mime_type: text/html
+    features:
+      - responsive: true
+      - print_friendly: true
+      - japanese_support: true
+
+  csv:
+    description: CSV Format (UTF-8)
+    mime_type: text/csv
+    features:
+      - lightweight: true
+      - universal: true
+
+databases:
+  sqlite:
+    schema_file: sql_schema_extensions.sql
+    tables_created:
+      - attendance_records
+      - hr_reports
+    indexes:
+      - idx_attendance_employee_date
+      - idx_attendance_date_range
+      - idx_hr_reports_type
+
+testing:
+  framework: pytest
+  coverage_target: 80
+  test_files:
+    - tests/test_report_generators.py
+    - tests/test_excel_builder.py
+    - tests/test_execute.py
+  fixtures:
+    - conftest.py
+    - fixtures/attendance_fixtures.py
+
+sandbox:
+  filesystem_access: true
+  database_access: true
+  external_api: false
+  compute_intensive: false
+  timeout_seconds: 60
+  max_memory_mb: 512
+
+security:
+  - path_validation: required
+  - input_validation: required
+  - sql_injection_prevention: parameterized_queries
+  - sensitive_data_handling: none
+
+output:
+  formats:
+    - type: dataframe
+      structure: pandas.DataFrame
+      columns:
+        - employee_id
+        - date
+        - hours_worked
+        - earnings
+        - status
+
+    - type: summary
+      structure: dict
+      fields:
+        - period_start
+        - period_end
+        - total_records
+        - aggregated_metrics
+
+    - type: file
+      formats:
+        - xlsx
+        - html
+        - csv
+
+logging:
+  level: INFO
+  format: "[%(asctime)s] [%(levelname)s] %(message)s"
+  handlers:
+    - console
+    - file
+
+error_handling:
+  validation_errors:
+    - invalid_date_range
+    - invalid_report_type
+    - invalid_file_format
+    - missing_output_directory
+
+  runtime_errors:
+    - database_connection_error
+    - file_write_error
+    - invalid_employee_id
+
+integration:
+  related_skills:
+    - payroll-processor
+    - attendance-tracker
+    - dispatch-manager
+
+  api_endpoints:
+    - /v1/reports/generate
+    - /v1/reports/export
+    - /v1/reports/metadata
+
+metadata_tracking:
+  track_generated_reports: true
+  table_name: hr_reports
+  fields:
+    - report_id
+    - report_type
+    - period_start
+    - period_end
+    - generated_by
+    - file_path
+    - created_at
+
+roadmap:
+  - version: 1.1.0
+    features:
+      - Jinja2 HTML rendering
+      - Advanced filtering
+      - Report caching
+  - version: 1.2.0
+    features:
+      - Email delivery
+      - Scheduled reports
+      - Multi-language support
+
+notes:
+  - Reutiliza patterns de WEEK 1 (payroll-processor)
+  - Schema independiente pero compatible con empleados existentes
+  - Tests fixtures auto-pobladas con datos de ejemplo
+  - Documentación completa en SKILL.md y README.md

@@ -1,0 +1,37 @@
+{
+  "name": "code-reviewer",
+  "version": "1.0.0",
+  "tier": 2,
+  "role": "Code Quality & Review Specialist",
+  "description": "Agente especializado en code review, best practices, y calidad de código",
+  "capabilities": [
+    "Code review automatizado",
+    "Detección de code smells",
+    "Sugerencias de mejora",
+    "Verificación de best practices",
+    "Security review básico",
+    "Consistency checks"
+  ],
+  "skills": [
+    "code-review-checklist",
+    "clean-code-principles",
+    "design-patterns-gof",
+    "refactoring-playbook"
+  ],
+  "review_categories": [
+    "correctness",
+    "security",
+    "performance",
+    "maintainability",
+    "readability",
+    "testing"
+  ],
+  "triggers": [
+    "review",
+    "code review",
+    "check code",
+    "best practices",
+    "code quality"
+  ],
+  "entry_point": "main.py"
+}

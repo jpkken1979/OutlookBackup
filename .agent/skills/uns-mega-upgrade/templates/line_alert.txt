@@ -1,0 +1,6 @@
+{{emoji}} {{alert_type}}
+
+従業員: {{employee_name}}
+{{detail_line}}
+
+⚡ Action: {{action}}

@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>個別派遣契約書 - {{ contract_number }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'Arial', 'MS Gothic', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: white;
+            padding: 20px;
+            page-break-inside: avoid;
+        }
+
+        .container {
+            max-width: 210mm;
+            margin: 0 auto;
+            padding: 20mm;
+            background: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        .document-header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #003366;
+            padding-bottom: 15px;
+        }
+
+        .document-header h1 {
+            font-size: 24pt;
+            font-weight: bold;
+            color: #003366;
+            margin-bottom: 5px;
+        }
+
+        .document-header .subtitle {
+            font-size: 12pt;
+            color: #666;
+            font-style: italic;
+        }
+
+        .section {
+            margin-bottom: 25px;
+            page-break-inside: avoid;
+        }
+
+        .section h2 {
+            font-size: 14pt;
+            font-weight: bold;
+            color: #003366;
+            background-color: #e6f0f7;
+            padding: 8px 12px;
+            margin-bottom: 12px;
+            border-left: 4px solid #003366;
+        }
+
+        .info-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 10px;
+        }
+
+        .info-table tr {
+            border-bottom: 1px solid #ddd;
+        }
+
+        .info-table td {
+            padding: 10px;
+        }
+
+        .info-table .label {
+            width: 30%;
+            font-weight: bold;
+            background-color: #f5f5f5;
+            color: #003366;
+        }
+
+        .info-table .value {
+            width: 70%;
+            padding-left: 15px;
+        }
+
+        .benefits-list {
+            list-style-type: none;
+            margin-left: 20px;
+        }
+
+        .benefits-list li {
+            padding: 5px 0;
+            margin-left: 20px;
+        }
+
+        .benefits-list li:before {
+            content: "・";
+            margin-left: -15px;
+            margin-right: 10px;
+        }
+
+        .terms-content {
+            padding: 10px;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            line-height: 1.8;
+            white-space: pre-wrap;
+        }
+
+        .signature-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .signature-table tr {
+            border: 1px solid #999;
+            height: 50px;
+        }
+
+        .signature-table td {
+            padding: 10px;
+            border: 1px solid #999;
+        }
+
+        .signature-table .label {
+            width: 25%;
+            font-weight: bold;
+            background-color: #f5f5f5;
+            text-align: center;
+        }
+
+        .signature-table .company-name {
+            width: 25%;
+            padding-left: 15px;
+        }
+
+        .signature-table .signature-space {
+            width: 50%;
+            text-align: center;
+            border-bottom: 1px solid #000;
+        }
+
+        .document-footer {
+            margin-top: 40px;
+            text-align: center;
+            font-size: 9pt;
+            color: #999;
+            border-top: 1px solid #ddd;
+            padding-top: 10px;
+        }
+
+        @media print {
+            body {
+                padding: 0;
+                background: white;
+            }
+
+            .container {
+                box-shadow: none;
+                max-width: 100%;
+                padding: 20mm;
+            }
+
+            .section {
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="document-header">
+            <h1>個別派遣契約書</h1>
+            <p class="subtitle">Individual Dispatch Contract</p>
+        </div>
+
+        <!-- Contract Information -->
+        <div class="section">
+            <h2>契約情報</h2>
+            <table class="info-table">
+                <tr>
+                    <td class="label">契約番号</td>
+                    <td class="value">{{ contract_number }}</td>
+                </tr>
+                <tr>
+                    <td class="label">契約日</td>
+                    <td class="value">{{ contract_date }}</td>
+                </tr>
+                <tr>
+                    <td class="label">有効期間</td>
+                    <td class="value">{{ effective_date }} ～ {{ expiration_date }}</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Employee Information -->
+        <div class="section">
+            <h2>被派遣者情報</h2>
+            <table class="info-table">
+                <tr>
+                    <td class="label">氏名</td>
+                    <td class="value">{{ employee_name_jp }}{% if employee_name_en %} ({{ employee_name_en }}){% endif %}</td>
+                </tr>
+                <tr>
+                    <td class="label">従業員ID</td>
+                    <td class="value">{{ employee_id }}</td>
+                </tr>
+                <tr>
+                    <td class="label">メールアドレス</td>
+                    <td class="value">{{ employee_email }}</td>
+                </tr>
+                <tr>
+                    <td class="label">電話番号</td>
+                    <td class="value">{{ employee_phone }}</td>
+                </tr>
+                <tr>
+                    <td class="label">雇用ステータス</td>
+                    <td class="value">{{ employee_status }}</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Dispatch Information -->
+        <div class="section">
+            <h2>派遣先情報</h2>
+            <table class="info-table">
+                <tr>
+                    <td class="label">派遣会社</td>
+                    <td class="value">{{ dispatch_company }}</td>
+                </tr>
+                <tr>
+                    <td class="label">勤務先企業</td>
+                    <td class="value">{{ client_company }}</td>
+                </tr>
+                <tr>
+                    <td class="label">勤務地</td>
+                    <td class="value">{{ work_location }}</td>
+                </tr>
+                <tr>
+                    <td class="label">職務内容</td>
+                    <td class="value">{{ job_title }}</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Work Conditions -->
+        <div class="section">
+            <h2>勤務条件</h2>
+            <table class="info-table">
+                <tr>
+                    <td class="label">日当たり勤務時間</td>
+                    <td class="value">{{ work_hours_daily }}時間</td>
+                </tr>
+                <tr>
+                    <td class="label">週間勤務日数</td>
+                    <td class="value">{{ work_days_weekly }}日</td>
+                </tr>
+                <tr>
+                    <td class="label">時給</td>
+                    <td class="value">¥{{ "%.0f"|format(hourly_rate_jpy)|replace(',', ',') }}</td>
+                </tr>
+                {% if monthly_minimum_hours %}
+                <tr>
+                    <td class="label">月間最小勤務時間</td>
+                    <td class="value">{{ monthly_minimum_hours }}時間</td>
+                </tr>
+                {% endif %}
+            </table>
+        </div>
+
+        <!-- Benefits -->
+        {% if benefits %}
+        <div class="section">
+            <h2>福利厚生</h2>
+            <ul class="benefits-list">
+                {% for benefit in benefits %}
+                <li>{{ benefit }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <!-- Terms and Conditions -->
+        {% if terms_conditions %}
+        <div class="section">
+            <h2>契約条件</h2>
+            <div class="terms-content">
+{{ terms_conditions }}</div>
+        </div>
+        {% endif %}
+
+        <!-- Notes -->
+        {% if notes %}
+        <div class="section">
+            <h2>備考</h2>
+            <p>{{ notes }}</p>
+        </div>
+        {% endif %}
+
+        <!-- Signature Section -->
+        <div class="section">
+            <h2>署名</h2>
+            <table class="signature-table">
+                <tr>
+                    <td class="label">派遣会社</td>
+                    <td class="company-name">{{ dispatch_company }}</td>
+                    <td class="signature-space"></td>
+                </tr>
+                <tr>
+                    <td class="label">代表者署名</td>
+                    <td colspan="2" class="signature-space"></td>
+                </tr>
+                <tr>
+                    <td class="label">被派遣者署名</td>
+                    <td colspan="2" class="signature-space"></td>
+                </tr>
+                <tr>
+                    <td class="label">日付</td>
+                    <td colspan="2">{{ contract_date }}</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Footer -->
+        <div class="document-footer">
+            <p>生成日時: {{ generated_at }} | テンプレートバージョン: {{ template_version }}</p>
+        </div>
+    </div>
+</body>
+</html>

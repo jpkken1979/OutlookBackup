@@ -1,0 +1,803 @@
+"""
+Complete GraphQL Schema Template.
+
+Demonstrates best practices for schema design, including:
+- Relay cursor-based pagination
+- Proper input/output type separation
+- Error handling in mutation payloads
+- DataLoader-friendly resolver patterns
+- Deprecation strategies
+"""
+
+# ==============================================================================
+# Scalars
+# ==============================================================================
+
+"""
+ISO 8601 datetime string (e.g., 2024-01-15T10:30:00Z)
+"""
+scalar DateTime
+
+"""
+RFC 4648 Base64url encoded cursor for pagination
+"""
+scalar Cursor
+
+"""
+Arbitrary JSON object
+"""
+scalar JSON
+
+
+# ==============================================================================
+# Enums
+# ==============================================================================
+
+"""
+User account status
+"""
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+"""
+Order status in the fulfillment lifecycle
+"""
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+"""
+Order sorting options
+"""
+enum OrderSortBy {
+  CREATED_AT
+  UPDATED_AT
+  TOTAL_DESC
+  TOTAL_ASC
+}
+
+
+# ==============================================================================
+# Interfaces
+# ==============================================================================
+
+"""
+An object with a globally unique identifier.
+Implements Relay Global Object Identification pattern.
+"""
+interface Node {
+  """
+  Globally unique identifier following Relay spec
+  """
+  id: ID!
+}
+
+"""
+An entity that tracks creation and modification timestamps
+"""
+interface Timestamped {
+  """
+  ISO 8601 creation timestamp
+  """
+  createdAt: DateTime!
+
+  """
+  ISO 8601 last modification timestamp
+  """
+  updatedAt: DateTime!
+}
+
+
+# ==============================================================================
+# Types
+# ==============================================================================
+
+"""
+User account type
+"""
+type User implements Node & Timestamped {
+  """
+  Globally unique user identifier
+  """
+  id: ID!
+
+  """
+  User email address (unique)
+  """
+  email: String!
+
+  """
+  User display name
+  """
+  name: String!
+
+  """
+  User account status
+  """
+  status: UserStatus!
+
+  """
+  User profile information
+  """
+  profile: UserProfile
+
+  """
+  User's orders (paginated)
+  First 20 orders by default, use cursor for traversal
+  """
+  orders(
+    """
+    Number of items to return (default: 20, max: 100)
+    """
+    first: Int = 20
+
+    """
+    Cursor for pagination
+    """
+    after: Cursor
+
+    """
+    Filter by order status
+    """
+    status: OrderStatus
+
+    """
+    Sort orders
+    """
+    sortBy: OrderSortBy = CREATED_AT
+  ): OrderConnection!
+
+  """
+  Creation timestamp
+  """
+  createdAt: DateTime!
+
+  """
+  Last modification timestamp
+  """
+  updatedAt: DateTime!
+}
+
+"""
+Extended user profile information
+"""
+type UserProfile {
+  """
+  User avatar URL
+  """
+  avatarUrl: String
+
+  """
+  User biography
+  """
+  bio: String
+
+  """
+  User location
+  """
+  location: String
+
+  """
+  Preferred language code (ISO 639-1)
+  """
+  languageCode: String
+}
+
+"""
+Order type with line items and tracking
+"""
+type Order implements Node & Timestamped {
+  """
+  Globally unique order identifier
+  """
+  id: ID!
+
+  """
+  Order status in fulfillment lifecycle
+  """
+  status: OrderStatus!
+
+  """
+  Order total amount
+  """
+  total: Money!
+
+  """
+  Order line items
+  """
+  items(
+    """
+    Number of items to return (default: 20, max: 100)
+    """
+    first: Int = 20
+
+    """
+    Cursor for pagination
+    """
+    after: Cursor
+  ): OrderItemConnection!
+
+  """
+  Associated user who placed the order
+  """
+  user: User!
+
+  """
+  Order notes and comments
+  """
+  notes: String
+
+  """
+  Creation timestamp
+  """
+  createdAt: DateTime!
+
+  """
+  Last modification timestamp
+  """
+  updatedAt: DateTime!
+}
+
+"""
+Individual line item in an order
+"""
+type OrderItem {
+  """
+  Product identifier
+  """
+  productId: ID!
+
+  """
+  Product name
+  """
+  productName: String!
+
+  """
+  Quantity ordered
+  """
+  quantity: Int!
+
+  """
+  Unit price at time of order
+  """
+  unitPrice: Money!
+
+  """
+  Line item total (quantity × unitPrice)
+  """
+  total: Money!
+}
+
+"""
+Monetary amount with currency
+"""
+type Money {
+  """
+  Amount value
+  """
+  amount: Float!
+
+  """
+  ISO 4217 currency code (e.g., USD, EUR, JPY)
+  """
+  currency: String!
+
+  """
+  Formatted display string (e.g., "$99.99")
+  """
+  displayString: String!
+}
+
+"""
+Error details for mutations
+"""
+type Error {
+  """
+  Machine-readable error code for client handling
+  """
+  code: String!
+
+  """
+  Human-readable error message
+  """
+  message: String!
+
+  """
+  Field name if validation error
+  """
+  field: String
+}
+
+
+# ==============================================================================
+# Connection Types (Relay Cursor Pagination)
+# ==============================================================================
+
+"""
+Paginated connection for users (Relay pattern)
+Allows efficient cursor-based pagination
+"""
+type UserConnection {
+  """
+  List of user edges
+  """
+  edges: [UserEdge!]!
+
+  """
+  Pagination information
+  """
+  pageInfo: PageInfo!
+
+  """
+  Total count of all items (expensive: use sparingly)
+  """
+  totalCount: Int!
+}
+
+"""
+Edge type for user pagination
+"""
+type UserEdge {
+  """
+  The user node
+  """
+  node: User!
+
+  """
+  Opaque cursor for pagination
+  """
+  cursor: Cursor!
+}
+
+"""
+Paginated connection for orders (Relay pattern)
+"""
+type OrderConnection {
+  """
+  List of order edges
+  """
+  edges: [OrderEdge!]!
+
+  """
+  Pagination information
+  """
+  pageInfo: PageInfo!
+
+  """
+  Total count of orders
+  """
+  totalCount: Int!
+}
+
+"""
+Edge type for order pagination
+"""
+type OrderEdge {
+  """
+  The order node
+  """
+  node: Order!
+
+  """
+  Opaque cursor for pagination
+  """
+  cursor: Cursor!
+}
+
+"""
+Paginated connection for order items
+"""
+type OrderItemConnection {
+  """
+  List of order item edges
+  """
+  edges: [OrderItemEdge!]!
+
+  """
+  Pagination information
+  """
+  pageInfo: PageInfo!
+}
+
+"""
+Edge type for order item pagination
+"""
+type OrderItemEdge {
+  """
+  The order item node
+  """
+  node: OrderItem!
+
+  """
+  Opaque cursor for pagination
+  """
+  cursor: Cursor!
+}
+
+"""
+Pagination metadata following Relay cursor connection spec
+"""
+type PageInfo {
+  """
+  True if there are more items after the last returned item
+  """
+  hasNextPage: Boolean!
+
+  """
+  True if there are items before the first returned item
+  """
+  hasPreviousPage: Boolean!
+
+  """
+  Cursor of the first returned item
+  """
+  startCursor: Cursor
+
+  """
+  Cursor of the last returned item
+  """
+  endCursor: Cursor
+}
+
+
+# ==============================================================================
+# Mutation Input Types
+# ==============================================================================
+
+"""
+Input for creating a new user
+Separate from output type to allow schema evolution
+"""
+input CreateUserInput {
+  """
+  User email address
+  """
+  email: String!
+
+  """
+  User display name
+  """
+  name: String!
+
+  """
+  Initial password (should be hashed server-side)
+  """
+  password: String!
+
+  """
+  User profile information (optional)
+  """
+  profile: UserProfileInput
+}
+
+"""
+Input for user profile creation/update
+"""
+input UserProfileInput {
+  """
+  User avatar URL
+  """
+  avatarUrl: String
+
+  """
+  User biography (max 500 chars)
+  """
+  bio: String
+
+  """
+  User location
+  """
+  location: String
+
+  """
+  Preferred language code (ISO 639-1)
+  """
+  languageCode: String
+}
+
+"""
+Input for updating user information
+Partial updates: only provided fields are modified
+"""
+input UpdateUserInput {
+  """
+  User identifier
+  """
+  id: ID!
+
+  """
+  New email address
+  """
+  email: String
+
+  """
+  New display name
+  """
+  name: String
+
+  """
+  New account status
+  """
+  status: UserStatus
+
+  """
+  Profile updates
+  """
+  profile: UserProfileInput
+}
+
+"""
+Input for creating an order
+"""
+input CreateOrderInput {
+  """
+  Items to include in order
+  """
+  items: [CreateOrderItemInput!]!
+
+  """
+  Optional order notes
+  """
+  notes: String
+}
+
+"""
+Input for individual order items
+"""
+input CreateOrderItemInput {
+  """
+  Product identifier
+  """
+  productId: ID!
+
+  """
+  Quantity to order
+  """
+  quantity: Int!
+}
+
+
+# ==============================================================================
+# Mutation Output Types (Payload Pattern)
+# ==============================================================================
+
+"""
+Response payload for user creation mutation
+Error handling: returns errors in payload instead of throwing
+"""
+type CreateUserPayload {
+  """
+  The created user (null if creation failed)
+  """
+  user: User
+
+  """
+  List of validation errors if creation failed
+  """
+  errors: [Error!]!
+}
+
+"""
+Response payload for user update mutation
+"""
+type UpdateUserPayload {
+  """
+  The updated user (null if update failed)
+  """
+  user: User
+
+  """
+  List of validation errors if update failed
+  """
+  errors: [Error!]!
+}
+
+"""
+Response payload for user deletion
+"""
+type DeleteUserPayload {
+  """
+  Whether deletion was successful
+  """
+  success: Boolean!
+
+  """
+  User ID that was deleted
+  """
+  deletedId: ID
+
+  """
+  Errors if deletion failed
+  """
+  errors: [Error!]!
+}
+
+"""
+Response payload for order creation
+"""
+type CreateOrderPayload {
+  """
+  The created order (null if creation failed)
+  """
+  order: Order
+
+  """
+  Validation errors
+  """
+  errors: [Error!]!
+}
+
+
+# ==============================================================================
+# Root Types
+# ==============================================================================
+
+"""
+Root query type
+All fields are queryable and should follow consistent naming
+"""
+type Query {
+  """
+  Get the currently authenticated user
+  Requires authentication
+  """
+  me: User
+
+  """
+  Get user by global ID
+  Uses Node interface for consistent access
+  """
+  node(id: ID!): Node
+
+  """
+  Get user by email address
+  """
+  user(email: String!): User
+
+  """
+  List all users (paginated)
+  Accessible only to admin users
+  """
+  users(
+    """
+    Number of users to return
+    """
+    first: Int = 20
+
+    """
+    Cursor for pagination
+    """
+    after: Cursor
+
+    """
+    Filter by user status
+    """
+    status: UserStatus
+
+    """
+    Search by name or email
+    """
+    search: String
+  ): UserConnection!
+
+  """
+  Get order by ID
+  """
+  order(id: ID!): Order
+
+  """
+  List all orders (admin only)
+  """
+  orders(
+    """
+    Number of orders to return
+    """
+    first: Int = 20
+
+    """
+    Cursor for pagination
+    """
+    after: Cursor
+
+    """
+    Filter by status
+    """
+    status: OrderStatus
+
+    """
+    Sort results
+    """
+    sortBy: OrderSortBy = CREATED_AT
+  ): OrderConnection!
+}
+
+"""
+Root mutation type
+All mutations should use input/payload pattern for consistency
+"""
+type Mutation {
+  """
+  Create a new user
+  Returns payload with user or errors
+  """
+  createUser(input: CreateUserInput!): CreateUserPayload!
+
+  """
+  Update an existing user
+  Only authenticated user can update their own profile
+  """
+  updateUser(input: UpdateUserInput!): UpdateUserPayload!
+
+  """
+  Delete a user account
+  Requires authentication and user confirmation
+  """
+  deleteUser(id: ID!): DeleteUserPayload!
+
+  """
+  Create a new order for current user
+  Requires authentication
+  """
+  createOrder(input: CreateOrderInput!): CreateOrderPayload!
+
+  """
+  Cancel an order
+  Only order owner or admin can cancel
+  """
+  cancelOrder(id: ID!): CreateOrderPayload!
+}
+
+"""
+Root subscription type
+Real-time updates for data changes
+"""
+type Subscription {
+  """
+  Subscribe to order status changes
+  Receive updates when order status changes
+  """
+  orderStatusChanged(orderId: ID!): Order!
+
+  """
+  Subscribe to user activity
+  Receive updates when user is modified
+  Admin only
+  """
+  userUpdated(userId: ID!): User!
+}
+
+
+# ==============================================================================
+# Directives
+# ==============================================================================
+
+"""
+Mark fields as deprecated with optional replacement
+"""
+directive @deprecated(
+  reason: String = "No longer supported"
+) on FIELD_DEFINITION | ENUM_VALUE
+
+"""
+Indicate field requires authentication
+"""
+directive @auth on FIELD_DEFINITION
+
+"""
+Indicate field requires specific role/permission
+"""
+directive @requires(role: String!) on FIELD_DEFINITION
+
+"""
+Indicate field availability by API version
+"""
+directive @apiVersion(since: String!, until: String) on FIELD_DEFINITION

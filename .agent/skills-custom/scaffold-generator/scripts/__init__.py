@@ -1,0 +1,1 @@
+"""Scaffold Generator Skill — Package."""

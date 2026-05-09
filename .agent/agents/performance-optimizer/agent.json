@@ -1,0 +1,6 @@
+{
+  "name": "performance-optimizer",
+  "description": "Performance profiling and optimization agent",
+  "version": "1.0.0",
+  "enabled": true
+}

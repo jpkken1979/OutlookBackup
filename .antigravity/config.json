@@ -1,0 +1,49 @@
+{
+  "gateway": "http://localhost:4747",
+  "ecosystem_root": "C:/Users/kenji/Github/Jpkken1979/uns-backup-app-v3.1",
+  "source_root": "C:/Users/kenji/Github/Jpkken1979/OpenAntigravity26.3.30",
+  "version": "6.1.4",
+  "memoryBackend": "mem0",
+  "registry": {
+    "mode": "remote-cache",
+    "cacheTtl": 900
+  },
+  "orchestrator": {
+    "mode": "agent-teams-lite"
+  },
+  "fallbackPolicy": [
+    "local-project",
+    "local-cache",
+    "remote-mcp"
+  ],
+  "mcp_servers": [
+    "antigravity",
+    "antigravity-agents",
+    "antigravity-skills",
+    "antigravity-observations",
+    "antigravity-intelligence",
+    "antigravity-ui",
+    "antigravity-watcher",
+    "antigravity-context-engine",
+    "stitch",
+    "context7",
+    "filesystem",
+    "git",
+    "chrome-devtools"
+  ],
+  "resolution_policy": {
+    "skills": [
+      "local-mcp",
+      "remote-mcp"
+    ],
+    "agents": [
+      "local-mcp",
+      "remote-mcp"
+    ],
+    "commands": [
+      "local-runtime",
+      "remote-mcp"
+    ]
+  },
+  "docs": "https://github.com/jokken79/AntigravitiSkillUSN"
+}

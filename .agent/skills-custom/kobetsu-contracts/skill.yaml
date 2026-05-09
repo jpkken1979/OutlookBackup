@@ -1,0 +1,255 @@
+name: kobetsu-contracts
+version: "1.0.0"
+type: generator
+status: production
+sandbox: true
+
+metadata:
+  title: Kobetsu Contracts Generator
+  description: Generate individual dispatch contracts (個別派遣契約) with validation, PDF/DOCX output
+  author: K. Kaneshiro / UNS Antigravity
+  license: Proprietary
+  created_at: "2026-04-03"
+  last_updated: "2026-04-03"
+  tags:
+    - contracts
+    - dispatch
+    - generation
+    - pdf
+    - docx
+    - japanese
+    - validation
+  category: business
+  ecosystem: antigravity
+
+capabilities:
+  - name: generate_contract
+    description: Generate a new Kobetsu contract with validation
+    operation: generate_contract
+    input_schema:
+      type: object
+      required:
+        - operation
+        - employee_id
+        - contract_number
+        - job_title
+        - work_location
+        - hourly_rate_jpy
+        - effective_date
+      properties:
+        operation:
+          type: string
+          enum: [generate_contract]
+        employee_id:
+          type: string
+          description: Employee ID
+        contract_number:
+          type: string
+          description: Unique contract identifier
+        job_title:
+          type: string
+          description: Job title (e.g., システムエンジニア)
+        work_location:
+          type: string
+          description: Work location
+        hourly_rate_jpy:
+          type: number
+          minimum: 800
+          description: Hourly rate in JPY (minimum ¥800)
+        effective_date:
+          type: string
+          format: date
+          description: Contract start date (YYYY-MM-DD)
+        expiration_date:
+          type: string
+          format: date
+          description: Contract end date (YYYY-MM-DD, optional)
+        client_company:
+          type: string
+          description: Client/dispatch company name
+        work_hours_daily:
+          type: number
+          default: 8.0
+          description: Daily work hours
+        work_days_weekly:
+          type: integer
+          default: 5
+          minimum: 1
+          maximum: 7
+          description: Weekly work days
+        monthly_minimum_hours:
+          type: number
+          description: Minimum monthly hours (optional)
+        benefits:
+          type: array
+          items:
+            type: string
+          description: List of benefits
+        terms_conditions:
+          type: string
+          description: Contract terms and conditions
+        notes:
+          type: string
+          description: Additional notes
+
+  - name: generate_output
+    description: Generate PDF and/or DOCX contract files
+    operation: generate_output
+    input_schema:
+      type: object
+      required:
+        - operation
+        - employee_id
+        - contract_number
+        - job_title
+        - work_location
+        - hourly_rate_jpy
+        - effective_date
+      properties:
+        operation:
+          type: string
+          enum: [generate_output]
+        employee_id:
+          type: string
+        contract_number:
+          type: string
+        job_title:
+          type: string
+        work_location:
+          type: string
+        hourly_rate_jpy:
+          type: number
+          minimum: 800
+        effective_date:
+          type: string
+          format: date
+        expiration_date:
+          type: string
+          format: date
+        output_formats:
+          type: array
+          items:
+            type: string
+            enum: [pdf, docx]
+          default: [pdf, docx]
+          description: Output formats to generate
+
+  - name: save_contract
+    description: Save contract to database with audit trail
+    operation: save_contract
+    input_schema:
+      type: object
+      required:
+        - operation
+        - employee_id
+        - contract_number
+        - job_title
+        - work_location
+        - hourly_rate_jpy
+        - effective_date
+      properties:
+        operation:
+          type: string
+          enum: [save_contract]
+        employee_id:
+          type: string
+        contract_number:
+          type: string
+        job_title:
+          type: string
+        work_location:
+          type: string
+        hourly_rate_jpy:
+          type: number
+          minimum: 800
+        effective_date:
+          type: string
+          format: date
+
+dependencies:
+  pydantic: ">=1.10"
+  jinja2: ">=3.0"
+  sqlite3: builtin
+optional_dependencies:
+  weasyprint: ">=58.0"
+  python-docx: ">=0.8.11"
+
+resources:
+  templates:
+    - path: templates/contract_japanese.jinja2
+      description: Japanese dispatch contract template
+    - path: templates/contract_base.html
+      description: HTML base template
+    - path: templates/styles.css
+      description: Print stylesheet
+  sql:
+    - path: sql_schema_extensions.sql
+      description: Database schema for contracts
+
+permissions:
+  - filesystem:
+      - read: templates/
+      - write: output/
+  - database:
+      - read: kobetsu_contracts
+      - write: kobetsu_contracts
+      - read: kobetsu_contracts_audit
+      - write: kobetsu_contracts_audit
+  - external:
+      - none
+
+sandbox_config:
+  timeout: 30
+  memory_limit: 512MB
+  cpu_limit: "1"
+  allow_network: false
+  allow_system_calls: false
+  filesystem_access: restricted
+
+performance:
+  generate_contract: "~100ms"
+  generate_output: "~1500ms"
+  save_contract: "~50ms"
+
+example_usage: |
+  {
+    "operation": "generate_contract",
+    "employee_id": "W001",
+    "contract_number": "KOB-2026-001",
+    "job_title": "システムエンジニア",
+    "work_location": "東京都渋谷区",
+    "hourly_rate_jpy": 2500.0,
+    "effective_date": "2026-04-01",
+    "expiration_date": "2027-03-31",
+    "benefits": ["健康保険", "厚生年金"]
+  }
+
+validation_rules:
+  - employee_id must exist in employee database
+  - contract_number must be unique
+  - hourly_rate_jpy must be >= 800
+  - effective_date must be valid ISO date
+  - expiration_date must be after effective_date
+
+error_codes:
+  E_EMPLOYEE_NOT_FOUND: "Employee ID does not exist"
+  E_CONTRACT_DUPLICATE: "Contract number already exists"
+  E_WAGE_VIOLATION: "Hourly rate below minimum wage"
+  E_DATE_INVALID: "Date format invalid or invalid date range"
+  E_DEPENDENCY_MISSING: "Required library not installed (weasyprint or python-docx)"
+
+compliance:
+  - japanese_dispatch_law: "Follows 派遣法 regulations"
+  - minimum_wage: "Enforces ¥800/hour minimum"
+  - audit_trail: "Complete audit trail for all changes"
+  - data_validation: "Comprehensive input validation"
+
+related_skills:
+  - payroll-processor
+  - hr-reports
+  - bot-telegram
+
+changelog:
+  - version: "1.0.0"
+    date: "2026-04-03"
+    notes: "Initial release (WEEK 2)"

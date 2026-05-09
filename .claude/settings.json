@@ -1,0 +1,37 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\".claude/hooks/scripts/session-report.sh\"",
+            "timeout": 10000
+          },
+          {
+            "type": "command",
+            "command": "\".claude/hooks/scripts/memory-sync.sh\"",
+            "timeout": 30000
+          }
+        ]
+      }
+    ]
+  },
+  "context": {
+    "autoInject": [
+      ".claude/rules/*.md"
+    ],
+    "maxTokens": 24000
+  },
+  "project": {
+    "name": "uns-backup-app-v3.1",
+    "description": "Proyecto integrado con Antigravity Agents"
+  },
+  "permissions": {
+    "allow": [
+      "write",
+      "C:/Users/kenji/Github/Jpkken1979/uns-backup-app-v3.1/src/web/**"
+    ]
+  }
+}

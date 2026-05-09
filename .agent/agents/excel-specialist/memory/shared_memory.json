@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "last_run": null,
+  "total_tasks": 0,
+  "total_sessions": 0,
+  "stats": {
+    "parse": 0,
+    "write": 0,
+    "live": 0,
+    "chart": 0,
+    "pivot": 0,
+    "macro": 0,
+    "power": 0
+  },
+  "last_errors": []
+}

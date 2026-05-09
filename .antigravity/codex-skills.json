@@ -1,0 +1,37 @@
+{
+  "source": "https://github.com/openai/skills",
+  "ref": "main",
+  "profile": "smart",
+  "installedAt": "2026-05-09T10:38:59.334857+00:00",
+  "codexHome": "C:\\Users\\kenji\\.codex",
+  "stack": {
+    "language": "python",
+    "framework": "",
+    "testing": [],
+    "ci": "github-actions",
+    "containerization": "",
+    "db": "",
+    "orm": "",
+    "styling": "",
+    "state": "",
+    "auth": "",
+    "payments": "",
+    "extra": {}
+  },
+  "selected": [
+    "gh-address-comments",
+    "gh-fix-ci",
+    "openai-docs",
+    "security-best-practices",
+    "yeet"
+  ],
+  "installed": [],
+  "skipped": [
+    "gh-address-comments",
+    "gh-fix-ci",
+    "openai-docs",
+    "security-best-practices",
+    "yeet"
+  ],
+  "errors": []
+}
