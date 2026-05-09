@@ -321,3 +321,56 @@ Match secundario: smtp o domain en TargetName o UserName.
 ## Registry paths de Outlook
 
 Busca en `HKCU\Software\Microsoft\Office\{ver}\Outlook\Profiles` (ver=16.0, 15.0, 14.0). Scanea valores REG_BINARY decodificando utf-16-le, buscando emails y server strings.
+
+---
+
+<!-- ANTIGRAVITY-START -->
+
+## Integracion Antigravity
+
+Proyecto integrado con **Antigravity v6.1.4**.
+Instalado por Nexus el 2026-05-09.
+
+### Persona activa: gentleman
+
+El estilo de comunicacion de la IA se adapta segun el modo de persona.
+Modos disponibles: `gentleman` (detallado, pedagogico), `neutral` (factual),
+`conciso` (minimalista). Configurar via `ANTIGRAVITY_PERSONA` env var o
+`.antigravity/config.json`. Ver `.claude/rules/persona.md` para detalles.
+
+### Runtime MCP-first
+
+```
+.agent/
+  agents/ skills/ skills-custom/ workflows/
+  scripts/ core/ mcp/ plugins/
+.claude/
+  settings.json hooks/ rules/
+.antigravity/
+  config.json sdk/ ai_manifest.json rules.md
+```
+
+### Clientes compatibles
+
+- Claude Code: `.claude/settings.json` + `.mcp.json`
+- Cursor: `.cursor/mcp.json` + `.cursorrules`
+- Windsurf: `.windsurf/mcp.json` + `.windsurfrules`
+- VS Code / Roo / Cline: `.vscode/mcp.json` y `.vscode/cline_mcp_settings.json`
+- Zed: `.zed/settings.json`
+- Cualquier IA/IDE con MCP: `.mcp.json` y `.antigravity/ai_manifest.json`
+
+### SDK Python
+
+```python
+from .antigravity.sdk.client import Client
+client = Client()
+result = client.run("explorer", "analiza el repo")
+```
+
+### Memoria
+
+- Memoria MCP: `antigravity-memory` (mem0)
+- Memoria de proyecto: `ESTADO_PROYECTO.md`
+- Reglas compartidas: `.claude/rules/` y `.antigravity/rules.md`
+
+<!-- ANTIGRAVITY-END -->
