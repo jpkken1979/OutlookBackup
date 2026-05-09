@@ -198,6 +198,7 @@ Para `merge`: busca source_store por `FilePath` match y target_store por `Displa
 | `import_engine.py` | Restore PST con 3 modos: `separate_folder`, `merge`, `new_files` |
 | `pst_inspector.py` | Preview de PST sin importarlo: monta, lee carpetas, top 5 senders, date range |
 | `history_manager.py` | Lista backups previos desde `backup_{timestamp}/` folders. `cleanup_old(keep_last)` borra los más viejos (solo exitosos) |
+| `shell_extractor.py` | Extrae archivos RAR y ejecuta scripts de migración (PowerShell, batch, VBS, EXE). Requiere WinRAR o 7-Zip instalado |
 | `scheduler.py` | Wrap de `schtasks.exe` (built-in Windows). `create_task()` soporta daily/weekly/biweekly (WEEKLY+MO2)/monthly/custom (DAILY+MO). Nombre fijo: `UNS-Outlook-Backup-Auto` |
 | `account_inventory.py` | Genera JSON con cuentas. `_read_registry_servers()` y `_read_credential_vault()` para server settings y passwords |
 | `crypto_utils.py` | AES-256-GCM + PBKDF2-HMAC-SHA256 (200K iter). `estimate_password_strength()` → score 0-100 con label japonés |
@@ -269,6 +270,7 @@ pyinstaller  — empaquetado a .exe
 cryptography — AES-256-GCM + PBKDF2 (inventario encriptado)
 pywebview    — WebView2 nativa para la UI
 pythonnet    — CLR loader requerido por pywebview en Windows
+rarfile      — Lectura de archivos RAR (requiere WinRAR o 7-Zip instalado)
 win32cred    — Windows Credential Vault para passwords
 winreg       — Registro de Windows para server settings y profile mapping
 ```

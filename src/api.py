@@ -608,6 +608,133 @@ class API:
                 return {"success": False, "error": str(e)}
 
     # ========================================================
+    # SHELL EXTRACTOR (RAR + Migration Scripts)
+    # ========================================================
+
+    def can_extract_rar(self) -> Dict:
+        """Verifica si se puede extraer RAR (unrar/7z instalado)."""
+        try:
+            from shell_extractor import ShellExtractor
+            extractor = ShellExtractor()
+            return {
+                "success": True,
+                "available": extractor.can_extract_rar(),
+                "unrar_path": extractor.unrar_path,
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e), "available": False}
+
+    def find_rar_files(self, directory: str) -> Dict:
+        """Busca archivos RAR en un directorio."""
+        try:
+            from shell_extractor import ShellExtractor
+            extractor = ShellExtractor()
+            files = extractor.find_rar_files(directory)
+            return {"success": True, "files": files, "count": len(files)}
+        except Exception as e:
+            log.exception("find_rar_files")
+            return {"success": False, "error": str(e), "files": []}
+
+    def extract_rar(self, params: Dict) -> Dict:
+        """Extrae un archivo RAR al directorio temporal."""
+        try:
+            from shell_extractor import ShellExtractor
+
+            rar_path = params.get("rar_path", "")
+            if not rar_path:
+                return {"success": False, "error": "rar_path required"}
+
+            extractor = ShellExtractor()
+            output_dir = extractor.get_extract_dir()
+
+            if not extractor.can_extract_rar():
+                return {
+                    "success": False,
+                    "error": "unrar.exe o 7z.exe no encontrado. Instale WinRAR o 7-Zip."
+                }
+
+            def progress(msg):
+                self._shell_log.append({
+                    "ts": datetime.datetime.now().isoformat(),
+                    "msg": msg,
+                })
+
+            def finish(success, info):
+                with self._shell_lock:
+                    self._shell_state = "success" if success else "failed"
+                    self._shell_result = info
+
+            self._shell_log = []
+            self._shell_state = "running"
+            self._shell_result = None
+            self._shell_lock = threading.Lock()
+
+            result = extractor.extract_rar(rar_path, output_dir, progress)
+            return result
+
+        except Exception as e:
+            log.exception("extract_rar")
+            return {"success": False, "error": str(e)}
+
+    def get_shell_progress(self) -> Dict:
+        """Polling del estado de extraccion/ejecucion."""
+        with getattr(self, '_shell_lock', threading.Lock()):
+            return {
+                "state": getattr(self, '_shell_state', "idle"),
+                "log": getattr(self, '_shell_log', [])[-50:],
+                "result": getattr(self, '_shell_result', None),
+            }
+
+    def run_migration_script(self, params: Dict) -> Dict:
+        """Ejecuta un script de migracion (PowerShell, batch, etc)."""
+        try:
+            from shell_extractor import ShellExtractor
+
+            script_path = params.get("script_path", "")
+            if not script_path:
+                return {"success": False, "error": "script_path required"}
+
+            if not os.path.exists(script_path):
+                return {"success": False, "error": f"Script no encontrado: {script_path}"}
+
+            extractor = ShellExtractor()
+
+            self._shell_log = []
+            self._shell_state = "running"
+            self._shell_result = None
+            self._shell_lock = threading.Lock()
+
+            def progress(msg):
+                self._shell_log.append({
+                    "ts": datetime.datetime.now().isoformat(),
+                    "msg": msg,
+                })
+
+            result = extractor.run_script(script_path, progress)
+
+            with self._shell_lock:
+                self._shell_state = "success" if result.get("success") else "failed"
+                self._shell_result = result
+
+            return result
+
+        except Exception as e:
+            log.exception("run_migration_script")
+            return {"success": False, "error": str(e)}
+
+    def open_extracted_folder(self) -> Dict:
+        """Abre la carpeta de extraccion en el explorador."""
+        try:
+            from shell_extractor import ShellExtractor
+            extractor = ShellExtractor()
+            folder = extractor.get_extract_dir()
+            os.makedirs(folder, exist_ok=True)
+            os.startfile(folder)
+            return {"success": True, "path": folder}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # ========================================================
     # App lifecycle
     # ========================================================
 

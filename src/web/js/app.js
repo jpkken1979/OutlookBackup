@@ -28,6 +28,8 @@ const App = {
         this.api = window.pywebview.api;
 
         this.bindUI();
+        this.bindTools();
+        await this.initTools();
         await this.loadConfig();
         this.startConnect();
     },
@@ -898,6 +900,165 @@ Continue?`);
         return String(s || '').replace(/[&<>"']/g, c => ({
             '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
         }[c]));
+    },
+
+    // ===== TOOLS TAB (RAR Extractor + Script Runner) =====
+    rarFiles: [],       // [{path, filename, size_mb, selected}]
+    extractedFiles: [],  // archivos extraidos
+    toolsPolling: null,
+
+    async initTools() {
+        // Check if RAR extraction is available
+        const r = await this.api.can_extract_rar();
+        if (!r.available) {
+            this.showToast('⚠️ RAR extraction unavailable: ' + (r.error || 'unrar/7z not found'), 'warning');
+        }
+    },
+
+    bindTools() {
+        document.getElementById('btn-tools-browse').addEventListener('click', () => this.chooseToolsFolder());
+        document.getElementById('btn-tools-scan').addEventListener('click', () => this.scanRarFiles());
+        document.getElementById('btn-tools-extract').addEventListener('click', () => this.extractSelectedRar());
+        document.getElementById('btn-tools-run').addEventListener('click', () => this.runSelectedScript());
+        document.getElementById('btn-tools-open-folder').addEventListener('click', () => this.openToolsFolder());
+    },
+
+    async chooseToolsFolder() {
+        const f = await this.api.choose_folder();
+        if (f) {
+            document.getElementById('tools-rar-folder').value = f;
+        }
+    },
+
+    async scanRarFiles() {
+        const folder = document.getElementById('tools-rar-folder').value;
+        if (!folder) {
+            this.showToast('Choose a folder first', 'warning');
+            return;
+        }
+
+        this.setStatus('🔍 Scanning for RAR files...');
+        const r = await this.api.find_rar_files(folder);
+        if (!r.success) {
+            this.showToast('Scan failed: ' + r.error, 'error');
+            return;
+        }
+
+        this.rarFiles = (r.files || []).map(f => ({...f, selected: false}));
+        this.renderRarList();
+        document.getElementById('tools-stat-rar').textContent = this.rarFiles.length;
+        this.setStatus(`✓ Found ${this.rarFiles.length} RAR files`);
+    },
+
+    renderRarList() {
+        const list = document.getElementById('rar-list');
+        if (this.rarFiles.length === 0) {
+            list.innerHTML = `<div class="empty-state"><div style="font-size:48px;">📦</div><p>No RAR files found</p></div>`;
+            return;
+        }
+        list.innerHTML = this.rarFiles.map((f, i) => `
+            <div class="rar-item ${f.selected ? 'selected' : ''}" data-idx="${i}">
+                <div class="rar-icon">📦</div>
+                <div class="rar-info">
+                    <div class="rar-name">${this.escape(f.filename)}</div>
+                    <div class="rar-meta">${this.escape(f.path)}</div>
+                </div>
+                <div class="rar-size">${f.size_mb} MB</div>
+            </div>
+        `).join('');
+        list.querySelectorAll('.rar-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const i = parseInt(el.dataset.idx);
+                this.rarFiles[i].selected = !this.rarFiles[i].selected;
+                el.classList.toggle('selected');
+            });
+        });
+    },
+
+    async extractSelectedRar() {
+        const selected = this.rarFiles.filter(f => f.selected);
+        if (selected.length === 0) {
+            this.showToast('Select at least one RAR file', 'warning');
+            return;
+        }
+
+        const ok = await this.confirm('EXTRACT RAR',
+            `${selected.length} RAR file(s) will be extracted.\nExtracted files will be saved to a temp folder.\n\nProceed?`);
+        if (!ok) return;
+
+        this.showProgress();
+        document.getElementById('progress-status').textContent = 'RAR展開中...';
+        this.extractedFiles = [];
+        let scriptsFound = [];
+
+        for (const rar of selected) {
+            const r = await this.api.extract_rar({rar_path: rar.path});
+            if (r.success) {
+                this.extractedFiles.push(...(r.files_extracted || []));
+                scriptsFound.push(...(r.scripts_found || []));
+            }
+        }
+
+        this.hideProgress();
+        document.getElementById('tools-stat-extracted').textContent = this.extractedFiles.length;
+        document.getElementById('tools-stat-scripts').textContent = scriptsFound.length;
+
+        this.alert('✅ EXTRACTION COMPLETE',
+            `${this.extractedFiles.length} files extracted.\n${scriptsFound.length} script(s) detected.\n\nClick "OPEN FOLDER" to view files.`);
+        this.setStatus('✓ RAR extraction complete');
+    },
+
+    async runSelectedScript() {
+        const selected = this.rarFiles.filter(f => f.selected);
+        if (selected.length === 0) {
+            this.showToast('Select a RAR file first', 'warning');
+            return;
+        }
+
+        const rar = selected[0];
+
+        // Extract first
+        const ok = await this.confirm('RUN SCRIPT',
+            `Extract "${rar.filename}" and run scripts automatically?\n\n⚠️ Make sure you trust the contents!`);
+        if (!ok) return;
+
+        this.showProgress();
+        document.getElementById('progress-status').textContent = 'Extracting...';
+
+        const extractR = await this.api.extract_rar({rar_path: rar.path});
+        if (!extractR.success) {
+            this.hideProgress();
+            this.showToast('Extraction failed: ' + extractR.error, 'error');
+            return;
+        }
+
+        const scripts = extractR.scripts_found || [];
+        if (scripts.length === 0) {
+            this.hideProgress();
+            this.alert('📦 NO SCRIPTS FOUND',
+                'RAR extracted but no executable scripts found.\n\nOpen folder to view contents.');
+            return;
+        }
+
+        // Run first script found
+        const script = scripts[0];
+        document.getElementById('progress-status').textContent = 'Running script...';
+
+        const runR = await this.api.run_migration_script({script_path: script});
+        this.hideProgress();
+
+        if (runR.success) {
+            this.alert('✅ SCRIPT COMPLETE',
+                `Script: ${this.escape(script)}\n\nOutput:\n${this.escape(runR.output || 'No output')}`);
+        } else {
+            this.alert('❌ SCRIPT FAILED',
+                `Script: ${this.escape(script)}\n\nError: ${this.escape(runR.error || 'Unknown error')}`);
+        }
+        this.setStatus(runR.success ? '✓ Script complete' : '❌ Script failed');
+    },
+
+    async openToolsFolder() {
+        await this.api.open_extracted_folder();
     },
 };
 

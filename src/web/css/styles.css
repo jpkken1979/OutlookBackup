@@ -984,3 +984,61 @@ code {
     font-size: 11px;
     color: var(--primary);
 }
+
+/* ===== TOOLS TAB (RAR Extractor) ===== */
+.rar-list {
+    max-height: 280px;
+    overflow-y: auto;
+    background: rgba(0, 132, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    margin-bottom: 12px;
+}
+.rar-list::-webkit-scrollbar { width: 6px; }
+.rar-list::-webkit-scrollbar-thumb { background: rgba(0, 212, 255, 0.3); }
+
+.rar-item {
+    background: rgba(0, 132, 255, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+.rar-item:hover { background: rgba(0, 132, 255, 0.1); }
+.rar-item.selected {
+    background: rgba(16, 185, 129, 0.1);
+    border-color: var(--success);
+    box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
+}
+.rar-icon { font-size: 24px; line-height: 1; }
+.rar-info { min-width: 0; }
+.rar-name {
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 13px; font-weight: 700;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rar-meta {
+    font-size: 10px; color: var(--text-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: Consolas, monospace;
+}
+.rar-size {
+    color: var(--primary);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 12px; font-weight: 700;
+    white-space: nowrap;
+}
+
+.btn-warning {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: white;
+    border: none;
+}
+.btn-warning:hover { background: linear-gradient(135deg, #d97706, #b45309); }

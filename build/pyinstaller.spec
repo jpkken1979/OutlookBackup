@@ -10,6 +10,7 @@ block_cipher = None
 
 hidden = collect_submodules('win32com')
 hidden += collect_submodules('webview')
+hidden += collect_submodules('rarfile')
 hidden += [
     'win32com.client', 'win32com.gen_py',
     'pywintypes', 'pythoncom',
@@ -25,6 +26,7 @@ hidden += [
     'import_engine', 'pst_inspector',
     'history_manager', 'scheduler',
     'account_inventory', 'cache_backup',
+    'shell_extractor',
 ]
 
 datas = [

@@ -64,6 +64,11 @@
             <span class="tab-icon">💾</span>
             <span class="tab-label">CACHE</span>
             <span class="tab-jp">キャッシュ</span>
+        </button>
+        <button class="tab" data-tab="tools">
+            <span class="tab-icon">🔧</span>
+            <span class="tab-label">TOOLS</span>
+            <span class="tab-jp">ツール</span>
             <span class="tab-badge">NEW</span>
         </button>
     </nav>
@@ -439,6 +444,88 @@
                     <div id="cache-log-section" style="display:none;">
                         <h2 class="panel-title">📋 CACHE BACKUP LOG</h2>
                         <div class="log-box" id="cache-log"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ TOOLS TAB (NEW v3.1) ============ -->
+        <section class="tab-content" data-tab-content="tools">
+            <div class="warn-banner">
+                🔧 <strong>ツール・RAR展開について</strong><br>
+                RARファイルを展開して、中身を実行します。Microsoft Office 365 migration scriptsなどに最適です。
+            </div>
+
+            <div class="layout-2col">
+                <aside class="sidebar">
+                    <div class="stat-card">
+                        <div class="stat-label">RAR FILES</div>
+                        <div class="stat-value blue" id="tools-stat-rar">-</div>
+                        <div class="stat-trend">found</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">EXTRACTED</div>
+                        <div class="stat-value green" id="tools-stat-extracted">-</div>
+                        <div class="stat-trend">files</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">SCRIPTS</div>
+                        <div class="stat-value red" id="tools-stat-scripts">-</div>
+                        <div class="stat-trend">detected</div>
+                    </div>
+                </aside>
+
+                <div class="main-panel">
+                    <h2 class="panel-title">📁 RAR ソースフォルダ</h2>
+
+                    <div class="form-row">
+                        <label>FOLDER:</label>
+                        <input type="text" id="tools-rar-folder" readonly>
+                        <button class="btn btn-secondary" id="btn-tools-browse">📁 BROWSE</button>
+                    </div>
+
+                    <div class="form-row">
+                        <label></label>
+                        <button class="btn btn-primary" id="btn-tools-scan">🔍 SCAN RAR FILES</button>
+                    </div>
+
+                    <h2 class="panel-title">📦 DETECTED RAR FILES</h2>
+                    <div class="rar-list" id="rar-list">
+                        <div class="empty-state">
+                            <div style="font-size: 48px;">📦</div>
+                            <p>Choose a folder and click "SCAN"</p>
+                        </div>
+                    </div>
+
+                    <h2 class="panel-title">⚡ ACTIONS</h2>
+
+                    <div class="form-row">
+                        <label></label>
+                        <button class="btn btn-success btn-big" id="btn-tools-extract">
+                            📦 EXTRACT SELECTED RAR
+                        </button>
+                        <button class="btn btn-warning btn-big" id="btn-tools-run" style="margin-left: 10px;">
+                            🚀 RUN SELECTED SCRIPT
+                        </button>
+                    </div>
+
+                    <div class="warn-banner critical" style="margin-top: 12px;">
+                        ⚠️ <strong>注意:</strong><br>
+                        • RARファイルを展開して中のスクリプトを実行します<br>
+                        • スクリプトはPowerShell (.ps1)、バッチ (.bat)、VBS (.vbs)、EXE等形式に対応<br>
+                        • 実行前にスクリプトの内容を確認することを推奨
+                    </div>
+
+                    <div class="form-row">
+                        <label></label>
+                        <button class="btn btn-secondary" id="btn-tools-open-folder">
+                            📂 OPEN EXTRACTED FOLDER
+                        </button>
+                    </div>
+
+                    <div id="tools-log-section" style="display:none;">
+                        <h2 class="panel-title">📋 TOOLS LOG</h2>
+                        <div class="log-box" id="tools-log"></div>
                     </div>
                 </div>
             </div>
