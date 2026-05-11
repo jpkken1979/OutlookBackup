@@ -4,3 +4,4 @@ cryptography>=42.0.0
 pywebview>=5.0
 pythonnet>=3.1.0rc0
 rarfile>=4.0
+structlog>=25.1.0
