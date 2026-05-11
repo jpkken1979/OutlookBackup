@@ -105,18 +105,73 @@ git push  # corre .github/workflows/quality.yml
 5. **`# noqa: F401` para Win32 availability probes** en lugar de configurar per-file-ignores. Documenta intencion linea por linea.
 6. **`requirements.txt` se mantiene** para compat con build.yml existente — `uv export --no-hashes > requirements.txt` lo regenera. Considerar migrar build.yml a uv en Fase 4.
 
-## Para la proxima sesion
+## Avance adicional en esta sesion: Fase 2 batches 1+2
 
-Cuando se retome el trabajo:
+Despues de cerrar Fase 1, el usuario dio carta blanca ("haz todo tu") y se
+avanzo con Fase 2 hasta donde fue seguro hacerlo en una sola sesion:
 
-1. **Verificacion manual pendiente**: correr `run.bat` y comprobar que UI funciona sin app.js legacy (handlers no se duplican).
-2. **Commit de Fase 1**: el usuario debe decidir el mensaje. Sugerencia: `feat(quality): pyproject + ruff + mypy + pytest + pre-commit (Fase 1)` + commit aparte `fix(auto): corregir ImportError y kwarg typo en flujo de inventario`.
-3. **Arrancar Fase 2** (recomendado proximo paso):
-   - Crear `src/outlook/protocols.py` con Protocols: `OutlookApplication`, `Namespace`, `Store`, `Folder`, `Account`.
-   - Crear `src/outlook/real.py` adapter que envuelve `win32com.client.Dispatch`.
-   - Crear `src/outlook/fakes.py` implementacion in-memory para tests.
-   - Refactorizar `outlook_client.py`, `backup_engine.py`, `import_engine.py` para depender de Protocols.
-   - Tests con coverage target 70%+ en los engines core.
+### Fase 2 batch 1 (commit 8643601)
+
+- `src/outlook/protocols.py` — 7 Protocols (PEP 544) @runtime_checkable:
+  ApplicationProtocol, NamespaceProtocol, StoreProtocol, FolderProtocol,
+  ItemsProtocol, MailItemProtocol, AccountProtocol.
+- `src/outlook/constants.py` — olDefaultFolders, olStoreType, olSaveAsType,
+  Account.AccountType. Evita depender de la enum dinamica de EnsureDispatch.
+- `src/outlook/fakes.py` — FakeApplication/Namespace/Store/Folder/Items/
+  MailItem/Account dataclass-based con trace de operaciones (`_saved_to`,
+  `_copied_to`, `_added_stores`) para assertions naturales.
+- `tests/test_outlook_fakes.py` — 24 tests cubriendo conformance de
+  Protocols, semantica de operaciones COM simuladas, valores de constantes.
+- Bug fixeado durante el batch: FakeFolder.CopyTo duplicaba subcarpetas
+  en recursion (el append del return value mas el side-effect de la
+  recursion daban duplicado).
+
+### Fase 2 batch 2 (commit 1912245)
+
+- `src/outlook/real.py` — adapter via Dispatch:
+  * `create_outlook_application()` factory tipada
+  * `outlook_session()` context manager con CoInitialize/CoUninitialize
+  * `OutlookUnavailableError` exception especifica
+- 3 tests adicionales para el adapter (32 tests verde total).
+- Gotcha documentado: los mocks de `win32com` y `win32com.client` en
+  conftest son entries SEPARADAS en sys.modules. `import win32com.client`
+  no las linkea automaticamente cuando son MagicMocks. Aserciones deben
+  hacerse en el path real `win32com.client.Dispatch`, no via
+  `sys.modules['win32com.client']`.
+
+### Estado final tras esta sesion
+
+```
+$ git log --oneline -3
+1912245 feat(outlook): real adapter via Dispatch (Fase 2 batch 2)
+8643601 feat(outlook): capa Protocols + fakes para tests (Fase 2 batch 1)
+2ec2379 feat(quality): toolchain uv+ruff+mypy+pytest+pre-commit (Fase 1)
+
+$ uv run pytest tests/ --tb=no -q
+32 passed in 0.23s
+
+$ uv run ruff check src tests
+All checks passed!
+```
+
+### Lo que falta para terminar Fase 2 (proxima sesion)
+
+**El refactor de los engines es la pieza riesgosa que se dejo para una
+sesion dedicada** porque toca el flujo central de backup. Pasos:
+
+1. Refactor `outlook_client.py` para aceptar NamespaceProtocol en `__init__`
+   con factory function `OutlookClient.from_dispatch()` para uso real.
+2. Refactor `backup_engine.py` para tipar `outlook_client.namespace` como
+   NamespaceProtocol y no depender de Dispatch directo.
+3. Mismo refactor en `import_engine.py`.
+4. Tests del core con fakes: backup multi-cuenta, import en 3 modos,
+   cache backup. Target 70%+ coverage.
+5. Tests existentes (smoke) revisados para usar el nuevo flujo.
+
+### Pendiente del usuario
+
+- **Smoke test manual de la UI**: correr `run.bat` y verificar que la
+  app sigue funcionando sin app.js legacy. Esto sigue pendiente.
 
 ## Riesgos
 
