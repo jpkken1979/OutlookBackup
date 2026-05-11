@@ -312,3 +312,136 @@ Coverage observability:  87% global
 `run.bat` y verificar que la UI funciona normal sin app.js legacy
 (handlers no se duplican). Esta validacion sigue pendiente del lado del
 usuario porque no se puede probar la WebView2 desde la sesion.
+
+## Tercer `/jp continuar` — 4 batches finales
+
+Tras el segundo cierre, el usuario invoco `/jp continuar`. Se cerraron
+los 4 ultimos pendientes del plan original + un test E2E del flujo de
+backup como Fase 3 batch 2.
+
+### CI: playwright install step (commit 84c12e6)
+
+`.github/workflows/quality.yml`:
+- + cache de browsers (`actions/cache@v4`) con key derivada de pyproject.
+- + `uv run playwright install --with-deps chromium` antes de pytest.
+  `--with-deps` instala libs del sistema en Linux; Windows ignora la flag.
+- Timeout bumpeado a 15min para acomodar el download de chromium en cache miss.
+
+### api.py cleanup — 16 errores mypy fixeados (commit 84c12e6)
+
+Bugs reales descubiertos por mypy y fixeados:
+- `test_connection`: importaba `ConnectionTester` que NO EXISTE. Reemplazado
+  por `test_account_connection` que ya hace todo el flujo (registry +
+  IMAP/SMTP). ~50 lineas de codigo muerto borradas.
+- `export_inventory`: kwarg `selected_smtps` corregido a
+  `selected_smtp_addresses`. Mismo bug que main.py tenia.
+- `export_inventory`: validacion `output_dir` no-None antes de makedirs.
+- `save_schedule`: valida `frequency` y `time` obligatorios antes de
+  pasarlos a `create_task`.
+
+Tipos modernizados:
+- `choose_folder(initial: str = None)` -> `str | None = None`.
+- `choose_files`: mismo tratamiento.
+- `file_types: tuple[str, ...] = ()` anotacion.
+- `list_history(base_dir: str = None)` -> `str | None`.
+- `_shell_log: list[dict] = []` anotacion (solo en primera asignacion).
+
+### i18n unify Python<->JS (commit 7067cba)
+
+Antes: `src/i18n.py` tenia un dict JA con ~200 keys hardcoded Y
+`src/web/js/i18n/ja.json` tenia las mismas keys + nuevas que solo JS
+agrego. Divergencia real: Python tenia `tab_settings` outdated.
+
+Cambio:
+- `src/i18n.py` reescrito de 200 lineas a 75. La funcion `t(key, **kwargs)`
+  carga `ja.json` on-demand via `lru_cache(maxsize=1)`. Path relativo a
+  `__file__` funciona en dev y en PyInstaller binary (el spec ya copia
+  `src/web/` a `web/` en el binario).
+- `all_strings()` para debug, devuelve copia.
+- Fallback defensivo: si `ja.json` no se carga, `t(key)` retorna la key.
+
+Verificacion previa: `grep` confirmo que NADIE importa `i18n.t()` desde
+Python actualmente. Era codigo muerto en Python.
+
+7 tests nuevos en `tests/test_i18n.py`.
+
+### Mypy strict completo — 0 errores en TODO src/ (commit 3fcb879)
+
+De 34 errores advisory a 0 tras esta tanda + las anteriores.
+
+Fixes aplicados:
+- `history_manager.py`: anotaciones de `backups: list[dict]` y
+  `info: dict[str, Any]`. Renombrado `for f in backup_dir.glob("*.pst")`
+  a `pst_file` para evitar shadowing del `f` del `with open() as f:`
+  (mypy lo tenia trackeado como TextIOWrapper).
+- `account_inventory.py`: `found: dict[str, Any]` annotations + `Any`
+  import.
+- `cache_backup.py`: `dirs: list[Path]`, `results: list[dict[str, Any]]`,
+  `seen_paths: set[str]`, `account_map: dict[str, str]`. La anotacion
+  de `results` resolvio el bug del sort key (object no es SupportsDunderLT).
+- `shell_extractor.py`: `result: dict[str, Any]` para que `.append()`
+  en listas funcione. + `results: list[dict[str, Any]]`.
+- `pst_inspector.py`: `result: dict[str, Any]` en la declaracion.
+
+`pyproject.toml`: 11 modulos ahora con `disallow_untyped_defs = true` y
+`warn_return_any = true` per-module:
+- crypto_utils, config, connection_tester, i18n
+- observability + .crash, .logging, .updater
+- outlook.protocols, outlook.constants
+- **history_manager** (nuevo)
+
+Modulos NO strict todavia (pasan mypy global pero les faltan signatures
+completas): account_inventory, cache_backup, shell_extractor,
+pst_inspector, backup_engine, import_engine, api.py, main.py.
+
+### Fase 3 batch 2 — E2E backup polling (commit fc19acc)
+
+4 tests E2E nuevos en `tests/e2e/test_backup_flow.py`:
+- `test_polling_sequences_through_running_to_success`: override de
+  `get_backup_progress` retorna running 2 veces, despues success. Simula
+  el loop via `page.evaluate` (BackupPage es const closure, no via window).
+- `test_progress_overlay_visible_when_running`: validacion DOM
+  `#progress-overlay` con `display: flex`.
+- `test_progress_percent_updates_from_log_message`: render del percent.
+- `test_clicking_detect_calls_api`: click DETECT dispara `detect_accounts`.
+
+Decision: no inflar codigo de produccion exponiendo `BackupPage` a
+`window` solo para tests. Los tests usan `__mockApiOverrides` para
+mockear runtime + simulan el loop con page.evaluate.
+
+## ESTADO FINAL del refactor completo
+
+```
+git log --oneline -10
+fc19acc test(e2e): backup polling state machine + account list (Fase 3 batch 2)
+3fcb879 chore(types): mypy 0 errores en TODO src/
+7067cba refactor(i18n): unificar Python/JS — ja.json como fuente unica
+84c12e6 fix(api): limpiar 16 errores mypy + bugs reales + CI playwright step
+034cd5e chore(memory): documentar segundo /jp con 3 batches adicionales
+b049ef1 chore(types): mypy strict per-module en 9 modulos limpios
+81ec4c6 test(e2e): Playwright scaffold + 9 E2E tests del frontend
+a22ee5b feat(main): integrar observability + crash handler en bootstrap
+f2e796f chore(memory): documentar sesion 2026-05-12
+8b48c40 feat(observability): structlog + crash reporter + update check (Fase 4)
+
+Tests:                   107 passed (87 unit + 13 E2E + 7 i18n)
+ruff check:              All checks passed!
+ruff format:             36 files already formatted
+mypy src:                Success: no issues found in 24 source files
+                         (era 35 errores advisory al arrancar)
+Modulos strict:          11 (era 0)
+Bugs reales fixeados:    ConnectionTester typo, selected_smtps typo,
+                         ImportError en inventario, _MEIPASS attr,
+                         null check webview.windows
+Coverage core engines:   backup 88%, import 73%, fakes 99%, observability 87%
+```
+
+## TODO menor pendiente
+
+1. Completar signatures de funciones legacy en 4 modulos no-strict:
+   account_inventory, cache_backup, shell_extractor, pst_inspector.
+   Despues sumar a strict per-module.
+2. Smoke test UI del lado del usuario (no se puede desde aqui).
+3. backup_engine, import_engine, api.py, main.py necesitan anotacion
+   de bodies de funciones para subir a strict (low priority, todos
+   pasan ya con relaxed config).
