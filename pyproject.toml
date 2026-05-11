@@ -129,22 +129,37 @@ module = [
 ]
 ignore_missing_imports = true
 
-# Strict per-module — activado para modulos limpios. Ir sumando a medida que
-# los demas se limpien en futuros refactors.
+# Strict per-module — modulos que pasan mypy strict.
+# Ir agregando aqui a medida que se anota completamente cada modulo
+# (parametros + return types en todas las funciones).
 [[tool.mypy.overrides]]
 module = [
+    # Base
     "crypto_utils",
     "config",
     "connection_tester",
+    "i18n",
+    # Observability
     "observability",
     "observability.crash",
     "observability.logging",
     "observability.updater",
+    # Outlook abstraction
     "outlook.protocols",
     "outlook.constants",
+    # Manejadores
+    "history_manager",
 ]
 disallow_untyped_defs = true
 warn_return_any = true
+
+# Modulos pendientes de anotar para strict (proximo refactor):
+# - account_inventory: 2 funciones sin params type (callbacks COM)
+# - cache_backup:      10 funciones (lambdas, methods sin -> None)
+# - shell_extractor:   1 funcion (__init__ sin -> None)
+# - pst_inspector:     3 funciones (_walk con folder dinamico)
+# Estos pasan mypy con la config global relaxed. La inferencia es buena
+# pero las anotaciones explicitas ayudan al lector.
 
 # =============================================================
 # Pytest — config + coverage

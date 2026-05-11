@@ -12,6 +12,7 @@ import tempfile
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 # rarfile necesita unrar.exe o winrar
 try:
@@ -75,7 +76,7 @@ class ShellExtractor:
         Returns:
             Dict con success, files_extracted, output_dir, scripts_found
         """
-        result = {
+        result: dict[str, Any] = {
             "success": False,
             "rar_path": rar_path,
             "output_dir": output_dir,
@@ -163,7 +164,7 @@ class ShellExtractor:
         Returns:
             Lista de dicts con {path, filename, size_mb, modified}
         """
-        results = []
+        results: list[dict[str, Any]] = []
 
         try:
             path = Path(directory)

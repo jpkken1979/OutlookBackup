@@ -9,6 +9,7 @@ import datetime
 import json
 import shutil
 from pathlib import Path
+from typing import Any
 
 
 class BackupHistory:
@@ -19,7 +20,7 @@ class BackupHistory:
 
     def list_backups(self) -> list[dict]:
         """Devuelve lista de backups previos, ordenados por fecha desc."""
-        backups = []
+        backups: list[dict] = []
         if not self.base_dir.exists():
             return backups
 
@@ -39,7 +40,7 @@ class BackupHistory:
     def _read_backup(self, backup_dir: Path) -> dict | None:
         """Lee el report.json y devuelve info estructurada."""
         report_path = backup_dir / "report.json"
-        info = {
+        info: dict[str, Any] = {
             "path": str(backup_dir),
             "name": backup_dir.name,
             "start_time": None,
@@ -85,14 +86,16 @@ class BackupHistory:
                 # Sin report.json → tratar de inferir desde nombre
                 info["status"] = "incomplete"
 
-            # Buscar archivos PST y HTML report
-            for f in backup_dir.glob("*.pst"):
-                size_mb = round(f.stat().st_size / (1024 * 1024), 2)
+            # Buscar archivos PST y HTML report.
+            # Nota: nombre `pst_file` (no `f`) para evitar shadowing del `f`
+            # del `with open() as f:` arriba — mypy quedaba confundido con el tipo.
+            for pst_file in backup_dir.glob("*.pst"):
+                size_mb = round(pst_file.stat().st_size / (1024 * 1024), 2)
                 info["pst_files"].append(
                     {
-                        "name": f.name,
+                        "name": pst_file.name,
                         "size_mb": size_mb,
-                        "path": str(f),
+                        "path": str(pst_file),
                     }
                 )
 

@@ -6,6 +6,7 @@ Lo monta temporalmente, recorre carpetas, lo desmonta.
 """
 
 import os
+from typing import Any
 
 
 class PSTInspector:
@@ -19,7 +20,7 @@ class PSTInspector:
         Monta el PST, recorre su contenido, lo desmonta.
         Devuelve estadísticas: carpetas, total emails, top folders.
         """
-        result = {
+        result: dict[str, Any] = {
             "file": pst_path,
             "filename": os.path.basename(pst_path),
             "size_mb": 0,

@@ -17,6 +17,7 @@ import shutil
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 try:
     import winreg
@@ -30,7 +31,7 @@ except ImportError:
 
 def get_outlook_cache_dirs() -> list[Path]:
     """Devuelve las rutas donde Outlook típicamente guarda OST/PST."""
-    dirs = []
+    dirs: list[Path] = []
     if os.name != "nt":
         return dirs
 
@@ -52,8 +53,8 @@ def get_outlook_cache_dirs() -> list[Path]:
 def find_cache_files() -> list[dict]:
     """Encuentra todos los archivos OST/PST en las rutas conocidas.
     Devuelve metadata sin abrirlos."""
-    results = []
-    seen_paths = set()
+    results: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
 
     for d in get_outlook_cache_dirs():
         try:
@@ -97,7 +98,7 @@ def map_cache_to_account(cache_files: list[dict]) -> list[dict]:
         return cache_files
 
     # Leer rutas de cuentas en el registro
-    account_map = {}  # filename -> smtp_address
+    account_map: dict[str, str] = {}  # filename -> smtp_address
     try:
         versions = ["16.0", "15.0", "14.0"]
         for ver in versions:

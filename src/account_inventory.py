@@ -11,6 +11,7 @@ import datetime
 import json
 import os
 import socket
+from typing import Any
 
 try:
     import winreg
@@ -140,7 +141,7 @@ def _read_registry_servers(smtp_address: str) -> dict | None:
     if not smtp_address or os.name != "nt":
         return None
 
-    found = {}
+    found: dict[str, Any] = {}
     versions = ["16.0", "15.0", "14.0"]
 
     for ver in versions:
@@ -206,10 +207,10 @@ def _read_registry_servers(smtp_address: str) -> dict | None:
     return {k: v for k, v in result.items() if v}
 
 
-def _scan_registry_values(reg_key) -> dict:
+def _scan_registry_values(reg_key: Any) -> dict:
     """Escanea todos los valores buscando datos útiles (heurísticas)."""
-    found = {}
-    extra_strings = []
+    found: dict[str, Any] = {}
+    extra_strings: list[str] = []
 
     try:
         i = 0
