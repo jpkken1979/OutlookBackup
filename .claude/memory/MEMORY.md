@@ -4,7 +4,8 @@ Indice de memorias persistentes del proyecto. Sincronizadas con git para multi-P
 
 ## Sesiones
 - [Sesion 2026-05-08](session_2026-05-08.md) — Publicacion release v3.1.0 con .exe descargable
-- [Sesion 2026-05-11 — Fase 1 quality toolchain](session_2026-05-11_fase1_quality_toolchain.md) — Setup uv+ruff+mypy+pytest+pre-commit, eliminar app.js legacy, fixear 4 bugs reales en main.py descubiertos por mypy
+- [Sesion 2026-05-11 — Fase 1 quality toolchain](session_2026-05-11_fase1_quality_toolchain.md) — Setup uv+ruff+mypy+pytest+pre-commit, eliminar app.js legacy, fixear 4 bugs reales en main.py descubiertos por mypy. Incluye Fase 2 batches 1 y 2 (Protocols + fakes + real adapter, 32 tests).
+- [Sesion 2026-05-12 — Fase 2 batch 3 + Fase 4](session_2026-05-12_fase2_fase4.md) — Refactor engines (backup+import) con OutlookClientProtocol + FakeOutlookClient, tests core con 70%+ coverage. Capa observability/ con structlog + crash reporter + GitHub release checker. 87 tests total, 4 commits pusheados a main.
 
 ## Descubrimientos
 - [PyInstaller SPECPATH](discovery_pyinstaller_specpath.md) — Paths del spec relativos al dir del spec, no al CWD
