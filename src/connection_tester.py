@@ -9,6 +9,7 @@ import logging
 import socket
 import ssl
 import time
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -398,11 +399,11 @@ def _read_registry_servers(smtp_address: str) -> dict | None:
     return {k: v for k, v in result.items() if v is not None}
 
 
-def _scan_registry_values(reg_key) -> dict:
+def _scan_registry_values(reg_key: Any) -> dict:
     """Scan all values in a registry key looking for email/server data.
 
     Args:
-        reg_key: Open winreg key
+        reg_key: Open winreg key (winreg.HKEYType, tipado como Any para Linux compat)
 
     Returns:
         Dict with email, incoming_server, outgoing_server, port_*, _outlook_version
@@ -515,9 +516,9 @@ def _infer_port(servers: dict, direction: str, ssl_port: int, plain_port: int) -
     for p in ports:
         proto = p.get("protocol", "")
         if direction == "incoming" and proto in ("imaps", "imap"):
-            return p.get("port", ssl_port)
+            return int(p.get("port", ssl_port))
         if direction == "outgoing" and proto in ("smtps", "smtp_starttls", "smtp"):
-            return p.get("port", ssl_port)
+            return int(p.get("port", ssl_port))
 
     # Default: use SSL port for imaps/smtps, plain for others
     if direction == "incoming":

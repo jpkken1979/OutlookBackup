@@ -92,7 +92,8 @@ def decrypt_file_to_dict(input_path: str, password: str) -> dict:
     except InvalidTag:
         raise ValueError("マスターパスワードが間違っています")
 
-    return json.loads(plaintext.decode("utf-8"))
+    decoded: dict = json.loads(plaintext.decode("utf-8"))
+    return decoded
 
 
 def estimate_password_strength(password: str) -> tuple[int, str]:

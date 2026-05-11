@@ -57,7 +57,7 @@ DEFAULT_CONFIG = {
 class Config:
     """Manejador de configuración persistente."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.path = get_config_dir() / "config.json"
         self.data: dict[str, Any] = self._load()
 
@@ -74,18 +74,18 @@ class Config:
                 print(f"Error leyendo config: {e}, usando defaults")
         return DEFAULT_CONFIG.copy()
 
-    def save(self):
+    def save(self) -> None:
         try:
             with open(self.path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"Error guardando config: {e}")
 
-    def get(self, key: str, default=None):
+    def get(self, key: str, default: Any = None) -> Any:
         return self.data.get(key, default)
 
-    def set(self, key: str, value: Any):
+    def set(self, key: str, value: Any) -> None:
         self.data[key] = value
 
-    def update(self, **kwargs):
+    def update(self, **kwargs: Any) -> None:
         self.data.update(kwargs)

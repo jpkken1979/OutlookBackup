@@ -78,7 +78,9 @@ def _collect_env_sanitized() -> dict[str, str]:
     return result
 
 
-def _build_crash_report(exc_type: type, exc_value: BaseException, exc_tb: Any) -> dict:
+def _build_crash_report(
+    exc_type: type[BaseException], exc_value: BaseException, exc_tb: Any
+) -> dict:
     """Construye el dict del crashdump."""
     tb_str = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
     return {
@@ -100,7 +102,9 @@ def _build_crash_report(exc_type: type, exc_value: BaseException, exc_tb: Any) -
     }
 
 
-def write_crash_report(exc_type: type, exc_value: BaseException, exc_tb: Any) -> Path:
+def write_crash_report(
+    exc_type: type[BaseException], exc_value: BaseException, exc_tb: Any
+) -> Path:
     """Escribe el crash a disco. Devuelve el path."""
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     out = get_crashdumps_dir() / f"crash_{timestamp}.json"
@@ -117,7 +121,7 @@ def install_crash_handler() -> None:
     """
     previous_hook = sys.excepthook
 
-    def _crash_hook(exc_type: type, exc_value: BaseException, exc_tb: Any) -> None:
+    def _crash_hook(exc_type: type[BaseException], exc_value: BaseException, exc_tb: Any) -> None:
         # Excluir KeyboardInterrupt del crashdump — es exit normal del usuario
         if issubclass(exc_type, KeyboardInterrupt):
             previous_hook(exc_type, exc_value, exc_tb)

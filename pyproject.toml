@@ -129,18 +129,22 @@ module = [
 ]
 ignore_missing_imports = true
 
-# Strict per-module — desactivado hasta Fase 2.
-# Cuando se limpien los tipos de un modulo, agregarlo aca:
-#
-# [[tool.mypy.overrides]]
-# module = ["crypto_utils", "config", "connection_tester"]
-# disallow_untyped_defs = true
-# warn_return_any = true
-#
-# Modulos candidatos en orden (de mas limpios a mas sucios):
-# 1. crypto_utils — 1 error pendiente (cast en decrypt_file_to_dict)
-# 2. config       — 5 errores pendientes (return types None faltantes)
-# 3. connection_tester — 3 errores pendientes (params + Any returns)
+# Strict per-module — activado para modulos limpios. Ir sumando a medida que
+# los demas se limpien en futuros refactors.
+[[tool.mypy.overrides]]
+module = [
+    "crypto_utils",
+    "config",
+    "connection_tester",
+    "observability",
+    "observability.crash",
+    "observability.logging",
+    "observability.updater",
+    "outlook.protocols",
+    "outlook.constants",
+]
+disallow_untyped_defs = true
+warn_return_any = true
 
 # =============================================================
 # Pytest — config + coverage
