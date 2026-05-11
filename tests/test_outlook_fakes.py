@@ -201,3 +201,44 @@ class TestConstants:
         # Verifica que todos los tipos numericos tienen nombre
         for type_id in range(6):
             assert type_id in olc.ACCOUNT_TYPE_NAMES
+
+
+class TestRealAdapter:
+    """Verifica el real.py adapter (usa mocks de win32com del conftest)."""
+
+    def test_module_imports(self) -> None:
+        """real.py debe importar sin error incluso en Linux (los imports COM
+        son lazy dentro de create_outlook_application)."""
+        from outlook import real
+
+        assert hasattr(real, "create_outlook_application")
+        assert hasattr(real, "outlook_session")
+        assert hasattr(real, "OutlookUnavailableError")
+
+    def test_create_application_uses_dispatch(self) -> None:
+        """La factory llama Dispatch('Outlook.Application')."""
+        # win32com esta mockeado en conftest — Dispatch retorna otro Mock.
+        # Importante: `import win32com.client` accede al mock parent y crea
+        # un attr `client` AUTO-generado por MagicMock, no el sys.modules entry.
+        # Por eso buscamos la llamada en win32com.client.Dispatch (path real).
+        import win32com.client
+
+        from outlook import real
+
+        win32com.client.Dispatch.reset_mock()  # clean slate
+        app = real.create_outlook_application()
+
+        win32com.client.Dispatch.assert_called_with("Outlook.Application")
+        assert app is not None
+
+    def test_outlook_session_calls_couninitialize(self) -> None:
+        """El context manager hace CoUninitialize al salir."""
+        import pythoncom
+
+        from outlook import real
+
+        pythoncom.CoUninitialize.reset_mock()
+        with real.outlook_session() as app:
+            assert app is not None
+
+        assert pythoncom.CoUninitialize.called
