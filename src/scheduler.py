@@ -4,19 +4,17 @@ UNS Backup v2.0 - Windows Task Scheduler Integration
 Crea/elimina/consulta tareas programadas usando schtasks.exe (built-in Windows).
 """
 
-import os
-import sys
-import subprocess
 import datetime
-from typing import Optional, Dict
-
+import os
+import subprocess
+import sys
 
 TASK_NAME = "UNS-Outlook-Backup-Auto"
 
 
 def get_app_executable() -> str:
     """Detecta la ruta del .exe (en build PyInstaller) o python script (dev)."""
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         return sys.executable
     return f'"{sys.executable}" "{os.path.abspath(sys.argv[0])}"'
 
@@ -25,7 +23,7 @@ def _run_schtasks(args: list, capture: bool = True) -> subprocess.CompletedProce
     """Ejecuta schtasks.exe y devuelve el resultado."""
     cmd = ["schtasks"] + args
     creationflags = 0
-    if os.name == 'nt':
+    if os.name == "nt":
         creationflags = subprocess.CREATE_NO_WINDOW
 
     try:
@@ -33,8 +31,8 @@ def _run_schtasks(args: list, capture: bool = True) -> subprocess.CompletedProce
             cmd,
             capture_output=capture,
             text=True,
-            encoding='cp932' if os.name == 'nt' else 'utf-8',
-            errors='ignore',
+            encoding="cp932" if os.name == "nt" else "utf-8",
+            errors="ignore",
             creationflags=creationflags,
             timeout=30,
         )
@@ -53,12 +51,10 @@ def task_exists() -> bool:
         return False
 
 
-def get_task_info() -> Optional[Dict]:
+def get_task_info() -> dict | None:
     """Devuelve info de la tarea programada actual."""
     try:
-        result = _run_schtasks([
-            "/Query", "/TN", TASK_NAME, "/FO", "CSV", "/V"
-        ])
+        result = _run_schtasks(["/Query", "/TN", TASK_NAME, "/FO", "CSV", "/V"])
         if result.returncode != 0:
             return None
 
@@ -69,6 +65,7 @@ def get_task_info() -> Optional[Dict]:
         # CSV headers + values
         import csv
         from io import StringIO
+
         reader = csv.DictReader(StringIO(result.stdout))
         rows = list(reader)
         if not rows:
@@ -88,9 +85,9 @@ def get_task_info() -> Optional[Dict]:
         return None
 
 
-def create_task(frequency: str, time_hhmm: str,
-                day_of_week: str = "MON",
-                custom_days: int = 7) -> bool:
+def create_task(
+    frequency: str, time_hhmm: str, day_of_week: str = "MON", custom_days: int = 7
+) -> bool:
     """
     Crea una tarea programada.
     :param frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom'
@@ -100,13 +97,16 @@ def create_task(frequency: str, time_hhmm: str,
     """
     # Construir comando
     exe = get_app_executable()
-    tr = f'{exe} --auto'
+    tr = f"{exe} --auto"
 
     args = [
         "/Create",
-        "/TN", TASK_NAME,
-        "/TR", tr,
-        "/ST", time_hhmm,
+        "/TN",
+        TASK_NAME,
+        "/TR",
+        tr,
+        "/ST",
+        time_hhmm,
         "/F",  # forzar overwrite si existe
     ]
 
@@ -157,9 +157,9 @@ def run_task_now() -> bool:
         return False
 
 
-def calculate_next_run(frequency: str, time_hhmm: str,
-                        day_of_week: str = "MON",
-                        custom_days: int = 7) -> str:
+def calculate_next_run(
+    frequency: str, time_hhmm: str, day_of_week: str = "MON", custom_days: int = 7
+) -> str:
     """Calcula la próxima ejecución estimada (para mostrar al usuario)."""
     try:
         now = datetime.datetime.now()
@@ -169,8 +169,7 @@ def calculate_next_run(frequency: str, time_hhmm: str,
         if next_run <= now:
             next_run += datetime.timedelta(days=1)
 
-        days_map = {"MON": 0, "TUE": 1, "WED": 2, "THU": 3,
-                     "FRI": 4, "SAT": 5, "SUN": 6}
+        days_map = {"MON": 0, "TUE": 1, "WED": 2, "THU": 3, "FRI": 4, "SAT": 5, "SUN": 6}
 
         if frequency == "weekly":
             target_dow = days_map.get(day_of_week, 0)

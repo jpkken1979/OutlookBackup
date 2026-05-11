@@ -38,3 +38,16 @@ Thumbs.db
 
 # OMC cache
 .omc/
+
+# Quality toolchain caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# uv
+.uv-cache/
+# uv.lock SI se commitea — reproducibilidad de deps entre PCs y CI

@@ -4,12 +4,11 @@ UNS Outlook Backup - Motor de backup
 Maneja el proceso de backup con threading y genera reportes.
 """
 
-import os
-import json
 import datetime
+import json
+import os
 import threading
-from pathlib import Path
-from typing import List, Callable, Optional
+from collections.abc import Callable
 
 
 class BackupReport:
@@ -17,7 +16,7 @@ class BackupReport:
 
     def __init__(self):
         self.start_time = datetime.datetime.now()
-        self.end_time: Optional[datetime.datetime] = None
+        self.end_time: datetime.datetime | None = None
         self.accounts_processed = []
         self.errors = []
         self.total_emails = 0
@@ -29,10 +28,12 @@ class BackupReport:
         self.total_emails += account_data.get("emails", 0)
 
     def add_error(self, message: str):
-        self.errors.append({
-            "time": datetime.datetime.now().isoformat(),
-            "message": message,
-        })
+        self.errors.append(
+            {
+                "time": datetime.datetime.now().isoformat(),
+                "message": message,
+            }
+        )
 
     def finish(self):
         self.end_time = datetime.datetime.now()
@@ -55,13 +56,13 @@ class BackupReport:
         }
 
     def save_json(self, path: str):
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, ensure_ascii=False, indent=2)
 
     def save_html(self, path: str):
         """Genera reporte HTML visual con branding UNS."""
         html = self._render_html()
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(html)
 
     def _render_html(self) -> str:
@@ -71,19 +72,18 @@ class BackupReport:
             accounts_rows += f"""
             <tr>
                 <td>{status_icon}</td>
-                <td><strong>{acc.get('smtp', '')}</strong></td>
-                <td>{acc.get('type', '')}</td>
-                <td style="text-align:right">{acc.get('emails', 0):,}</td>
-                <td style="text-align:right">{acc.get('size_mb', 0)} MB</td>
-                <td><code>{acc.get('output_file', '')}</code></td>
+                <td><strong>{acc.get("smtp", "")}</strong></td>
+                <td>{acc.get("type", "")}</td>
+                <td style="text-align:right">{acc.get("emails", 0):,}</td>
+                <td style="text-align:right">{acc.get("size_mb", 0)} MB</td>
+                <td><code>{acc.get("output_file", "")}</code></td>
             </tr>
             """
 
         errors_section = ""
         if self.errors:
             error_items = "".join(
-                f"<li><code>{e['time']}</code> — {e['message']}</li>"
-                for e in self.errors
+                f"<li><code>{e['time']}</code> — {e['message']}</li>" for e in self.errors
             )
             errors_section = f"""
             <div class="card error-card">
@@ -96,9 +96,9 @@ class BackupReport:
         if duration < 60:
             duration_str = f"{duration:.1f} segundos"
         elif duration < 3600:
-            duration_str = f"{duration/60:.1f} minutos"
+            duration_str = f"{duration / 60:.1f} minutos"
         else:
-            duration_str = f"{duration/3600:.1f} horas"
+            duration_str = f"{duration / 3600:.1f} horas"
 
         return f"""<!DOCTYPE html>
 <html lang="es">
@@ -173,7 +173,7 @@ footer {{
         <h1>📦 UNS Outlook Backup Report</h1>
         <div class="subtitle">ユニバーサル企画株式会社 — Reporte de respaldo de correo</div>
         <div class="timestamp">
-            Generado: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            Generado: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         </div>
     </header>
 
@@ -192,7 +192,7 @@ footer {{
         </div>
         <div class="stat-card">
             <div class="label">Errores</div>
-            <div class="value" style="color:{'#e74c3c' if self.errors else '#2ecc71'}">
+            <div class="value" style="color:{"#e74c3c" if self.errors else "#2ecc71"}">
                 {len(self.errors)}
             </div>
         </div>
@@ -240,9 +240,9 @@ footer {{
 class BackupEngine:
     """Motor que ejecuta el backup en un thread separado."""
 
-    def __init__(self, outlook_client, output_dir: str,
-                 selected_accounts: list,
-                 export_format: str = "pst"):
+    def __init__(
+        self, outlook_client, output_dir: str, selected_accounts: list, export_format: str = "pst"
+    ):
         self.client = outlook_client
         self.output_dir = output_dir
         self.selected_accounts = selected_accounts
@@ -250,7 +250,7 @@ class BackupEngine:
         self.report = BackupReport()
         self.report.output_dir = output_dir
         self._cancel_flag = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     def run_async(self, progress_cb: Callable, finish_cb: Callable):
         """Ejecuta el backup en un thread separado."""
@@ -307,7 +307,7 @@ class BackupEngine:
 
                         if success and os.path.exists(output_file):
                             size = os.path.getsize(output_file)
-                            acc_result["size_mb"] = round(size / (1024*1024), 2)
+                            acc_result["size_mb"] = round(size / (1024 * 1024), 2)
 
                     else:  # msg format
                         output_subdir = os.path.join(session_dir, safe_name)

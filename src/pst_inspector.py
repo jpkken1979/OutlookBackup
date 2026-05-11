@@ -6,8 +6,6 @@ Lo monta temporalmente, recorre carpetas, lo desmonta.
 """
 
 import os
-from pathlib import Path
-from typing import Dict, List, Optional
 
 
 class PSTInspector:
@@ -16,7 +14,7 @@ class PSTInspector:
     def __init__(self, outlook_client):
         self.client = outlook_client
 
-    def inspect(self, pst_path: str) -> Dict:
+    def inspect(self, pst_path: str) -> dict:
         """
         Monta el PST, recorre su contenido, lo desmonta.
         Devuelve estadísticas: carpetas, total emails, top folders.
@@ -29,9 +27,9 @@ class PSTInspector:
             "mounted": False,
             "total_emails": 0,
             "total_folders": 0,
-            "folders": [],          # [{name, count, depth}]
+            "folders": [],  # [{name, count, depth}]
             "date_range": {"oldest": None, "newest": None},
-            "senders": {},          # {"sender@x.com": count}
+            "senders": {},  # {"sender@x.com": count}
             "error": None,
         }
 
@@ -51,8 +49,9 @@ class PSTInspector:
             target_store = None
             for store in self.client.namespace.Stores:
                 try:
-                    if store.FilePath and \
-                       os.path.normpath(store.FilePath) == os.path.normpath(pst_path):
+                    if store.FilePath and os.path.normpath(store.FilePath) == os.path.normpath(
+                        pst_path
+                    ):
                         target_store = store
                         break
                 except Exception:
@@ -73,11 +72,7 @@ class PSTInspector:
                 pass
 
             # Top 5 senders
-            sorted_senders = sorted(
-                result["senders"].items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:5]
+            sorted_senders = sorted(result["senders"].items(), key=lambda x: x[1], reverse=True)[:5]
             result["top_senders"] = sorted_senders
 
         except Exception as e:
@@ -96,11 +91,13 @@ class PSTInspector:
                 count = 0
 
             if count > 0:
-                result["folders"].append({
-                    "name": name,
-                    "count": count,
-                    "depth": depth,
-                })
+                result["folders"].append(
+                    {
+                        "name": name,
+                        "count": count,
+                        "depth": depth,
+                    }
+                )
                 result["total_emails"] += count
                 result["total_folders"] += 1
 
@@ -110,20 +107,23 @@ class PSTInspector:
                     for i in range(1, sample_size + 1):
                         try:
                             item = items.Item(i)
-                            if hasattr(item, 'SenderEmailAddress'):
+                            if hasattr(item, "SenderEmailAddress"):
                                 sender = item.SenderEmailAddress or "(unknown)"
-                                result["senders"][sender] = \
-                                    result["senders"].get(sender, 0) + 1
+                                result["senders"][sender] = result["senders"].get(sender, 0) + 1
 
-                            if hasattr(item, 'ReceivedTime'):
+                            if hasattr(item, "ReceivedTime"):
                                 rt = item.ReceivedTime
                                 rt_iso = rt.strftime("%Y-%m-%d") if rt else None
                                 if rt_iso:
-                                    if (result["date_range"]["oldest"] is None or
-                                            rt_iso < result["date_range"]["oldest"]):
+                                    if (
+                                        result["date_range"]["oldest"] is None
+                                        or rt_iso < result["date_range"]["oldest"]
+                                    ):
                                         result["date_range"]["oldest"] = rt_iso
-                                    if (result["date_range"]["newest"] is None or
-                                            rt_iso > result["date_range"]["newest"]):
+                                    if (
+                                        result["date_range"]["newest"] is None
+                                        or rt_iso > result["date_range"]["newest"]
+                                    ):
                                         result["date_range"]["newest"] = rt_iso
                         except Exception:
                             continue

@@ -5,12 +5,11 @@ Modo normal: lanza la UI HTML/CSS/JS dentro de WebView2 nativo de Windows.
 Modo auto:   `--auto` ejecuta backup desde config sin GUI (Task Scheduler).
 """
 
-import os
-import sys
 import argparse
 import datetime
 import logging
-from pathlib import Path
+import os
+import sys
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 if SRC_DIR not in sys.path:
@@ -20,21 +19,21 @@ if SRC_DIR not in sys.path:
 def get_resource_path(relative: str) -> str:
     """Resuelve path tanto en modo dev como en .exe empaquetado."""
     try:
-        base = sys._MEIPASS  # PyInstaller temp dir
+        base = sys._MEIPASS  # type: ignore[attr-defined]  # PyInstaller runtime
     except AttributeError:
         base = SRC_DIR
     return os.path.join(base, relative)
 
 
 def setup_logging(log_to_file: bool = False):
-    handlers = [logging.StreamHandler()]
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
     if log_to_file:
         from config import get_config_dir
-        handlers.append(logging.FileHandler(
-            get_config_dir() / "auto.log", encoding='utf-8'))
+
+        handlers.append(logging.FileHandler(get_config_dir() / "auto.log", encoding="utf-8"))
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s [%(levelname)s] %(message)s',
+        format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=handlers,
     )
 
@@ -42,6 +41,7 @@ def setup_logging(log_to_file: bool = False):
 def run_gui():
     """Lanza pywebview con la UI HTML/CSS/JS."""
     import webview
+
     from api import API
 
     api = API()
@@ -63,6 +63,7 @@ def run_gui():
         easy_drag=False,
         text_select=True,
     )
+    assert window is not None, "webview.create_window returned None"
 
     # Auto-detect Outlook al iniciar (con delay de 500ms para que UI cargue)
     def on_loaded():
@@ -85,10 +86,10 @@ def run_auto_backup():
     log.info("=" * 60)
 
     try:
-        from config import Config
-        from outlook_client import OutlookClient, WIN32_AVAILABLE
         from backup_engine import BackupEngine
+        from config import Config
         from history_manager import BackupHistory
+        from outlook_client import WIN32_AVAILABLE, OutlookClient
 
         if not WIN32_AVAILABLE:
             log.error("pywin32 no disponible")
@@ -132,10 +133,13 @@ def run_auto_backup():
         )
 
         import threading
+
         done_event = threading.Event()
         result = {"success": False, "info": ""}
 
-        def progress_cb(msg): log.info(msg)
+        def progress_cb(msg):
+            log.info(msg)
+
         def finish_cb(success, info):
             result["success"] = success
             result["info"] = info
@@ -153,21 +157,16 @@ def run_auto_backup():
 
         if result["success"] and config.get("inventory_enabled"):
             try:
-                from account_inventory import (
-                    build_inventory, export_inventory_file,
-                    get_default_inventory_path,
-                )
+                from account_inventory import build_inventory, save_inventory
+
                 inv = build_inventory(
                     outlook_client=client,
-                    selected_smtps=[a.smtp_address for a in selected],
+                    selected_smtp_addresses=[a.smtp_address for a in selected],
                     include_servers=config.get("inventory_include_servers", True),
                     include_passwords=False,
                 )
                 if inv and isinstance(result["info"], str) and os.path.isdir(result["info"]):
-                    saved = export_inventory_file(
-                        inv, get_default_inventory_path(result["info"]),
-                        master_password=None,
-                    )
+                    saved = save_inventory(inv, result["info"], password=None)
                     log.info(f"   📋 inventario: {saved}")
             except Exception as e:
                 log.warning(f"⚠️ inventario falló: {e}")
@@ -185,8 +184,7 @@ def run_auto_backup():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--auto", action="store_true",
-                          help="Modo auto sin GUI (Task Scheduler)")
+    parser.add_argument("--auto", action="store_true", help="Modo auto sin GUI (Task Scheduler)")
     args = parser.parse_args()
 
     if args.auto:

@@ -1,0 +1,89 @@
+name: Quality (lint + typecheck + tests)
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+# Cancelar runs viejos cuando se pushea de nuevo
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Ruff (lint + format)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dev deps
+        run: uv sync --extra dev
+
+      - name: Ruff check
+        run: uv run ruff check src tests
+
+      - name: Ruff format --check
+        run: uv run ruff format --check src tests
+
+  typecheck:
+    name: Mypy (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # No bloqueante hasta Fase 2 (cuando se limpien los tipos por modulo).
+    # Los hallazgos quedan visibles en los logs y como anotaciones del PR.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dev deps
+        run: uv sync --extra dev
+
+      - name: Mypy
+        run: uv run mypy src
+
+  tests:
+    name: Pytest (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dev deps
+        run: uv sync --extra dev
+
+      # En Linux, los tests marcados @pytest.mark.windows se skipean.
+      # En Windows, los tests corren con mocks de win32com (sin Outlook real).
+      - name: Pytest
+        run: uv run pytest -v --cov=src --cov-report=term-missing
+
+      - name: Upload coverage HTML (Windows only)
+        if: matrix.os == 'windows-latest' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: htmlcov/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -10,31 +10,33 @@ Ubicaciones típicas:
 - Outlook Data Files: Documents\\Outlook Files\\*.pst
 """
 
-import os
-import shutil
 import datetime
 import hashlib
+import os
+import shutil
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import List, Dict, Optional, Callable
 
 try:
-    import win32com.client
     import winreg
+
+    import win32com.client
+
     HAS_WIN32 = True
 except ImportError:
     HAS_WIN32 = False
 
 
-def get_outlook_cache_dirs() -> List[Path]:
+def get_outlook_cache_dirs() -> list[Path]:
     """Devuelve las rutas donde Outlook típicamente guarda OST/PST."""
     dirs = []
-    if os.name != 'nt':
+    if os.name != "nt":
         return dirs
 
     candidates = [
-        Path(os.environ.get('LOCALAPPDATA', '')) / "Microsoft" / "Outlook",
-        Path(os.environ.get('APPDATA', '')) / "Microsoft" / "Outlook",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Outlook",
+        Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Outlook",
         Path(os.path.expanduser("~")) / "Documents" / "Outlook Files",
         Path(os.path.expanduser("~")) / "Documents" / "Outlook ファイル",
     ]
@@ -47,7 +49,7 @@ def get_outlook_cache_dirs() -> List[Path]:
     return dirs
 
 
-def find_cache_files() -> List[Dict]:
+def find_cache_files() -> list[dict]:
     """Encuentra todos los archivos OST/PST en las rutas conocidas.
     Devuelve metadata sin abrirlos."""
     results = []
@@ -55,7 +57,7 @@ def find_cache_files() -> List[Dict]:
 
     for d in get_outlook_cache_dirs():
         try:
-            for ext in ('*.ost', '*.pst'):
+            for ext in ("*.ost", "*.pst"):
                 for f in d.rglob(ext):
                     try:
                         full_path = str(f.resolve())
@@ -64,17 +66,20 @@ def find_cache_files() -> List[Dict]:
                         seen_paths.add(full_path)
 
                         stat = f.stat()
-                        results.append({
-                            "path": full_path,
-                            "filename": f.name,
-                            "extension": f.suffix.lower(),
-                            "size_mb": round(stat.st_size / (1024 * 1024), 2),
-                            "size_bytes": stat.st_size,
-                            "modified": datetime.datetime.fromtimestamp(
-                                stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-                            "modified_ts": stat.st_mtime,
-                        })
-                    except (OSError, PermissionError) as e:
+                        results.append(
+                            {
+                                "path": full_path,
+                                "filename": f.name,
+                                "extension": f.suffix.lower(),
+                                "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                                "size_bytes": stat.st_size,
+                                "modified": datetime.datetime.fromtimestamp(stat.st_mtime).strftime(
+                                    "%Y-%m-%d %H:%M:%S"
+                                ),
+                                "modified_ts": stat.st_mtime,
+                            }
+                        )
+                    except (OSError, PermissionError):
                         continue
         except Exception as e:
             print(f"Error scanning {d}: {e}")
@@ -85,7 +90,7 @@ def find_cache_files() -> List[Dict]:
     return results
 
 
-def map_cache_to_account(cache_files: List[Dict]) -> List[Dict]:
+def map_cache_to_account(cache_files: list[dict]) -> list[dict]:
     """Trata de asociar cada archivo de caché con una cuenta SMTP.
     Lee el registro de Windows para hacer el match."""
     if not HAS_WIN32:
@@ -103,8 +108,7 @@ def map_cache_to_account(cache_files: List[Dict]) -> List[Dict]:
                 while True:
                     try:
                         profile = winreg.EnumKey(profiles_key, i)
-                        _scan_profile_for_accounts(
-                            f"{profiles_path}\\{profile}", account_map)
+                        _scan_profile_for_accounts(f"{profiles_path}\\{profile}", account_map)
                         i += 1
                     except OSError:
                         break
@@ -153,14 +157,14 @@ def _scan_profile_for_accounts(path: str, account_map: dict, depth: int = 0):
                 if vtype == winreg.REG_SZ and isinstance(value, str):
                     if "@" in value and "." in value and len(value) < 100:
                         smtp = value
-                    elif value.lower().endswith(('.ost', '.pst')):
+                    elif value.lower().endswith((".ost", ".pst")):
                         cache_filename = os.path.basename(value)
                 elif vtype == winreg.REG_BINARY:
                     try:
                         decoded = bytes(value).decode("utf-16-le").rstrip("\x00")
                         if "@" in decoded and "." in decoded and len(decoded) < 100:
                             smtp = decoded
-                        elif decoded.lower().endswith(('.ost', '.pst')):
+                        elif decoded.lower().endswith((".ost", ".pst")):
                             cache_filename = os.path.basename(decoded)
                     except Exception:
                         pass
@@ -186,30 +190,30 @@ def _scan_profile_for_accounts(path: str, account_map: dict, depth: int = 0):
         pass
 
 
-def _infer_smtp_from_filename(filename: str) -> Optional[str]:
+def _infer_smtp_from_filename(filename: str) -> str | None:
     """Trata de extraer un email del nombre del archivo cache."""
-    base = filename.lower().replace('.ost', '').replace('.pst', '')
+    base = filename.lower().replace(".ost", "").replace(".pst", "")
 
     # Patrones comunes:
     # "kenji@uns-kikaku.com.ost"
     # "kenji - uns-kikaku.com.ost"
     # "kenji_at_uns-kikaku_com.ost"
 
-    if '@' in base:
+    if "@" in base:
         # Ya tiene formato email
-        parts = base.split('@')
-        if len(parts) == 2 and '.' in parts[1]:
+        parts = base.split("@")
+        if len(parts) == 2 and "." in parts[1]:
             return f"{parts[0]}@{parts[1]}"
 
-    if '_at_' in base:
-        parts = base.split('_at_')
+    if "_at_" in base:
+        parts = base.split("_at_")
         if len(parts) == 2:
             return f"{parts[0]}@{parts[1].replace('_', '.')}"
 
     # "user - domain.com" pattern
-    if ' - ' in base:
-        parts = base.split(' - ')
-        if len(parts) == 2 and '.' in parts[1]:
+    if " - " in base:
+        parts = base.split(" - ")
+        if len(parts) == 2 and "." in parts[1]:
             return f"{parts[0].strip()}@{parts[1].strip()}"
 
     return None
@@ -219,12 +223,17 @@ def _infer_smtp_from_filename(filename: str) -> Optional[str]:
 # Cache Backup Engine
 # ============================================================
 
+
 class CacheBackupEngine:
     """Backup directo de archivos OST/PST sin pasar por COM/servidor."""
 
-    def __init__(self, cache_files: List[str], output_dir: str,
-                 verify_integrity: bool = True,
-                 close_outlook: bool = False):
+    def __init__(
+        self,
+        cache_files: list[str],
+        output_dir: str,
+        verify_integrity: bool = True,
+        close_outlook: bool = False,
+    ):
         """
         :param cache_files: lista de paths absolutos a OST/PST
         :param output_dir: carpeta destino
@@ -236,14 +245,15 @@ class CacheBackupEngine:
         self.verify_integrity = verify_integrity
         self.close_outlook = close_outlook
         self._cancel_flag = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     def cancel(self):
         self._cancel_flag.set()
 
     def run_async(self, progress_cb: Callable, finish_cb: Callable):
         self._thread = threading.Thread(
-            target=self._run, args=(progress_cb, finish_cb), daemon=True)
+            target=self._run, args=(progress_cb, finish_cb), daemon=True
+        )
         self._thread.start()
 
     def _run(self, progress_cb, finish_cb):
@@ -252,7 +262,7 @@ class CacheBackupEngine:
             session_dir = self.output_dir / f"cache_backup_{timestamp}"
             session_dir.mkdir(parents=True, exist_ok=True)
 
-            progress_cb(f"💾 キャッシュバックアップ開始")
+            progress_cb("💾 キャッシュバックアップ開始")
             progress_cb(f"📂 保存先: {session_dir}")
 
             # Cerrar Outlook si está marcado
@@ -271,8 +281,7 @@ class CacheBackupEngine:
                 src = Path(src_path)
                 if not src.exists():
                     progress_cb(f"  ⚠️ [{idx}/{total}] ファイル不在: {src.name}")
-                    results.append({"file": str(src), "success": False,
-                                      "error": "Not found"})
+                    results.append({"file": str(src), "success": False, "error": "Not found"})
                     continue
 
                 size_mb = src.stat().st_size / (1024 * 1024)
@@ -281,32 +290,38 @@ class CacheBackupEngine:
                 # Copiar con shutil.copy2 (preserva metadata)
                 dest = session_dir / src.name
                 try:
-                    progress_cb(f"  ⏳ コピー中...")
+                    progress_cb("  ⏳ コピー中...")
                     self._copy_with_progress(src, dest, progress_cb)
 
                     # Verificar integridad
                     integrity = None
                     if self.verify_integrity:
-                        progress_cb(f"  🔐 整合性チェック中...")
+                        progress_cb("  🔐 整合性チェック中...")
                         integrity = self._verify_copy(src, dest, progress_cb)
 
                     progress_cb(f"  ✅ 完了: {dest.name}")
-                    results.append({
-                        "file": str(src),
-                        "dest": str(dest),
-                        "success": True,
-                        "size_mb": round(size_mb, 2),
-                        "integrity": integrity,
-                    })
+                    results.append(
+                        {
+                            "file": str(src),
+                            "dest": str(dest),
+                            "success": True,
+                            "size_mb": round(size_mb, 2),
+                            "integrity": integrity,
+                        }
+                    )
                 except PermissionError as e:
-                    msg = (f"  ❌ アクセス拒否 (Outlookで使用中?): {e}")
+                    msg = f"  ❌ アクセス拒否 (Outlookで使用中?): {e}"
                     progress_cb(msg)
-                    results.append({"file": str(src), "success": False,
-                                      "error": "PermissionError - file in use"})
+                    results.append(
+                        {
+                            "file": str(src),
+                            "success": False,
+                            "error": "PermissionError - file in use",
+                        }
+                    )
                 except Exception as e:
                     progress_cb(f"  ❌ エラー: {e}")
-                    results.append({"file": str(src), "success": False,
-                                      "error": str(e)})
+                    results.append({"file": str(src), "success": False, "error": str(e)})
 
             # Generar reporte
             self._write_report(session_dir, results, progress_cb)
@@ -327,7 +342,7 @@ class CacheBackupEngine:
         chunk = 4 * 1024 * 1024  # 4MB chunks
         last_pct = -1
 
-        with open(src, 'rb') as fsrc, open(dest, 'wb') as fdst:
+        with open(src, "rb") as fsrc, open(dest, "wb") as fdst:
             while True:
                 if self._cancel_flag.is_set():
                     raise InterruptedError("Cancelled")
@@ -338,7 +353,9 @@ class CacheBackupEngine:
                 copied += len(buf)
                 pct = int(copied * 100 / total) if total > 0 else 100
                 if pct != last_pct and pct % 10 == 0:
-                    progress_cb(f"    {pct}% ({copied/(1024*1024):.0f}/{total/(1024*1024):.0f} MB)")
+                    progress_cb(
+                        f"    {pct}% ({copied / (1024 * 1024):.0f}/{total / (1024 * 1024):.0f} MB)"
+                    )
                     last_pct = pct
 
         # Preservar mtime
@@ -347,7 +364,7 @@ class CacheBackupEngine:
         except Exception:
             pass
 
-    def _verify_copy(self, src: Path, dest: Path, progress_cb) -> Dict:
+    def _verify_copy(self, src: Path, dest: Path, progress_cb) -> dict:
         """Verifica que el archivo copiado tenga el mismo SHA256."""
         try:
             src_hash = self._sha256_of(src)
@@ -356,7 +373,7 @@ class CacheBackupEngine:
             if match:
                 progress_cb(f"  ✓ SHA256一致: {src_hash[:16]}...")
             else:
-                progress_cb(f"  ⚠️ SHA256不一致! 再試行を推奨")
+                progress_cb("  ⚠️ SHA256不一致! 再試行を推奨")
             return {
                 "src_sha256": src_hash,
                 "dest_sha256": dest_hash,
@@ -368,7 +385,7 @@ class CacheBackupEngine:
     @staticmethod
     def _sha256_of(path: Path) -> str:
         h = hashlib.sha256()
-        with open(path, 'rb') as f:
+        with open(path, "rb") as f:
             while chunk := f.read(8192 * 16):
                 h.update(chunk)
         return h.hexdigest()
@@ -377,6 +394,7 @@ class CacheBackupEngine:
         """Cierra Outlook de forma elegante."""
         try:
             import subprocess
+
             # Primero intentar gracefully via COM
             try:
                 if HAS_WIN32:
@@ -384,6 +402,7 @@ class CacheBackupEngine:
                     app.Quit()
                     progress_cb("  ✓ Outlookを終了しました(COM)")
                     import time
+
                     time.sleep(3)
             except Exception:
                 pass
@@ -391,21 +410,23 @@ class CacheBackupEngine:
             # Si sigue abierto, force kill
             result = subprocess.run(
                 ["taskkill", "/F", "/IM", "OUTLOOK.EXE"],
-                capture_output=True, text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             if result.returncode == 0:
                 progress_cb("  ✓ Outlookを強制終了しました")
             import time
+
             time.sleep(2)
         except Exception as e:
             progress_cb(f"  ⚠️ Outlook終了失敗: {e}")
 
-    def _write_report(self, session_dir: Path, results: List[Dict],
-                       progress_cb):
+    def _write_report(self, session_dir: Path, results: list[dict], progress_cb):
         """Escribe report.json con info del backup."""
         try:
             import json
+
             report = {
                 "type": "cache_backup",
                 "version": "3.1",
@@ -418,8 +439,7 @@ class CacheBackupEngine:
                     "total_files": len(results),
                     "successful": sum(1 for r in results if r.get("success")),
                     "failed": sum(1 for r in results if not r.get("success")),
-                    "total_size_mb": round(
-                        sum(r.get("size_mb", 0) for r in results), 2),
+                    "total_size_mb": round(sum(r.get("size_mb", 0) for r in results), 2),
                 },
                 "files": results,
                 "warning": (
@@ -430,8 +450,8 @@ class CacheBackupEngine:
                 ),
             }
             (session_dir / "report.json").write_text(
-                json.dumps(report, indent=2, ensure_ascii=False),
-                encoding="utf-8")
-            progress_cb(f"📋 レポート: report.json")
+                json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            progress_cb("📋 レポート: report.json")
         except Exception as e:
             progress_cb(f"⚠️ Report write failed: {e}")

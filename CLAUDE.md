@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Sobre el proyecto
 
-App Windows en japonés para **ユニバーサル企画株式会社 (UNS-Kikaku)** que respalda y restaura correos de Outlook. La versión actual es **v3.1.0** (verificable en `src/api.py:616` y `build/installer.iss:5`).
+App Windows en japonés para **ユニバーサル企画株式会社 (UNS-Kikaku)** que respalda y restaura correos de Outlook. La versión actual es **v3.1.1** (verificable en `build/installer.iss:5`; `src/api.py:get_app_info` puede quedar atrás — el `installer.iss` es la fuente de verdad para el release).
 
 El proyecto vive **dentro** del repo `Jpkken1979` que tiene su propio ecosistema Antigravity. Las reglas globales en `../CLAUDE.md` y `../.claude/rules/` aplican aquí (respuestas en español, commits convencionales, etc.).
 
@@ -28,8 +28,11 @@ A partir de v3.0 la GUI dejó de ser **tkinter** y pasó a ser una **WebView2 na
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ Frontend (WebView2 / Edge Chromium)                         │
-│ src/web/index.html + css/styles.css + js/app.js              │
+│ Frontend (WebView2 / Edge Chromium) — modular en v3.1       │
+│ index.html → tokens.css + components.css + styles.css        │
+│            → i18n.js → services/api.js + state.js            │
+│            → components/*.js → pages/*.js                    │
+│            → app-orchestrator.js (routing + init sequence)   │
 │          ↑ window.pywebview.api.<method>(args)               │
 │          ↓                                                   │
 │ src/api.py — Clase API (bridge Python ↔ JS)                │
@@ -41,19 +44,53 @@ A partir de v3.0 la GUI dejó de ser **tkinter** y pasó a ser una **WebView2 na
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Estructura del frontend:**
+**Estructura del frontend (refactor v3.1):**
 ```
 src/web/
-├── index.html     # Entry HTML con tabs: backup, restore, history, auto, cache
-├── css/styles.css
-└── js/app.js     # App singleton con bindUI, polling, modales, toasts
+├── index.html              # 7 tabs: backup, restore, history, auto, cache, tools, settings
+├── css/
+│   ├── tokens.css          # Design tokens (colores, espaciado, tipografía)
+│   ├── components.css      # Estilos por componente
+│   └── styles.css          # Layout global, tabs, overlays
+└── js/
+    ├── app-orchestrator.js # Routing tabs + init sequence + connection badge
+    ├── app.js              # Legacy (mantener por compat — el orquestador es lo nuevo)
+    ├── i18n/
+    │   ├── i18n.js         # Helper t() y carga
+    │   └── ja.json         # Strings japoneses del frontend
+    ├── services/
+    │   ├── api.js          # Wrapper tipado de window.pywebview.api (Api.start_backup, etc.)
+    │   └── state.js        # Store reactivo con listeners (State.set/get/onChange)
+    ├── components/
+    │   ├── Modal.js        # confirm/alert con promise
+    │   ├── Toast.js        # notifications no bloqueantes
+    │   └── Button.js, Card.js, List.js
+    └── pages/
+        ├── backup.js       # Cada page expone init(el) / mount() / unmount()
+        ├── restore.js, history.js, auto.js, cache.js, tools.js, settings.js
 ```
 
 **Cómo funciona el bridge:**
 - `main.py:run_gui()` instancia `API()` y la pasa como `js_api=api` a `webview.create_window`.
 - Toda función pública de `API` (sin guion bajo) queda accesible desde JS como `window.pywebview.api.<nombre>(args)`.
-- El frontend (`app.js`) usa polling con `setInterval` cada 500ms para operaciones largas.
+- El frontend usa `Api.<method>(args)` (wrapper en `services/api.js`) en vez de tocar `window.pywebview.api` directo — esto centraliza error handling.
+- Cada page module hace su propio polling con `setInterval` cada 500ms.
 - Diálogos nativos (carpeta, archivo) usan `webview.create_file_dialog`.
+
+### Pattern de page modules
+
+Cada tab es un IIFE en `js/pages/<nombre>.js` que expone:
+
+```javascript
+const BackupPage = (() => {
+    function init(el)    { /* bind events una vez */ }
+    function mount()     { /* render + cargar datos al cambiar de tab */ }
+    function unmount()   { /* clearInterval del polling, cleanup */ }
+    return { init, mount, unmount };
+})();
+```
+
+`app-orchestrator.js` mantiene un `pages` registry y llama `pages[tab].mount()/unmount()` al cambiar de tab. Esto evita memory leaks de intervals huérfanos cuando el usuario alterna tabs durante operaciones largas.
 
 ### Patrón de jobs asíncronos
 
@@ -69,39 +106,32 @@ API._backup_engine → motor activo (permite cancel())
 
 Nuevo job: `start_X(params)` → dispara thread → `run_async(progress_cb, finish_cb)` → polling `get_X_progress()`.
 
-**Ejemplo de polling desde JS** (ver `src/web/js/app.js:358-369`):
+**Ejemplo de polling desde un page module** (patrón usado en `src/web/js/pages/backup.js`):
 ```javascript
-// Iniciar backup → polling loop cada 500ms
-const r = await api.start_backup({...});
+// Iniciar backup → polling loop cada 500ms via Api wrapper
+const r = await Api.start_backup({...});
 if (!r.success) return;
-this.backupPolling = setInterval(async () => {
-    const p = await api.get_backup_progress();
-    this.updateBackupUI(p);
+pollingInterval = setInterval(async () => {
+    const p = await Api.get_backup_progress();
+    updateBackupUI(p);
     if (p.state === 'success' || p.state === 'failed') {
-        clearInterval(this.backupPolling);
-        this.onBackupDone(p);
+        clearInterval(pollingInterval);
+        onBackupDone(p);
     }
 }, 500);
 ```
 
-### Engine de polling en frontend
-
-`App` en `app.js` tiene polling dedicado por operación:
-- `startBackupPolling()` → `updateBackupUI()` → `onBackupDone()`
-- `startImportPolling()` → `updateImportUI()` → `onImportDone()`
-- `startCacheBackupPolling()` → `updateCacheBackupUI()` → `onCacheBackupDone()`
-
-El UI de progreso es compartido: overlay con `progress-fill` y `progress-status`.
+**Importante**: el polling debe limpiarse en `unmount()` de cada page. El orquestador llama `unmount()` automático al cambiar de tab.
 
 ### Progress overlay
 
-El mismo overlay se reutiliza para backup normal, import y cache backup. Se muestra con `showProgress()` (calcula percent desde regex `\[(\d+)\/(\d+)\]` en los mensajes de log) y se oculta con `hideProgress()`.
+El overlay (`#progress-overlay` en `index.html:608-619`) se reutiliza para backup normal, import y cache backup. Se calcula percent desde regex `\[(\d+)\/(\d+)\]` en los mensajes de log y se gestiona desde cada page.
 
-### Modales y toasts
+### Componentes UI reutilizables
 
-- `App.confirm(title, body)` — modal con botón Cancel/OK, Promise
-- `App.alert(title, body)` — modal con solo OK
-- `App.showToast(msg, type)` — por ahora usa `setStatus()` (no hay toast visual aún)
+- `Modal.confirm(title, body)` — Promise<boolean>, botones Cancel/OK
+- `Modal.alert(title, body)` — Promise<void>, solo OK
+- `Toast.show(msg, type)` — notification no bloqueante (`type`: `info|success|warn|error`)
 
 ## Dos caminos de backup
 
@@ -202,8 +232,9 @@ Para `merge`: busca source_store por `FilePath` match y target_store por `Displa
 | `scheduler.py` | Wrap de `schtasks.exe` (built-in Windows). `create_task()` soporta daily/weekly/biweekly (WEEKLY+MO2)/monthly/custom (DAILY+MO). Nombre fijo: `UNS-Outlook-Backup-Auto` |
 | `account_inventory.py` | Genera JSON con cuentas. `_read_registry_servers()` y `_read_credential_vault()` para server settings y passwords |
 | `crypto_utils.py` | AES-256-GCM + PBKDF2-HMAC-SHA256 (200K iter). `estimate_password_strength()` → score 0-100 con label japonés |
+| `connection_tester.py` | Test de conectividad IMAP/SMTP con `socket` + `ssl` puros (sin libs externas). Mide latencia, captura banner, prueba LOGIN. Usado por `API.test_connection()` en tab Settings |
 | `config.py` | Config persistente en `%APPDATA%\UNS-Kikaku\Backup\config.json`. DEFAULT_CONFIG incluye todos los settings con defaults |
-| `i18n.py` | 213 strings japoneses en el dict `JA`. Función `t(key, **kwargs)` para interpolación |
+| `i18n.py` | 213 strings japoneses en el dict `JA`. Función `t(key, **kwargs)` para interpolación (UI Python). El frontend tiene su propio i18n separado en `src/web/js/i18n/ja.json` |
 
 ### Configuración por defecto (`config.py:30-57`)
 

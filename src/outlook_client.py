@@ -6,14 +6,12 @@ Compatible con Outlook 2016, 2019, 2021, 365.
 """
 
 import os
-import sys
-import datetime
-from pathlib import Path
-from typing import List, Dict, Optional, Callable
+from collections.abc import Callable
 
 try:
-    import win32com.client
     import pythoncom
+    import win32com.client
+
     WIN32_AVAILABLE = True
 except ImportError:
     WIN32_AVAILABLE = False
@@ -33,8 +31,7 @@ OL_MAIL_ITEM = 43
 class OutlookAccount:
     """Representa una cuenta de correo en Outlook."""
 
-    def __init__(self, smtp_address: str, display_name: str,
-                 account_type: str, store_id: str = ""):
+    def __init__(self, smtp_address: str, display_name: str, account_type: str, store_id: str = ""):
         self.smtp_address = smtp_address
         self.display_name = display_name
         self.account_type = account_type
@@ -63,9 +60,7 @@ class OutlookClient:
 
     def __init__(self):
         if not WIN32_AVAILABLE:
-            raise RuntimeError(
-                "pywin32 no instalado. Ejecuta: pip install pywin32"
-            )
+            raise RuntimeError("pywin32 no instalado. Ejecuta: pip install pywin32")
         self.app = None
         self.namespace = None
         self._connect()
@@ -77,12 +72,9 @@ class OutlookClient:
             self.app = win32com.client.Dispatch("Outlook.Application")
             self.namespace = self.app.GetNamespace("MAPI")
         except Exception as e:
-            raise RuntimeError(
-                f"No se pudo conectar a Outlook. ¿Está instalado?\n"
-                f"Error: {e}"
-            )
+            raise RuntimeError(f"No se pudo conectar a Outlook. ¿Está instalado?\nError: {e}")
 
-    def list_accounts(self) -> List[OutlookAccount]:
+    def list_accounts(self) -> list[OutlookAccount]:
         """Lista todas las cuentas configuradas en Outlook."""
         accounts = []
         try:
@@ -120,42 +112,42 @@ class OutlookClient:
         except Exception:
             return "Desconocido"
 
-    def list_stores(self) -> List[Dict]:
+    def list_stores(self) -> list[dict]:
         """Lista todos los stores (PST/OST) configurados."""
         stores = []
         try:
             for store in self.namespace.Stores:
                 try:
-                    stores.append({
-                        "display_name": store.DisplayName,
-                        "file_path": store.FilePath or "",
-                        "store_id": store.StoreID,
-                        "is_data_file": store.IsDataFileStore,
-                    })
+                    stores.append(
+                        {
+                            "display_name": store.DisplayName,
+                            "file_path": store.FilePath or "",
+                            "store_id": store.StoreID,
+                            "is_data_file": store.IsDataFileStore,
+                        }
+                    )
                 except Exception:
                     continue
         except Exception as e:
             print(f"Error listando stores: {e}")
         return stores
 
-    def count_emails_for_account(self, account: OutlookAccount,
-                                  progress_cb: Optional[Callable] = None) -> Dict:
+    def count_emails_for_account(
+        self, account: OutlookAccount, progress_cb: Callable | None = None
+    ) -> dict:
         """Cuenta los correos de una cuenta específica."""
-        result = {
-            "total_emails": 0,
-            "total_folders": 0,
-            "total_size_bytes": 0,
-            "folders": []
-        }
+        result = {"total_emails": 0, "total_folders": 0, "total_size_bytes": 0, "folders": []}
 
         try:
             # Buscar el store que coincide con esta cuenta
             target_store = None
             for store in self.namespace.Stores:
                 try:
-                    if (store.DisplayName == account.smtp_address or
-                        store.DisplayName == account.display_name or
-                        account.smtp_address in store.DisplayName):
+                    if (
+                        store.DisplayName == account.smtp_address
+                        or store.DisplayName == account.display_name
+                        or account.smtp_address in store.DisplayName
+                    ):
                         target_store = store
                         break
                 except Exception:
@@ -185,11 +177,13 @@ class OutlookClient:
                 count = 0
 
             if count > 0:
-                result["folders"].append({
-                    "name": folder_name,
-                    "depth": depth,
-                    "count": count,
-                })
+                result["folders"].append(
+                    {
+                        "name": folder_name,
+                        "depth": depth,
+                        "count": count,
+                    }
+                )
                 result["total_emails"] += count
                 result["total_folders"] += 1
 
@@ -203,9 +197,9 @@ class OutlookClient:
         except Exception as e:
             print(f"Error en carpeta: {e}")
 
-    def export_account_to_pst(self, account: OutlookAccount,
-                               output_path: str,
-                               progress_cb: Optional[Callable] = None) -> bool:
+    def export_account_to_pst(
+        self, account: OutlookAccount, output_path: str, progress_cb: Callable | None = None
+    ) -> bool:
         """
         Exporta una cuenta completa a un archivo .pst.
         Usa el método estándar de Outlook: AddStore + CopyTo.
@@ -228,8 +222,9 @@ class OutlookClient:
             new_store = None
             for store in self.namespace.Stores:
                 try:
-                    if store.FilePath and os.path.normpath(store.FilePath) == \
-                            os.path.normpath(output_path):
+                    if store.FilePath and os.path.normpath(store.FilePath) == os.path.normpath(
+                        output_path
+                    ):
                         new_store = store
                         break
                 except Exception:
@@ -246,8 +241,10 @@ class OutlookClient:
             source_store = None
             for store in self.namespace.Stores:
                 try:
-                    if (store.DisplayName == account.smtp_address or
-                        account.smtp_address in store.DisplayName):
+                    if (
+                        store.DisplayName == account.smtp_address
+                        or account.smtp_address in store.DisplayName
+                    ):
                         source_store = store
                         break
                 except Exception:
@@ -309,9 +306,9 @@ class OutlookClient:
         except Exception as e:
             print(f"Error en copia recursiva: {e}")
 
-    def export_folder_to_msg_files(self, account: OutlookAccount,
-                                     output_dir: str,
-                                     progress_cb: Optional[Callable] = None) -> int:
+    def export_folder_to_msg_files(
+        self, account: OutlookAccount, output_dir: str, progress_cb: Callable | None = None
+    ) -> int:
         """
         Exporta correos como archivos .msg individuales (alternativa al PST).
         Más lento pero más seguro, sin riesgo de PST corrupto.
@@ -323,8 +320,10 @@ class OutlookClient:
             source_store = None
             for store in self.namespace.Stores:
                 try:
-                    if (store.DisplayName == account.smtp_address or
-                        account.smtp_address in store.DisplayName):
+                    if (
+                        store.DisplayName == account.smtp_address
+                        or account.smtp_address in store.DisplayName
+                    ):
                         source_store = store
                         break
                 except Exception:
@@ -357,10 +356,8 @@ class OutlookClient:
 
             for i, item in enumerate(folder.Items):
                 try:
-                    if hasattr(item, 'Class') and item.Class == OL_MAIL_ITEM:
-                        subject = self._sanitize_filename(
-                            (item.Subject or "Sin_Asunto")[:80]
-                        )
+                    if hasattr(item, "Class") and item.Class == OL_MAIL_ITEM:
+                        subject = self._sanitize_filename((item.Subject or "Sin_Asunto")[:80])
                         try:
                             received = item.ReceivedTime
                             date_prefix = received.strftime("%Y%m%d_%H%M%S")
@@ -397,7 +394,7 @@ class OutlookClient:
         """Limpia caracteres ilegales de Windows."""
         invalid = '<>:"/\\|?*'
         for ch in invalid:
-            name = name.replace(ch, '_')
+            name = name.replace(ch, "_")
         return name.strip()[:200]
 
     def close(self):

@@ -1,0 +1,185 @@
+# =============================================================
+# UNS Outlook Backup — Project Manifest
+# Toolchain: uv + ruff + mypy + pytest
+# Compat: requirements.txt sigue siendo la fuente para build.yml
+#         (regenerable con `uv export --no-hashes > requirements.txt`)
+# =============================================================
+
+[project]
+name = "uns-outlook-backup"
+version = "3.1.1"
+description = "Windows desktop app para respaldar y restaurar correos Outlook (UNS-Kikaku)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [
+    { name = "K. Kaneshiro", email = "k.kaneshiro@uns-kikaku.com" },
+]
+
+# Runtime deps — mantener en sync con requirements.txt
+dependencies = [
+    "pywin32>=311 ; sys_platform == 'win32'",
+    "cryptography>=42.0.0",
+    "pywebview>=5.0",
+    "pythonnet>=3.1.0rc0 ; sys_platform == 'win32'",
+    "rarfile>=4.0",
+]
+
+[project.optional-dependencies]
+# Build-time only — separado para que no se baje en CI de tests
+build = [
+    "pyinstaller>=6.3.0",
+]
+
+# Dev toolchain — `uv sync --extra dev` para instalar
+dev = [
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+    "pytest>=8.0.0",
+    "pytest-mock>=3.12.0",
+    "pytest-cov>=5.0.0",
+    "hypothesis>=6.100.0",
+    "pre-commit>=3.7.0",
+]
+
+# =============================================================
+# Ruff — lint + format (reemplaza black + isort + flake8)
+# =============================================================
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [
+    "build",
+    "dist",
+    ".venv",
+    ".agent",
+    "src/web",  # frontend JS, no Python aca
+]
+
+[tool.ruff.lint]
+# Reglas que aplicamos. Iremos sumando despues.
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "ARG",  # flake8-unused-arguments
+    "SIM",  # flake8-simplify
+]
+# Cosas que ya estan en el codigo y no vale la pena cazar ahora
+ignore = [
+    "E501",    # line too long — ruff format ya lo cuida
+    "B008",    # function call in default args — comun en dataclasses
+    # TODO Fase 2: re-activar y limpiar
+    "E701",    # multiple statements on one line (8 ocurrencias en legacy)
+    "SIM105",  # use contextlib.suppress (5 ocurrencias)
+    "SIM102",  # collapsible if (3 ocurrencias)
+    "SIM112",  # uppercase env vars (4 ocurrencias)
+    "B904",    # raise from None (4 ocurrencias)
+    "B007",    # unused loop control variable (1 ocurrencia)
+    "ARG002",  # unused method argument (2 ocurrencias, frecuente en interfaces)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ARG"]  # fixtures suelen tener args no usados
+
+[tool.ruff.format]
+# Defaults modernos. Black-compatible.
+quote-style = "double"
+indent-style = "space"
+
+# =============================================================
+# Mypy — typecheck. Modo Fase 1: warn-only para legacy code.
+# Fase 2 ratchetea cada modulo a strict.
+# =============================================================
+[tool.mypy]
+python_version = "3.10"
+# Globalmente permisivo — el codigo legacy tiene tipos parciales.
+# El CI corre con continue-on-error para que los hallazgos sean visibles
+# sin bloquear builds hasta que Fase 2 los limpie.
+warn_unused_configs = true
+warn_redundant_casts = true
+no_implicit_optional = true
+disallow_untyped_defs = false
+check_untyped_defs = false
+exclude = [
+    "^build/",
+    "^dist/",
+    "^\\.venv/",
+    "^\\.agent/",
+    "^tests/",  # tests pueden tener fixtures liberales
+]
+
+# Stubs Windows COM no existen como package separado.
+# Tratarlas como Any para no romper el typecheck en Linux CI.
+[[tool.mypy.overrides]]
+module = [
+    "win32com.*",
+    "win32cred",
+    "winreg",
+    "pythoncom",
+    "webview",
+    "webview.*",
+    "rarfile",
+]
+ignore_missing_imports = true
+
+# Strict per-module — desactivado hasta Fase 2.
+# Cuando se limpien los tipos de un modulo, agregarlo aca:
+#
+# [[tool.mypy.overrides]]
+# module = ["crypto_utils", "config", "connection_tester"]
+# disallow_untyped_defs = true
+# warn_return_any = true
+#
+# Modulos candidatos en orden (de mas limpios a mas sucios):
+# 1. crypto_utils — 1 error pendiente (cast en decrypt_file_to_dict)
+# 2. config       — 5 errores pendientes (return types None faltantes)
+# 3. connection_tester — 3 errores pendientes (params + Any returns)
+
+# =============================================================
+# Pytest — config + coverage
+# =============================================================
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+    "--tb=short",
+]
+markers = [
+    "slow: marks tests as slow (deselect with -m 'not slow')",
+    "windows: marks tests that require Windows (deselect on Linux CI)",
+    "outlook: marks tests that require real Outlook installation",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:pkg_resources.*",
+    "ignore::DeprecationWarning:google.*",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "src/main.py",  # entry point, dificil de cubrir
+    "src/web/*",    # frontend JS
+    "*/tests/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
+skip_covered = false

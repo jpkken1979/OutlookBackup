@@ -6,18 +6,17 @@ Diseñado para herramientas de migración como Microsoft Office 365.
 """
 
 import os
-import sys
-import json
-import subprocess
-import threading
-import tempfile
 import shutil
+import subprocess
+import tempfile
+import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import List, Dict, Optional, Callable
 
 # rarfile necesita unrar.exe o winrar
 try:
     import rarfile
+
     RARFILE_AVAILABLE = True
 except ImportError:
     RARFILE_AVAILABLE = False
@@ -28,13 +27,13 @@ class ShellExtractor:
 
     def __init__(self):
         self._cancel_flag = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._result = None
 
         # Buscar unrar.exe
         self.unrar_path = self._find_unrar()
 
-    def _find_unrar(self) -> Optional[str]:
+    def _find_unrar(self) -> str | None:
         """Busca unrar.exe en rutas comunes de Windows."""
         candidates = [
             # WinRAR instalado
@@ -63,8 +62,9 @@ class ShellExtractor:
         """Verifica si se puede extraer RAR."""
         return RARFILE_AVAILABLE and self.unrar_path is not None
 
-    def extract_rar(self, rar_path: str, output_dir: str,
-                    progress_cb: Optional[Callable] = None) -> Dict:
+    def extract_rar(
+        self, rar_path: str, output_dir: str, progress_cb: Callable | None = None
+    ) -> dict:
         """Extrae un archivo RAR al directorio especificado.
 
         Args:
@@ -139,14 +139,22 @@ class ShellExtractor:
         """Determina si un archivo es un script ejecutable."""
         ext = os.path.splitext(file_path)[1].lower()
         script_extensions = {
-            '.ps1', '.bat', '.cmd', '.vbs', '.vbe',
-            '.exe', '.msi', '.reg',
-            '.py', '.pyw',
-            '.sh', '.bash',
+            ".ps1",
+            ".bat",
+            ".cmd",
+            ".vbs",
+            ".vbe",
+            ".exe",
+            ".msi",
+            ".reg",
+            ".py",
+            ".pyw",
+            ".sh",
+            ".bash",
         }
         return ext in script_extensions
 
-    def find_rar_files(self, directory: str) -> List[Dict]:
+    def find_rar_files(self, directory: str) -> list[dict]:
         """Busca archivos RAR en un directorio.
 
         Args:
@@ -165,12 +173,14 @@ class ShellExtractor:
             for f in path.rglob("*.rar"):
                 try:
                     stat = f.stat()
-                    results.append({
-                        "path": str(f),
-                        "filename": f.name,
-                        "size_mb": round(stat.st_size / (1024 * 1024), 2),
-                        "modified": Path(f).stat().st_mtime,
-                    })
+                    results.append(
+                        {
+                            "path": str(f),
+                            "filename": f.name,
+                            "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                            "modified": Path(f).stat().st_mtime,
+                        }
+                    )
                 except Exception:
                     continue
 
@@ -179,8 +189,7 @@ class ShellExtractor:
 
         return sorted(results, key=lambda x: x["size_mb"], reverse=True)
 
-    def run_script(self, script_path: str,
-                   progress_cb: Optional[Callable] = None) -> Dict:
+    def run_script(self, script_path: str, progress_cb: Callable | None = None) -> dict:
         """Ejecuta un script de migración.
 
         Args:
@@ -204,16 +213,16 @@ class ShellExtractor:
             if progress_cb:
                 progress_cb(f"🚀 スクリプトを実行中: {filename}")
 
-            if ext == '.ps1':
-                cmd = ['powershell', '-ExecutionPolicy', 'Bypass', '-File', script_path]
+            if ext == ".ps1":
+                cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", script_path]
                 result["output"] = self._run_powershell(script_path, progress_cb)
-            elif ext in ('.bat', '.cmd'):
-                cmd = ['cmd', '/c', script_path]
+            elif ext in (".bat", ".cmd"):
+                cmd = ["cmd", "/c", script_path]
                 result["output"] = self._run_cmd(cmd, progress_cb)
-            elif ext == '.vbs':
-                cmd = ['cscript', '//Nologo', script_path]
+            elif ext == ".vbs":
+                cmd = ["cscript", "//Nologo", script_path]
                 result["output"] = self._run_cmd(cmd, progress_cb)
-            elif ext == '.exe':
+            elif ext == ".exe":
                 result["output"] = self._run_cmd([script_path], progress_cb)
             else:
                 result["error"] = f"未知のスクリプト形式: {ext}"
@@ -221,26 +230,27 @@ class ShellExtractor:
 
             result["success"] = True
             if progress_cb:
-                progress_cb(f"✅ スクリプト完了")
+                progress_cb("✅ スクリプト完了")
 
         except Exception as e:
             result["error"] = str(e)
 
         return result
 
-    def _run_powershell(self, script_path: str,
-                        progress_cb: Optional[Callable] = None) -> str:
+    def _run_powershell(self, script_path: str, progress_cb: Callable | None = None) -> str:
         """Ejecuta un script PowerShell."""
         cmd = [
-            'powershell',
-            '-ExecutionPolicy', 'Bypass',
-            '-NoProfile',
-            '-NonInteractive',
-            '-File', script_path
+            "powershell",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            script_path,
         ]
 
         creationflags = 0
-        if os.name == 'nt':
+        if os.name == "nt":
             creationflags = subprocess.CREATE_NO_WINDOW
 
         try:
@@ -248,8 +258,8 @@ class ShellExtractor:
                 cmd,
                 capture_output=True,
                 text=True,
-                encoding='utf-8',
-                errors='replace',
+                encoding="utf-8",
+                errors="replace",
                 creationflags=creationflags,
                 timeout=300,  # 5 min timeout
             )
@@ -259,11 +269,10 @@ class ShellExtractor:
         except Exception as e:
             return f"❌ エラー: {e}"
 
-    def _run_cmd(self, cmd: List[str],
-                 progress_cb: Optional[Callable] = None) -> str:
+    def _run_cmd(self, cmd: list[str], progress_cb: Callable | None = None) -> str:
         """Ejecuta un comando CMD."""
         creationflags = 0
-        if os.name == 'nt':
+        if os.name == "nt":
             creationflags = subprocess.CREATE_NO_WINDOW
 
         try:
@@ -271,8 +280,8 @@ class ShellExtractor:
                 cmd,
                 capture_output=True,
                 text=True,
-                encoding='utf-8',
-                errors='replace',
+                encoding="utf-8",
+                errors="replace",
                 creationflags=creationflags,
                 timeout=300,
             )

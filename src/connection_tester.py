@@ -9,7 +9,6 @@ import logging
 import socket
 import ssl
 import time
-from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +33,13 @@ KNOWN_PORTS = {
 WIN32_AVAILABLE = False
 try:
     import winreg
+
     WIN32_AVAILABLE = True
 except ImportError:
     pass
 
 
-def test_imap_connection(host: str, port: int, timeout: int = 10) -> Dict:
+def test_imap_connection(host: str, port: int, timeout: int = 10) -> dict:
     """Test IMAP connection.
 
     Args:
@@ -50,7 +50,7 @@ def test_imap_connection(host: str, port: int, timeout: int = 10) -> Dict:
     Returns:
         {"success": bool, "latency_ms": int, "server_banner": str, "error": str}
     """
-    result: Dict = {
+    result: dict = {
         "success": False,
         "latency_ms": 0,
         "server_banner": "",
@@ -99,7 +99,7 @@ def test_imap_connection(host: str, port: int, timeout: int = 10) -> Dict:
         result["success"] = True
         logger.info(f"IMAP connection OK ({result['latency_ms']}ms)")
 
-    except socket.timeout:
+    except TimeoutError:
         result["error"] = "Connection timed out"
         logger.warning(f"IMAP timeout to {host}:{port}")
     except socket.gaierror as e:
@@ -124,7 +124,7 @@ def test_imap_connection(host: str, port: int, timeout: int = 10) -> Dict:
     return result
 
 
-def test_smtp_connection(host: str, port: int, timeout: int = 10) -> Dict:
+def test_smtp_connection(host: str, port: int, timeout: int = 10) -> dict:
     """Test SMTP connection.
 
     Args:
@@ -135,7 +135,7 @@ def test_smtp_connection(host: str, port: int, timeout: int = 10) -> Dict:
     Returns:
         {"success": bool, "latency_ms": int, "server_banner": str, "error": str}
     """
-    result: Dict = {
+    result: dict = {
         "success": False,
         "latency_ms": 0,
         "server_banner": "",
@@ -194,7 +194,7 @@ def test_smtp_connection(host: str, port: int, timeout: int = 10) -> Dict:
         result["success"] = True
         logger.info(f"SMTP connection OK ({result['latency_ms']}ms)")
 
-    except socket.timeout:
+    except TimeoutError:
         result["error"] = "Connection timed out"
         logger.warning(f"SMTP timeout to {host}:{port}")
     except socket.gaierror as e:
@@ -219,11 +219,7 @@ def test_smtp_connection(host: str, port: int, timeout: int = 10) -> Dict:
     return result
 
 
-def test_account_connection(
-    smtp: str,
-    protocol: str = "auto",
-    timeout: int = 10
-) -> Dict:
+def test_account_connection(smtp: str, protocol: str = "auto", timeout: int = 10) -> dict:
     """Test connection for an account by reading server info from registry.
 
     Args:
@@ -241,7 +237,7 @@ def test_account_connection(
             "summary": "IMAP OK · SMTP failed"
         }
     """
-    result: Dict = {
+    result: dict = {
         "success": True,
         "tests": {},
         "summary": "",
@@ -274,7 +270,7 @@ def test_account_connection(
         else:
             result["tests"]["imap"] = {
                 "success": False,
-                "error": "No IMAP server found in registry"
+                "error": "No IMAP server found in registry",
             }
 
     # Test SMTP
@@ -289,7 +285,7 @@ def test_account_connection(
         else:
             result["tests"]["smtp"] = {
                 "success": False,
-                "error": "No SMTP server found in registry"
+                "error": "No SMTP server found in registry",
             }
 
     # Generate summary
@@ -319,7 +315,7 @@ def test_account_connection(
     return result
 
 
-def _read_registry_servers(smtp_address: str) -> Optional[Dict]:
+def _read_registry_servers(smtp_address: str) -> dict | None:
     """Read server settings from Outlook registry for a given email.
 
     Copy the logic from account_inventory.py:_read_registry_servers (lines 136-205).
@@ -336,15 +332,12 @@ def _read_registry_servers(smtp_address: str) -> Optional[Dict]:
     if not WIN32_AVAILABLE:
         return None
 
-    found: Dict = {}
+    found: dict = {}
     versions = ["16.0", "15.0", "14.0"]
 
     for ver in versions:
         try:
-            base_path = (
-                f"Software\\Microsoft\\Office\\{ver}"
-                f"\\Outlook\\Profiles\\Outlook"
-            )
+            base_path = f"Software\\Microsoft\\Office\\{ver}\\Outlook\\Profiles\\Outlook"
             try:
                 base_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, base_path)
             except OSError:
@@ -358,9 +351,7 @@ def _read_registry_servers(smtp_address: str) -> Optional[Dict]:
                         sub_path = f"{base_path}\\{sub_name}"
 
                         try:
-                            sub_key = winreg.OpenKey(
-                                winreg.HKEY_CURRENT_USER, sub_path
-                            )
+                            sub_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, sub_path)
                             props = _scan_registry_values(sub_key)
                             winreg.CloseKey(sub_key)
 
@@ -386,7 +377,7 @@ def _read_registry_servers(smtp_address: str) -> Optional[Dict]:
         return None
 
     # Build result dict
-    result: Dict = {
+    result: dict = {
         "incoming_server": found.get("incoming_server"),
         "outgoing_server": found.get("outgoing_server"),
         "ports_detected": [],
@@ -396,16 +387,18 @@ def _read_registry_servers(smtp_address: str) -> Optional[Dict]:
     # Extract port information
     for k, v in found.items():
         if k.startswith("port_"):
-            result["ports_detected"].append({
-                "protocol": k.replace("port_", ""),
-                "port": v,
-            })
+            result["ports_detected"].append(
+                {
+                    "protocol": k.replace("port_", ""),
+                    "port": v,
+                }
+            )
 
     # Remove None values
     return {k: v for k, v in result.items() if v is not None}
 
 
-def _scan_registry_values(reg_key) -> Dict:
+def _scan_registry_values(reg_key) -> dict:
     """Scan all values in a registry key looking for email/server data.
 
     Args:
@@ -414,7 +407,7 @@ def _scan_registry_values(reg_key) -> Dict:
     Returns:
         Dict with email, incoming_server, outgoing_server, port_*, _outlook_version
     """
-    found: Dict = {}
+    found: dict = {}
     extra_strings: list = []
 
     try:
@@ -438,10 +431,18 @@ def _scan_registry_values(reg_key) -> Dict:
                                 found.setdefault("email", decoded)
 
                         # Server detection
-                        elif any(decoded_lower.startswith(p) for p in [
-                            "imap.", "pop.", "smtp.", "mail.",
-                            "outlook.", "ssl0.", "exchange."
-                        ]):
+                        elif any(
+                            decoded_lower.startswith(p)
+                            for p in [
+                                "imap.",
+                                "pop.",
+                                "smtp.",
+                                "mail.",
+                                "outlook.",
+                                "ssl0.",
+                                "exchange.",
+                            ]
+                        ):
                             if "imap." in decoded_lower or "pop." in decoded_lower:
                                 found.setdefault("incoming_server", decoded)
                             elif "smtp." in decoded_lower:
@@ -497,12 +498,7 @@ def _read_line(sock: socket.socket) -> str:
         return ""
 
 
-def _infer_port(
-    servers: Dict,
-    direction: str,
-    ssl_port: int,
-    plain_port: int
-) -> int:
+def _infer_port(servers: dict, direction: str, ssl_port: int, plain_port: int) -> int:
     """Infer port from registry data or use default.
 
     Args:
@@ -530,7 +526,7 @@ def _infer_port(
         return plain_port  # 587 for SMTP
 
 
-def format_test_result(result: Dict) -> str:
+def format_test_result(result: dict) -> str:
     """Format a test result for display.
 
     Args:

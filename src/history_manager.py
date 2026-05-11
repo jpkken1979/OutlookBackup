@@ -5,12 +5,10 @@ Escanea la carpeta de backups y lista todas las sesiones previas.
 Se basa en los report.json que genera backup_engine.
 """
 
-import os
+import datetime
 import json
 import shutil
-import datetime
 from pathlib import Path
-from typing import List, Dict, Optional
 
 
 class BackupHistory:
@@ -19,7 +17,7 @@ class BackupHistory:
     def __init__(self, base_dir: str):
         self.base_dir = Path(base_dir)
 
-    def list_backups(self) -> List[Dict]:
+    def list_backups(self) -> list[dict]:
         """Devuelve lista de backups previos, ordenados por fecha desc."""
         backups = []
         if not self.base_dir.exists():
@@ -38,7 +36,7 @@ class BackupHistory:
         backups.sort(key=lambda b: b.get("start_time", ""), reverse=True)
         return backups
 
-    def _read_backup(self, backup_dir: Path) -> Optional[Dict]:
+    def _read_backup(self, backup_dir: Path) -> dict | None:
         """Lee el report.json y devuelve info estructurada."""
         report_path = backup_dir / "report.json"
         info = {
@@ -58,7 +56,7 @@ class BackupHistory:
 
         try:
             if report_path.exists():
-                with open(report_path, 'r', encoding='utf-8') as f:
+                with open(report_path, encoding="utf-8") as f:
                     data = json.load(f)
 
                 info["start_time"] = data.get("start_time")
@@ -89,12 +87,14 @@ class BackupHistory:
 
             # Buscar archivos PST y HTML report
             for f in backup_dir.glob("*.pst"):
-                size_mb = round(f.stat().st_size / (1024*1024), 2)
-                info["pst_files"].append({
-                    "name": f.name,
-                    "size_mb": size_mb,
-                    "path": str(f),
-                })
+                size_mb = round(f.stat().st_size / (1024 * 1024), 2)
+                info["pst_files"].append(
+                    {
+                        "name": f.name,
+                        "size_mb": size_mb,
+                        "path": str(f),
+                    }
+                )
 
             html_path = backup_dir / "report.html"
             if html_path.exists():
@@ -103,8 +103,7 @@ class BackupHistory:
             # Si el start_time no está, usar mtime de la carpeta
             if info["start_time"] is None:
                 mtime = backup_dir.stat().st_mtime
-                info["start_time"] = datetime.datetime.fromtimestamp(
-                    mtime).isoformat()
+                info["start_time"] = datetime.datetime.fromtimestamp(mtime).isoformat()
 
             return info
 
@@ -135,7 +134,7 @@ class BackupHistory:
             print(f"Error borrando: {e}")
             return False
 
-    def cleanup_old(self, keep_last: int) -> List[str]:
+    def cleanup_old(self, keep_last: int) -> list[str]:
         """Borra backups viejos manteniendo solo los últimos N. Devuelve los borrados."""
         if keep_last <= 0:
             return []

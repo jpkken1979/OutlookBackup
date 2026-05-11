@@ -7,17 +7,17 @@ Lee TODAS las cuentas configuradas en Outlook y exporta:
   • Passwords desde Windows Credential Vault (opcional, encriptado)
 """
 
-import os
-import json
 import datetime
+import json
+import os
 import socket
-from pathlib import Path
-from typing import List, Dict, Optional, Any
 
 try:
-    import win32com.client
-    import win32cred
     import winreg
+
+    import win32com.client  # noqa: F401  # availability probe
+    import win32cred  # noqa: F401  # availability probe
+
     WIN32_AVAILABLE = True
 except ImportError:
     WIN32_AVAILABLE = False
@@ -44,10 +44,12 @@ KNOWN_PORTS = {
 }
 
 
-def build_inventory(outlook_client,
-                     selected_smtp_addresses: Optional[List[str]] = None,
-                     include_servers: bool = True,
-                     include_passwords: bool = False) -> Dict:
+def build_inventory(
+    outlook_client,
+    selected_smtp_addresses: list[str] | None = None,
+    include_servers: bool = True,
+    include_passwords: bool = False,
+) -> dict:
     """
     Genera el inventario completo de cuentas.
 
@@ -100,8 +102,8 @@ def build_inventory(outlook_client,
         "warning": (
             "⚠️ このファイルにはアカウントのパスワードが含まれています。"
             "絶対に第三者に渡さないでください。"
-            if include_passwords else
-            "このファイルにアカウント設定が含まれています。安全に管理してください。"
+            if include_passwords
+            else "このファイルにアカウント設定が含まれています。安全に管理してください。"
         ),
         "accounts": accounts,
     }
@@ -109,7 +111,7 @@ def build_inventory(outlook_client,
     return inventory
 
 
-def _read_com_info(account) -> Dict:
+def _read_com_info(account) -> dict:
     """Lee info básica de una cuenta vía Outlook COM."""
     info = {
         "smtp_address": "",
@@ -133,9 +135,9 @@ def _read_com_info(account) -> Dict:
     return info
 
 
-def _read_registry_servers(smtp_address: str) -> Optional[Dict]:
+def _read_registry_servers(smtp_address: str) -> dict | None:
     """Intenta leer settings del servidor del registro de Outlook."""
-    if not smtp_address or os.name != 'nt':
+    if not smtp_address or os.name != "nt":
         return None
 
     found = {}
@@ -143,8 +145,7 @@ def _read_registry_servers(smtp_address: str) -> Optional[Dict]:
 
     for ver in versions:
         try:
-            base_path = (f"Software\\Microsoft\\Office\\{ver}"
-                         f"\\Outlook\\Profiles\\Outlook")
+            base_path = f"Software\\Microsoft\\Office\\{ver}\\Outlook\\Profiles\\Outlook"
             try:
                 base_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, base_path)
             except OSError:
@@ -158,14 +159,12 @@ def _read_registry_servers(smtp_address: str) -> Optional[Dict]:
                         sub_path = f"{base_path}\\{sub_name}"
 
                         try:
-                            sub_key = winreg.OpenKey(
-                                winreg.HKEY_CURRENT_USER, sub_path)
+                            sub_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, sub_path)
                             props = _scan_registry_values(sub_key)
                             winreg.CloseKey(sub_key)
 
                             email_in_props = props.get("email", "").lower()
-                            if (email_in_props and
-                                email_in_props == smtp_address.lower()):
+                            if email_in_props and email_in_props == smtp_address.lower():
                                 # Encontramos! Mergear sin sobrescribir
                                 for k, v in props.items():
                                     found.setdefault(k, v)
@@ -196,16 +195,18 @@ def _read_registry_servers(smtp_address: str) -> Optional[Dict]:
 
     for k, v in found.items():
         if k.startswith("port_"):
-            result["ports_detected"].append({
-                "protocol": k.replace("port_", ""),
-                "port": v,
-            })
+            result["ports_detected"].append(
+                {
+                    "protocol": k.replace("port_", ""),
+                    "port": v,
+                }
+            )
 
     # Eliminar None
     return {k: v for k, v in result.items() if v}
 
 
-def _scan_registry_values(reg_key) -> Dict:
+def _scan_registry_values(reg_key) -> dict:
     """Escanea todos los valores buscando datos útiles (heurísticas)."""
     found = {}
     extra_strings = []
@@ -228,9 +229,18 @@ def _scan_registry_values(reg_key) -> Dict:
                         if "@" in decoded and "." in decoded and " " not in decoded:
                             if 5 < len(decoded) < 100:
                                 found.setdefault("email", decoded)
-                        elif any(decoded_lower.startswith(p) for p in
-                                 ["imap.", "pop.", "smtp.", "mail.",
-                                  "outlook.", "ssl0.", "exchange."]):
+                        elif any(
+                            decoded_lower.startswith(p)
+                            for p in [
+                                "imap.",
+                                "pop.",
+                                "smtp.",
+                                "mail.",
+                                "outlook.",
+                                "ssl0.",
+                                "exchange.",
+                            ]
+                        ):
                             if "imap." in decoded_lower or "pop." in decoded_lower:
                                 found.setdefault("incoming_server", decoded)
                             elif "smtp." in decoded_lower:
@@ -256,9 +266,9 @@ def _scan_registry_values(reg_key) -> Dict:
     return found
 
 
-def _read_credential_vault(smtp_address: str) -> Optional[List[Dict]]:
+def _read_credential_vault(smtp_address: str) -> list[dict] | None:
     """Busca credenciales relacionadas a la cuenta en Windows Credential Vault."""
-    if not smtp_address or os.name != 'nt' or not WIN32_AVAILABLE:
+    if not smtp_address or os.name != "nt" or not WIN32_AVAILABLE:
         return None
 
     matched = []
@@ -271,57 +281,65 @@ def _read_credential_vault(smtp_address: str) -> Optional[List[Dict]]:
     domain = smtp_lower.split("@")[-1] if "@" in smtp_lower else ""
 
     OUTLOOK_PATTERNS = [
-        'microsoftoffice', 'microsoft.exchange', 'microsoft_oc1',
-        'mail.', 'imap.', 'pop.', 'smtp.', 'outlook.com',
-        'office365', 'exchange.', 'sspi:',
+        "microsoftoffice",
+        "microsoft.exchange",
+        "microsoft_oc1",
+        "mail.",
+        "imap.",
+        "pop.",
+        "smtp.",
+        "outlook.com",
+        "office365",
+        "exchange.",
+        "sspi:",
     ]
 
     for c in creds:
         try:
-            target = (c.get('TargetName') or '')
+            target = c.get("TargetName") or ""
             target_lower = target.lower()
-            username = c.get('UserName') or ''
-            blob = c.get('CredentialBlob')
+            username = c.get("UserName") or ""
+            blob = c.get("CredentialBlob")
 
             # ¿Es de Outlook?
             is_outlook = any(p in target_lower for p in OUTLOOK_PATTERNS)
 
             # ¿Está relacionado con esta cuenta?
             related = (
-                smtp_lower in target_lower or
-                smtp_lower in username.lower() or
-                (domain and len(domain) > 3 and domain in target_lower)
+                smtp_lower in target_lower
+                or smtp_lower in username.lower()
+                or (domain and len(domain) > 3 and domain in target_lower)
             )
 
-            if not (is_outlook and related) and not (smtp_lower in target_lower):
+            if not (is_outlook and related) and smtp_lower not in target_lower:
                 continue
 
             password = None
             if blob and isinstance(blob, bytes):
                 try:
-                    password = blob.decode('utf-16-le').rstrip('\x00')
+                    password = blob.decode("utf-16-le").rstrip("\x00")
                 except Exception:
                     try:
-                        password = blob.decode('utf-8').rstrip('\x00')
+                        password = blob.decode("utf-8").rstrip("\x00")
                     except Exception:
                         password = None
 
-            matched.append({
-                "target": target,
-                "username": username,
-                "password": password,
-                "type_code": c.get('Type'),
-                "persist": c.get('Persist'),
-            })
+            matched.append(
+                {
+                    "target": target,
+                    "username": username,
+                    "password": password,
+                    "type_code": c.get("Type"),
+                    "persist": c.get("Persist"),
+                }
+            )
         except Exception:
             continue
 
     return matched if matched else None
 
 
-def save_inventory(inventory: Dict,
-                   output_dir: str,
-                   password: Optional[str] = None) -> str:
+def save_inventory(inventory: dict, output_dir: str, password: str | None = None) -> str:
     """
     Guarda el inventario en disco.
     Si password está dado → archivo `accounts.json.enc` (encriptado)
@@ -332,6 +350,7 @@ def save_inventory(inventory: Dict,
 
     if password:
         from crypto_utils import encrypt_dict_to_file
+
         path = os.path.join(output_dir, "accounts.json.enc")
         encrypt_dict_to_file(inventory, path, password)
     else:
@@ -342,7 +361,7 @@ def save_inventory(inventory: Dict,
     return path
 
 
-def summarize_inventory(inventory: Dict) -> str:
+def summarize_inventory(inventory: dict) -> str:
     """Genera un resumen legible del inventario."""
     accounts = inventory.get("accounts", [])
     has_pwd = inventory.get("includes_passwords", False)

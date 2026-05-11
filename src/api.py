@@ -4,14 +4,13 @@ UNS Backup v3.0 - API Bridge Python ↔ JavaScript
 Todas las funciones que la UI HTML/JS puede llamar a través de pywebview.
 """
 
+import datetime
+import logging
 import os
 import sys
-import json
-import datetime
 import threading
-import logging
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import Any
 
 # Asegurar que src/ esté en path
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +29,7 @@ class API:
 
     def __init__(self):
         from config import Config
+
         self.config = Config()
         self.outlook_client = None
         self.accounts = []
@@ -37,8 +37,8 @@ class API:
         # Estado del backup actual
         self._backup_engine = None
         self._backup_log = []
-        self._backup_state = "idle"   # idle | running | success | failed
-        self._backup_result = None    # str con la ruta cuando terminó
+        self._backup_state = "idle"  # idle | running | success | failed
+        self._backup_result = None  # str con la ruta cuando terminó
         self._backup_lock = threading.Lock()
 
         # Estado del import actual
@@ -52,10 +52,11 @@ class API:
     # Conexión a Outlook
     # ========================================================
 
-    def connect_outlook(self) -> Dict:
+    def connect_outlook(self) -> dict:
         """Inicia conexión a Outlook. Devuelve estado."""
         try:
-            from outlook_client import OutlookClient, WIN32_AVAILABLE
+            from outlook_client import WIN32_AVAILABLE, OutlookClient
+
             if not WIN32_AVAILABLE:
                 return {"success": False, "error": "pywin32 not available"}
 
@@ -65,7 +66,7 @@ class API:
             log.exception("connect_outlook")
             return {"success": False, "error": str(e)}
 
-    def detect_accounts(self) -> Dict:
+    def detect_accounts(self) -> dict:
         """Detecta todas las cuentas configuradas en Outlook."""
         if not self.outlook_client:
             r = self.connect_outlook()
@@ -97,11 +98,11 @@ class API:
     # Configuración
     # ========================================================
 
-    def get_config(self) -> Dict:
+    def get_config(self) -> dict:
         """Devuelve toda la configuración actual."""
         return dict(self.config.data)
 
-    def set_config(self, key: str, value: Any) -> Dict:
+    def set_config(self, key: str, value: Any) -> dict:
         """Actualiza un setting y persiste."""
         try:
             self.config.set(key, value)
@@ -110,7 +111,7 @@ class API:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def update_config(self, updates: Dict) -> Dict:
+    def update_config(self, updates: dict) -> dict:
         """Actualiza varios settings de una vez."""
         try:
             for k, v in updates.items():
@@ -124,10 +125,11 @@ class API:
     # File system helpers (diálogos nativos)
     # ========================================================
 
-    def choose_folder(self, initial: str = None) -> Optional[str]:
+    def choose_folder(self, initial: str = None) -> str | None:
         """Abre un diálogo nativo para elegir carpeta."""
         try:
             import webview
+
             window = webview.windows[0] if webview.windows else None
             if not window:
                 return None
@@ -138,15 +140,15 @@ class API:
             if result:
                 return result[0] if isinstance(result, (list, tuple)) else result
             return None
-        except Exception as e:
+        except Exception:
             log.exception("choose_folder")
             return None
 
-    def choose_files(self, initial: str = None,
-                     extensions: List[str] = None) -> List[str]:
+    def choose_files(self, initial: str = None, extensions: list[str] = None) -> list[str]:
         """Abre diálogo para elegir múltiples archivos."""
         try:
             import webview
+
             window = webview.windows[0] if webview.windows else None
             if not window:
                 return []
@@ -162,11 +164,11 @@ class API:
                 file_types=file_types,
             )
             return list(result) if result else []
-        except Exception as e:
+        except Exception:
             log.exception("choose_files")
             return []
 
-    def open_path(self, path: str) -> Dict:
+    def open_path(self, path: str) -> dict:
         """Abre una carpeta o archivo en el explorador."""
         try:
             os.startfile(path)
@@ -178,7 +180,7 @@ class API:
     # BACKUP
     # ========================================================
 
-    def estimate_backup_size(self, smtp_addresses: List[str]) -> Dict:
+    def estimate_backup_size(self, smtp_addresses: list[str]) -> dict:
         """Estima cuántos emails y MB tienen las cuentas seleccionadas."""
         if not self.accounts:
             return {"success": False, "error": "No accounts detected yet"}
@@ -203,7 +205,7 @@ class API:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def start_backup(self, params: Dict) -> Dict:
+    def start_backup(self, params: dict) -> dict:
         """Inicia un backup en background. Devuelve un ID para polling."""
         with self._backup_lock:
             if self._backup_state == "running":
@@ -219,9 +221,7 @@ class API:
                 if not output_dir:
                     return {"success": False, "error": "output_dir required"}
 
-                selected = [
-                    a for a in self.accounts if a.smtp_address in smtp_list
-                ]
+                selected = [a for a in self.accounts if a.smtp_address in smtp_list]
                 if not selected:
                     return {"success": False, "error": "No accounts selected"}
 
@@ -238,10 +238,12 @@ class API:
                 )
 
                 def progress(msg):
-                    self._backup_log.append({
-                        "ts": datetime.datetime.now().isoformat(),
-                        "msg": msg,
-                    })
+                    self._backup_log.append(
+                        {
+                            "ts": datetime.datetime.now().isoformat(),
+                            "msg": msg,
+                        }
+                    )
 
                 def finish(success, info):
                     with self._backup_lock:
@@ -265,17 +267,17 @@ class API:
                 log.exception("start_backup")
                 return {"success": False, "error": str(e)}
 
-    def get_backup_progress(self) -> Dict:
+    def get_backup_progress(self) -> dict:
         """Polling: estado actual del backup."""
         with self._backup_lock:
             return {
                 "state": self._backup_state,
-                "log": self._backup_log[-50:],   # últimos 50 mensajes
+                "log": self._backup_log[-50:],  # últimos 50 mensajes
                 "log_count": len(self._backup_log),
                 "result": self._backup_result,
             }
 
-    def cancel_backup(self) -> Dict:
+    def cancel_backup(self) -> dict:
         """Cancela el backup en curso."""
         if self._backup_engine:
             try:
@@ -285,11 +287,12 @@ class API:
                 return {"success": False, "error": str(e)}
         return {"success": False, "error": "No backup running"}
 
-    def _auto_export_inventory(self, backup_dir, smtp_list,
-                                  include_servers, include_passwords,
-                                  master_password):
+    def _auto_export_inventory(
+        self, backup_dir, smtp_list, include_servers, include_passwords, master_password
+    ):
         try:
             from account_inventory import build_inventory, save_inventory
+
             inventory = build_inventory(
                 outlook_client=self.outlook_client,
                 selected_smtps=smtp_list,
@@ -297,24 +300,29 @@ class API:
                 include_passwords=include_passwords,
             )
             path = save_inventory(inventory, backup_dir, master_password)
-            self._backup_log.append({
-                "ts": datetime.datetime.now().isoformat(),
-                "msg": f"📋 Inventario exportado: {os.path.basename(path)}",
-            })
+            self._backup_log.append(
+                {
+                    "ts": datetime.datetime.now().isoformat(),
+                    "msg": f"📋 Inventario exportado: {os.path.basename(path)}",
+                }
+            )
         except Exception as e:
-            self._backup_log.append({
-                "ts": datetime.datetime.now().isoformat(),
-                "msg": f"⚠️ Error inventario: {e}",
-            })
+            self._backup_log.append(
+                {
+                    "ts": datetime.datetime.now().isoformat(),
+                    "msg": f"⚠️ Error inventario: {e}",
+                }
+            )
 
     # ========================================================
     # IMPORT (RESTORE)
     # ========================================================
 
-    def search_pst_files(self, folder: str) -> Dict:
+    def search_pst_files(self, folder: str) -> dict:
         """Busca PSTs en una carpeta y devuelve lista con metadata."""
         try:
             from import_engine import find_pst_files
+
             files = find_pst_files(folder, recursive=True)
             result = []
             for path in files:
@@ -330,24 +338,28 @@ class API:
                         if len(parts) == 2:
                             account = f"{parts[0]}@" + parts[1].replace("_", ".")
 
-                    result.append({
-                        "path": path,
-                        "filename": fname,
-                        "account": account,
-                        "size_mb": round(size_mb, 1),
-                        "created": datetime.datetime.fromtimestamp(
-                            mtime).strftime("%Y-%m-%d %H:%M"),
-                    })
+                    result.append(
+                        {
+                            "path": path,
+                            "filename": fname,
+                            "account": account,
+                            "size_mb": round(size_mb, 1),
+                            "created": datetime.datetime.fromtimestamp(mtime).strftime(
+                                "%Y-%m-%d %H:%M"
+                            ),
+                        }
+                    )
                 except Exception:
                     continue
             return {"success": True, "files": result}
         except Exception as e:
             return {"success": False, "error": str(e), "files": []}
 
-    def preview_pst(self, pst_path: str) -> Dict:
+    def preview_pst(self, pst_path: str) -> dict:
         """Inspecciona un PST sin importarlo permanentemente."""
         try:
             from pst_inspector import PSTInspector
+
             if not self.outlook_client:
                 self.connect_outlook()
             inspector = PSTInspector(self.outlook_client)
@@ -356,7 +368,7 @@ class API:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def start_import(self, params: Dict) -> Dict:
+    def start_import(self, params: dict) -> dict:
         """Inicia importación de PSTs."""
         with self._import_lock:
             if self._import_state == "running":
@@ -387,17 +399,17 @@ class API:
                 )
 
                 def progress(msg):
-                    self._import_log.append({
-                        "ts": datetime.datetime.now().isoformat(),
-                        "msg": msg,
-                    })
+                    self._import_log.append(
+                        {
+                            "ts": datetime.datetime.now().isoformat(),
+                            "msg": msg,
+                        }
+                    )
 
                 def finish(success, ok_count, total):
                     with self._import_lock:
                         self._import_state = "success" if success else "failed"
-                        self._import_result = {
-                            "ok_count": ok_count, "total": total
-                        }
+                        self._import_result = {"ok_count": ok_count, "total": total}
 
                 self._import_engine.run_async(progress, finish)
                 return {"success": True}
@@ -405,7 +417,7 @@ class API:
                 self._import_state = "failed"
                 return {"success": False, "error": str(e)}
 
-    def get_import_progress(self) -> Dict:
+    def get_import_progress(self) -> dict:
         with self._import_lock:
             return {
                 "state": self._import_state,
@@ -418,19 +430,21 @@ class API:
     # HISTORY
     # ========================================================
 
-    def list_history(self, base_dir: str = None) -> Dict:
+    def list_history(self, base_dir: str = None) -> dict:
         """Lista todos los backups previos."""
         try:
             from history_manager import BackupHistory
+
             base = base_dir or self.config.get("default_backup_dir")
             history = BackupHistory(base)
             return {"success": True, "backups": history.list_backups()}
         except Exception as e:
             return {"success": False, "error": str(e), "backups": []}
 
-    def delete_history(self, path: str) -> Dict:
+    def delete_history(self, path: str) -> dict:
         try:
             from history_manager import BackupHistory
+
             base = self.config.get("default_backup_dir")
             history = BackupHistory(base)
             if history.delete_backup(path):
@@ -443,9 +457,10 @@ class API:
     # SCHEDULER
     # ========================================================
 
-    def get_schedule_info(self) -> Dict:
+    def get_schedule_info(self) -> dict:
         try:
-            from scheduler import task_exists, get_task_info, calculate_next_run
+            from scheduler import get_task_info, task_exists
+
             exists = task_exists()
             info = get_task_info() if exists else None
             return {
@@ -456,7 +471,7 @@ class API:
         except Exception as e:
             return {"success": False, "error": str(e), "active": False}
 
-    def save_schedule(self, params: Dict) -> Dict:
+    def save_schedule(self, params: dict) -> dict:
         try:
             from scheduler import create_task
 
@@ -484,9 +499,10 @@ class API:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def remove_schedule(self) -> Dict:
+    def remove_schedule(self) -> dict:
         try:
             from scheduler import delete_task
+
             ok = delete_task()
             self.config.set("schedule_enabled", False)
             self.config.save()
@@ -494,9 +510,10 @@ class API:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def test_schedule_now(self) -> Dict:
+    def test_schedule_now(self) -> dict:
         try:
             from scheduler import run_task_now
+
             return {"success": run_task_now()}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -505,9 +522,10 @@ class API:
     # ACCOUNT INVENTORY (manual export)
     # ========================================================
 
-    def export_inventory(self, params: Dict) -> Dict:
+    def export_inventory(self, params: dict) -> dict:
         try:
             from account_inventory import build_inventory, save_inventory
+
             output_dir = params.get("output_dir")
             smtp_list = params.get("accounts", [])
             include_servers = params.get("include_servers", True)
@@ -535,7 +553,7 @@ class API:
     # ACCOUNT DETAILS (single account)
     # ========================================================
 
-    def get_account_details(self, smtp: str) -> Dict:
+    def get_account_details(self, smtp: str) -> dict:
         """Devuelve detalles completos de una cuenta."""
         try:
             from outlook_client import WIN32_AVAILABLE
@@ -553,7 +571,7 @@ class API:
             if not account:
                 return {"success": False, "error": "Account not found"}
 
-            from account_inventory import _read_registry_servers, _read_credential_vault
+            from account_inventory import _read_credential_vault, _read_registry_servers
 
             servers = _read_registry_servers(smtp) if WIN32_AVAILABLE else None
             creds = _read_credential_vault(smtp) if WIN32_AVAILABLE else None
@@ -563,7 +581,9 @@ class API:
                 "smtp": smtp,
                 "display_name": account.display_name,
                 "account_type": account.account_type,
-                "matches_domain": account.matches_domain(self.config.get("domain_filter", "uns-kikaku.com")),
+                "matches_domain": account.matches_domain(
+                    self.config.get("domain_filter", "uns-kikaku.com")
+                ),
                 "server_settings": servers or {},
                 "credential_count": len(creds) if creds else 0,
                 "inventory_exportable": True,
@@ -576,15 +596,15 @@ class API:
     # CONNECTION TESTER
     # ========================================================
 
-    def test_connection(self, params: Dict) -> Dict:
+    def test_connection(self, params: dict) -> dict:
         """Testea conectividad IMAP/SMTP de una cuenta."""
         try:
             smtp = params.get("smtp")
             if not smtp:
                 return {"success": False, "error": "smtp required"}
 
+            from account_inventory import _read_credential_vault, _read_registry_servers
             from connection_tester import ConnectionTester
-            from account_inventory import _read_registry_servers, _read_credential_vault
             from outlook_client import WIN32_AVAILABLE
 
             timeout = params.get("timeout", 10)
@@ -636,7 +656,7 @@ class API:
     # EXPORT SINGLE ACCOUNT INVENTORY
     # ========================================================
 
-    def export_account_inventory(self, params: Dict) -> Dict:
+    def export_account_inventory(self, params: dict) -> dict:
         """Exporta inventario de UNA cuenta especifica."""
         try:
             smtp = params.get("smtp")
@@ -661,7 +681,9 @@ class API:
                 include_passwords=include_passwords,
             )
 
-            output_dir = params.get("output_dir", self.config.get("default_backup_dir", str(Path.home())))
+            output_dir = params.get(
+                "output_dir", self.config.get("default_backup_dir", str(Path.home()))
+            )
             os.makedirs(output_dir, exist_ok=True)
 
             saved = save_inventory(inventory, output_dir, master_password)
@@ -674,11 +696,12 @@ class API:
     # CACHE BACKUP (offline, sin servidor)
     # ========================================================
 
-    def scan_cache_files(self) -> Dict:
+    def scan_cache_files(self) -> dict:
         """Escanea las carpetas de Outlook buscando OST/PST locales.
         NO requiere conexión a servidor."""
         try:
             from cache_backup import find_cache_files, map_cache_to_account
+
             files = find_cache_files()
             files = map_cache_to_account(files)
             return {"success": True, "files": files, "count": len(files)}
@@ -686,7 +709,7 @@ class API:
             log.exception("scan_cache_files")
             return {"success": False, "error": str(e), "files": []}
 
-    def start_cache_backup(self, params: Dict) -> Dict:
+    def start_cache_backup(self, params: dict) -> dict:
         """Inicia backup directo de archivos OST/PST."""
         with self._backup_lock:
             if self._backup_state == "running":
@@ -718,10 +741,12 @@ class API:
                 )
 
                 def progress(msg):
-                    self._backup_log.append({
-                        "ts": datetime.datetime.now().isoformat(),
-                        "msg": msg,
-                    })
+                    self._backup_log.append(
+                        {
+                            "ts": datetime.datetime.now().isoformat(),
+                            "msg": msg,
+                        }
+                    )
 
                 def finish(success, info):
                     with self._backup_lock:
@@ -739,10 +764,11 @@ class API:
     # SHELL EXTRACTOR (RAR + Migration Scripts)
     # ========================================================
 
-    def can_extract_rar(self) -> Dict:
+    def can_extract_rar(self) -> dict:
         """Verifica si se puede extraer RAR (unrar/7z instalado)."""
         try:
             from shell_extractor import ShellExtractor
+
             extractor = ShellExtractor()
             return {
                 "success": True,
@@ -752,10 +778,11 @@ class API:
         except Exception as e:
             return {"success": False, "error": str(e), "available": False}
 
-    def find_rar_files(self, directory: str) -> Dict:
+    def find_rar_files(self, directory: str) -> dict:
         """Busca archivos RAR en un directorio."""
         try:
             from shell_extractor import ShellExtractor
+
             extractor = ShellExtractor()
             files = extractor.find_rar_files(directory)
             return {"success": True, "files": files, "count": len(files)}
@@ -763,7 +790,7 @@ class API:
             log.exception("find_rar_files")
             return {"success": False, "error": str(e), "files": []}
 
-    def extract_rar(self, params: Dict) -> Dict:
+    def extract_rar(self, params: dict) -> dict:
         """Extrae un archivo RAR al directorio temporal."""
         try:
             from shell_extractor import ShellExtractor
@@ -778,14 +805,16 @@ class API:
             if not extractor.can_extract_rar():
                 return {
                     "success": False,
-                    "error": "unrar.exe o 7z.exe no encontrado. Instale WinRAR o 7-Zip."
+                    "error": "unrar.exe o 7z.exe no encontrado. Instale WinRAR o 7-Zip.",
                 }
 
             def progress(msg):
-                self._shell_log.append({
-                    "ts": datetime.datetime.now().isoformat(),
-                    "msg": msg,
-                })
+                self._shell_log.append(
+                    {
+                        "ts": datetime.datetime.now().isoformat(),
+                        "msg": msg,
+                    }
+                )
 
             def finish(success, info):
                 with self._shell_lock:
@@ -804,16 +833,16 @@ class API:
             log.exception("extract_rar")
             return {"success": False, "error": str(e)}
 
-    def get_shell_progress(self) -> Dict:
+    def get_shell_progress(self) -> dict:
         """Polling del estado de extraccion/ejecucion."""
-        with getattr(self, '_shell_lock', threading.Lock()):
+        with getattr(self, "_shell_lock", threading.Lock()):
             return {
-                "state": getattr(self, '_shell_state', "idle"),
-                "log": getattr(self, '_shell_log', [])[-50:],
-                "result": getattr(self, '_shell_result', None),
+                "state": getattr(self, "_shell_state", "idle"),
+                "log": getattr(self, "_shell_log", [])[-50:],
+                "result": getattr(self, "_shell_result", None),
             }
 
-    def run_migration_script(self, params: Dict) -> Dict:
+    def run_migration_script(self, params: dict) -> dict:
         """Ejecuta un script de migracion (PowerShell, batch, etc)."""
         try:
             from shell_extractor import ShellExtractor
@@ -833,10 +862,12 @@ class API:
             self._shell_lock = threading.Lock()
 
             def progress(msg):
-                self._shell_log.append({
-                    "ts": datetime.datetime.now().isoformat(),
-                    "msg": msg,
-                })
+                self._shell_log.append(
+                    {
+                        "ts": datetime.datetime.now().isoformat(),
+                        "msg": msg,
+                    }
+                )
 
             result = extractor.run_script(script_path, progress)
 
@@ -850,10 +881,11 @@ class API:
             log.exception("run_migration_script")
             return {"success": False, "error": str(e)}
 
-    def open_extracted_folder(self) -> Dict:
+    def open_extracted_folder(self) -> dict:
         """Abre la carpeta de extraccion en el explorador."""
         try:
             from shell_extractor import ShellExtractor
+
             extractor = ShellExtractor()
             folder = extractor.get_extract_dir()
             os.makedirs(folder, exist_ok=True)
@@ -866,7 +898,7 @@ class API:
     # App lifecycle
     # ========================================================
 
-    def get_app_info(self) -> Dict:
+    def get_app_info(self) -> dict:
         return {
             "version": "3.1.1",
             "company": "ユニバーサル企画株式会社",

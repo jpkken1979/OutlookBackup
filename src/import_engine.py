@@ -9,12 +9,12 @@ Importa archivos .pst en Outlook con 3 modos:
 
 import os
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import List, Optional, Callable
 
 try:
-    import win32com.client
-    import pythoncom
+    import pythoncom  # noqa: F401  # availability probe
+    import win32com.client  # noqa: F401  # availability probe
 except ImportError:
     pass
 
@@ -22,9 +22,13 @@ except ImportError:
 class ImportEngine:
     """Motor de import con threading."""
 
-    def __init__(self, outlook_client, pst_files: List[str],
-                 mode: str = "separate_folder",
-                 target_smtp: Optional[str] = None):
+    def __init__(
+        self,
+        outlook_client,
+        pst_files: list[str],
+        mode: str = "separate_folder",
+        target_smtp: str | None = None,
+    ):
         """
         :param outlook_client: instancia de OutlookClient
         :param pst_files: lista de paths absolutos a archivos .pst
@@ -36,7 +40,7 @@ class ImportEngine:
         self.mode = mode
         self.target_smtp = target_smtp
         self._cancel_flag = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self.results = []
 
     def run_async(self, progress_cb: Callable, finish_cb: Callable):
@@ -79,9 +83,7 @@ class ImportEngine:
 
                 except Exception as e:
                     progress_cb(f"  ❌ エラー: {e}")
-                    self.results.append({
-                        "file": pst_path, "success": False, "error": str(e)
-                    })
+                    self.results.append({"file": pst_path, "success": False, "error": str(e)})
 
             progress_cb(f"\n✅ {success_count}/{len(self.pst_files)} 完了")
             finish_cb(success_count > 0, success_count, len(self.pst_files))
@@ -94,9 +96,9 @@ class ImportEngine:
     def _import_as_separate_folder(self, pst_path: str, progress_cb) -> bool:
         """Monta el PST como una carpeta separada en el sidebar de Outlook."""
         try:
-            progress_cb(f"  📁 PSTを別フォルダとして開いています...")
+            progress_cb("  📁 PSTを別フォルダとして開いています...")
             self.client.namespace.AddStore(pst_path)
-            progress_cb(f"  ✅ Outlookのサイドバーに表示されました")
+            progress_cb("  ✅ Outlookのサイドバーに表示されました")
             return True
         except Exception as e:
             progress_cb(f"  ❌ {e}")
@@ -106,15 +108,15 @@ class ImportEngine:
     def _import_as_new_file(self, pst_path: str, progress_cb) -> bool:
         """Igual que separate_folder pero usando AddStoreEx con formato Unicode."""
         try:
-            progress_cb(f"  🗂️ 新規データファイルとして開いています...")
+            progress_cb("  🗂️ 新規データファイルとして開いています...")
             self.client.namespace.AddStoreEx(pst_path, 3)
-            progress_cb(f"  ✅ データファイルが追加されました")
+            progress_cb("  ✅ データファイルが追加されました")
             return True
-        except Exception as e:
+        except Exception:
             try:
                 # Fallback al método simple si AddStoreEx falla
                 self.client.namespace.AddStore(pst_path)
-                progress_cb(f"  ✅ データファイルが追加されました(基本モード)")
+                progress_cb("  ✅ データファイルが追加されました(基本モード)")
                 return True
             except Exception as e2:
                 progress_cb(f"  ❌ {e2}")
@@ -125,33 +127,36 @@ class ImportEngine:
         """Mergea items del PST al Inbox de la cuenta target."""
         try:
             if not self.target_smtp:
-                progress_cb(f"  ❌ 復元先アカウントが未指定")
+                progress_cb("  ❌ 復元先アカウントが未指定")
                 return False
 
-            progress_cb(f"  📂 PSTをマウント中...")
+            progress_cb("  📂 PSTをマウント中...")
             self.client.namespace.AddStore(pst_path)
 
             # Buscar el store recién montado
             source_store = None
             for store in self.client.namespace.Stores:
                 try:
-                    if store.FilePath and \
-                       os.path.normpath(store.FilePath) == os.path.normpath(pst_path):
+                    if store.FilePath and os.path.normpath(store.FilePath) == os.path.normpath(
+                        pst_path
+                    ):
                         source_store = store
                         break
                 except Exception:
                     continue
 
             if source_store is None:
-                progress_cb(f"  ❌ マウントしたPSTが見つかりません")
+                progress_cb("  ❌ マウントしたPSTが見つかりません")
                 return False
 
             # Buscar el store destino (cuenta target)
             target_store = None
             for store in self.client.namespace.Stores:
                 try:
-                    if (store.DisplayName == self.target_smtp or
-                        self.target_smtp in store.DisplayName):
+                    if (
+                        store.DisplayName == self.target_smtp
+                        or self.target_smtp in store.DisplayName
+                    ):
                         target_store = store
                         break
                 except Exception:
@@ -166,7 +171,7 @@ class ImportEngine:
             target_root = target_store.GetRootFolder()
 
             # Copiar carpetas recursivamente
-            progress_cb(f"  📋 メールをコピー中...")
+            progress_cb("  📋 メールをコピー中...")
             count = self._merge_folders(source_root, target_root, progress_cb)
             progress_cb(f"  ✅ {count}個のフォルダをマージしました")
 
@@ -199,7 +204,7 @@ class ImportEngine:
         return count
 
 
-def find_pst_files(directory: str, recursive: bool = True) -> List[str]:
+def find_pst_files(directory: str, recursive: bool = True) -> list[str]:
     """Busca todos los archivos .pst en un directorio."""
     pst_files = []
     try:
