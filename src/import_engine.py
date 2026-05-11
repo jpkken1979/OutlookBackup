@@ -7,10 +7,13 @@ Importa archivos .pst en Outlook con 3 modos:
 3. new_files: cada PST como data file independiente
 """
 
+from __future__ import annotations
+
 import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 try:
     import pythoncom  # noqa: F401  # availability probe
@@ -18,19 +21,26 @@ try:
 except ImportError:
     pass
 
+if TYPE_CHECKING:
+    from outlook.protocols import OutlookClientProtocol
+
 
 class ImportEngine:
-    """Motor de import con threading."""
+    """Motor de import con threading.
+
+    Acepta cualquier objeto que cumpla OutlookClientProtocol (necesita
+    `.namespace` con AddStore/AddStoreEx/Stores/RemoveStore).
+    """
 
     def __init__(
         self,
-        outlook_client,
+        outlook_client: OutlookClientProtocol,
         pst_files: list[str],
         mode: str = "separate_folder",
         target_smtp: str | None = None,
     ):
         """
-        :param outlook_client: instancia de OutlookClient
+        :param outlook_client: instancia que cumple OutlookClientProtocol
         :param pst_files: lista de paths absolutos a archivos .pst
         :param mode: 'separate_folder' | 'merge' | 'new_files'
         :param target_smtp: solo para mode='merge', cuenta destino
@@ -41,7 +51,7 @@ class ImportEngine:
         self.target_smtp = target_smtp
         self._cancel_flag = threading.Event()
         self._thread: threading.Thread | None = None
-        self.results = []
+        self.results: list[dict] = []
 
     def run_async(self, progress_cb: Callable, finish_cb: Callable):
         self._thread = threading.Thread(

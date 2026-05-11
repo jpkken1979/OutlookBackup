@@ -137,3 +137,66 @@ class ApplicationProtocol(Protocol):
     def GetNamespace(self, namespace_type: str) -> NamespaceProtocol:
         """En la practica solo se usa 'MAPI'."""
         ...
+
+
+# ============================================================
+# High-level facade protocol
+# ============================================================
+#
+# Los engines (BackupEngine, ImportEngine) consumen OutlookClient, no Dispatch
+# directo. OutlookClient mezcla acceso COM low-level con orquestacion. Este
+# Protocol documenta la API que los engines usan, para que FakeOutlookClient
+# pueda reemplazarlo en tests.
+
+
+@runtime_checkable
+class OutlookAccountInfo(Protocol):
+    """Cuenta como la conoce la app (no el AccountProtocol de COM crudo).
+
+    El OutlookAccount real (en outlook_client.py) cumple este Protocol. Es lo
+    que se pasa entre engines y UI.
+    """
+
+    smtp_address: str
+    display_name: str
+    account_type: str
+
+    def matches_domain(self, domain: str) -> bool:
+        """True si smtp_address termina con @{domain}."""
+        ...
+
+
+@runtime_checkable
+class OutlookClientProtocol(Protocol):
+    """Facade high-level sobre Outlook que los engines usan.
+
+    El namespace tipado se expone para ImportEngine que toca AddStore/Stores
+    directamente. Los export_* son metodos high-level que BackupEngine usa
+    sin tocar COM directo.
+    """
+
+    namespace: NamespaceProtocol
+
+    def export_account_to_pst(
+        self,
+        account: OutlookAccountInfo,
+        output_path: str,
+        progress_cb: Any = None,
+    ) -> bool:
+        """Exporta una cuenta entera a un archivo .pst. True si exito."""
+        ...
+
+    def export_folder_to_msg_files(
+        self,
+        account: OutlookAccountInfo,
+        output_dir: str,
+        progress_cb: Any = None,
+    ) -> int:
+        """Exporta emails como archivos .msg individuales. Devuelve count."""
+        ...
+
+    def count_emails_for_account(
+        self, account: OutlookAccountInfo, progress_cb: Any = None
+    ) -> dict:
+        """Cuenta correos. Devuelve dict con total_emails, total_folders, etc."""
+        ...

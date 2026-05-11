@@ -21,6 +21,8 @@ from outlook.protocols import (
     ItemsProtocol,
     MailItemProtocol,
     NamespaceProtocol,
+    OutlookAccountInfo,
+    OutlookClientProtocol,
     StoreProtocol,
 )
 
@@ -31,5 +33,7 @@ __all__ = [
     "ItemsProtocol",
     "MailItemProtocol",
     "NamespaceProtocol",
+    "OutlookAccountInfo",
+    "OutlookClientProtocol",
     "StoreProtocol",
 ]

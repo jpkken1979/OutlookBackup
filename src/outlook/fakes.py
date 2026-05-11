@@ -177,3 +177,100 @@ class FakeApplication:
     def GetNamespace(self, namespace_type: str) -> FakeNamespace:
         assert namespace_type == "MAPI", f"Solo MAPI soportado, no {namespace_type}"
         return self.namespace
+
+
+# ============================================================
+# High-level fakes for engines
+# ============================================================
+
+
+@dataclass
+class FakeOutlookAccount:
+    """Domain account info — cumple OutlookAccountInfo Protocol.
+
+    Drop-in replacement de OutlookAccount (definido en outlook_client.py) en
+    tests. Tiene los atributos que los engines leen.
+    """
+
+    smtp_address: str = ""
+    display_name: str = ""
+    account_type: str = "IMAP"
+    store_id: str = ""
+
+    def matches_domain(self, domain: str) -> bool:
+        return self.smtp_address.lower().endswith(f"@{domain.lower()}")
+
+    def to_dict(self) -> dict:
+        return {
+            "smtp": self.smtp_address,
+            "name": self.display_name,
+            "type": self.account_type,
+        }
+
+
+@dataclass
+class FakeOutlookClient:
+    """High-level facade fake — cumple OutlookClientProtocol.
+
+    Por defecto las operaciones devuelven exito y crean archivos vacios para
+    que los `os.path.exists` de los engines no fallen. Para simular errores,
+    setea entries en _export_returns / _msg_returns / _count_returns.
+
+    Ejemplo:
+        client = FakeOutlookClient()
+        client._export_returns["broken@uns.com"] = False  # simula export fallido
+        engine = BackupEngine(outlook_client=client, ...)
+    """
+
+    namespace: FakeNamespace = field(default_factory=FakeNamespace)
+
+    # Behavior overrides per-account (default: success)
+    _export_returns: dict[str, bool] = field(default_factory=dict)
+    _msg_returns: dict[str, int] = field(default_factory=dict)
+    _count_returns: dict[str, dict] = field(default_factory=dict)
+
+    # Trace de llamadas para asserts en tests
+    _export_calls: list[tuple[str, str]] = field(default_factory=list)
+    _msg_calls: list[tuple[str, str]] = field(default_factory=list)
+    _count_calls: list[str] = field(default_factory=list)
+
+    def export_account_to_pst(self, account, output_path: str, progress_cb=None) -> bool:
+        smtp = account.smtp_address
+        self._export_calls.append((smtp, output_path))
+        if progress_cb:
+            progress_cb(f"[fake] export {smtp} -> {output_path}")
+
+        success = self._export_returns.get(smtp, True)
+        if success:
+            # Crear archivo vacio para que os.path.exists() pase en BackupEngine
+            from pathlib import Path
+
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).touch()
+        return success
+
+    def export_folder_to_msg_files(self, account, output_dir: str, progress_cb=None) -> int:
+        smtp = account.smtp_address
+        self._msg_calls.append((smtp, output_dir))
+        if progress_cb:
+            progress_cb(f"[fake] msg-export {smtp} -> {output_dir}")
+
+        count = self._msg_returns.get(smtp, 5)
+        if count > 0:
+            from pathlib import Path
+
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+        return count
+
+    def count_emails_for_account(self, account, progress_cb=None) -> dict:
+        smtp = account.smtp_address
+        self._count_calls.append(smtp)
+        return self._count_returns.get(
+            smtp,
+            {
+                "total_emails": 10,
+                "total_folders": 3,
+                "total_size_bytes": 1024 * 1024,
+                "folders": [],
+            },
+        )

@@ -4,11 +4,17 @@ UNS Outlook Backup - Motor de backup
 Maneja el proceso de backup con threading y genera reportes.
 """
 
+from __future__ import annotations
+
 import datetime
 import json
 import os
 import threading
 from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from outlook.protocols import OutlookAccountInfo, OutlookClientProtocol
 
 
 class BackupReport:
@@ -238,10 +244,18 @@ footer {{
 
 
 class BackupEngine:
-    """Motor que ejecuta el backup en un thread separado."""
+    """Motor que ejecuta el backup en un thread separado.
+
+    Acepta cualquier objeto que cumpla `OutlookClientProtocol` (no solo el
+    OutlookClient real). Esto permite tests con FakeOutlookClient sin Outlook.
+    """
 
     def __init__(
-        self, outlook_client, output_dir: str, selected_accounts: list, export_format: str = "pst"
+        self,
+        outlook_client: OutlookClientProtocol,
+        output_dir: str,
+        selected_accounts: list[OutlookAccountInfo],
+        export_format: str = "pst",
     ):
         self.client = outlook_client
         self.output_dir = output_dir
