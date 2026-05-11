@@ -217,3 +217,98 @@ mypy src:                35 errores advisory (no bloqueante en CI)
 Coverage core engines:   backup 88%, import 73%, fakes 99%
 Coverage observability:  87% global
 ```
+
+## Segundo `/jp` de la sesion — 3 batches adicionales
+
+Despues del cierre inicial el usuario invoco `/jp` con "haz todos los
+pendientes" otra vez. Se cerraron tres batches mas:
+
+### 1. Integracion observability en main.py (commit a22ee5b)
+
+- `install_crash_handler()` PRIMERO en `main()` para capturar errores de
+  bootstrap incluso antes de setup_logging.
+- `setup_logging(log_to_file)` ahora delega a `observability.setup_logger`
+  con JSON sink al `auto.log`. Mantiene la API publica.
+- `run_gui()` y `run_auto_backup()` hacen `bind_context(operation=...)`
+  para que los logs lleven la operacion en JSON.
+- `build/pyinstaller.spec` actualizado: + `collect_submodules('structlog')`,
+  + observability y outlook al hidden imports, fix typo `src.connection_tester`
+  -> `connection_tester`.
+
+### 2. Fase 3 batch 1 — Playwright + 9 E2E tests (commit 81ec4c6)
+
+- Setup `pytest-playwright>=0.5.0` en dev deps + `playwright install chromium`.
+- `tests/e2e/conftest.py`:
+  * `web_server` fixture (scope=session): http.server local sirviendo
+    src/web/ en puerto random.
+  * `MOCK_PYWEBVIEW_INIT`: JS init_script que reemplaza window.pywebview
+    con un Proxy que retorna defaults para cualquier metodo + tracks
+    calls + permite overrides per-test.
+  * `page_with_app`: fixture con la Page ya navegada al index + mock.
+  * `pytest.importorskip("playwright.sync_api")` para skipear si no
+    esta el browser.
+- 9 tests E2E:
+  * TestAppBootstrap (5): titulo, 7 tabs, backup activo default, badge
+    visible, connect_outlook llamado al cargar.
+  * TestTabNavigation (3): click activa tab, content correspondiente
+    visible, solo 1 tab activo a la vez.
+  * TestConnectionFlow (1): mock connect_outlook fallido -> badge offline.
+
+### 3. Polish mypy strict per-module (commit b049ef1)
+
+- Activado `disallow_untyped_defs = true` + `warn_return_any = true` en
+  9 modulos limpios: crypto_utils, config, connection_tester,
+  observability.*, outlook.protocols, outlook.constants.
+- Fixes aplicados:
+  * `crypto_utils.decrypt_file_to_dict`: cast explicito dict.
+  * `config.Config`: agregadas anotaciones -> None y tipos a kwargs/default.
+  * `connection_tester`: + `from typing import Any`, `reg_key: Any`,
+    `int(p.get("port", ...))` en 2 returns.
+  * `observability/crash.py`: `exc_type: type` -> `type[BaseException]`
+    en _build_crash_report, write_crash_report, _crash_hook.
+
+## Estado FINAL tras esta sesion
+
+```
+git log --oneline -10
+b049ef1 chore(types): mypy strict per-module en 9 modulos limpios
+81ec4c6 test(e2e): Playwright scaffold + 9 E2E tests del frontend (Fase 3 batch 1)
+a22ee5b feat(main): integrar observability + crash handler en bootstrap
+f2e796f chore(memory): documentar sesion 2026-05-12
+8b48c40 feat(observability): structlog + crash reporter + update check (Fase 4)
+d9c7ccc feat(engines): refactor backup/import + tests 70%+ cov (Fase 2 batch 3)
+201ff19 chore(memory): actualizar session_2026-05-11
+1912245 feat(outlook): real adapter via Dispatch (Fase 2 batch 2)
+8643601 feat(outlook): capa Protocols + fakes (Fase 2 batch 1)
+
+Tests:                   96 passed (87 unit + 9 e2e)
+ruff check:              All checks passed!
+ruff format:             34 files already formatted
+mypy strict modules:     0 errores (9 modulos en strict)
+mypy global advisory:    34 errores en api.py + otros (no blocker)
+Coverage core engines:   backup 88%, import 73%, fakes 99%
+Coverage observability:  87% global
+```
+
+## Pendientes finales (proxima sesion)
+
+1. **Cleanup api.py** (~10 errores mypy reales). Incluye:
+   - `ConnectionTester` no existe en connection_tester (debe ser otra clase
+     o no existe).
+   - Defaults None tipados como str/list.
+   - `_shell_log: list[...] = ...` necesita anotacion.
+2. **Fase 3 batch 2 — tests E2E de flujos largos**:
+   - Backup polling state machine (state.running -> success).
+   - Restore form validation.
+   - Cache scan + download.
+   - Settings save persistence.
+3. **Unificar i18n** Python `src/i18n.py` y JS `src/web/js/i18n/ja.json` —
+   hoy hay duplicacion. Mover todo a `ja.json` y leer desde Python.
+4. **CI: agregar playwright install chromium step** al workflow para que
+   los E2E corran en GitHub Actions. Por ahora skipean.
+
+## Smoke test pendiente del usuario
+
+`run.bat` y verificar que la UI funciona normal sin app.js legacy
+(handlers no se duplican). Esta validacion sigue pendiente del lado del
+usuario porque no se puede probar la WebView2 desde la sesion.
