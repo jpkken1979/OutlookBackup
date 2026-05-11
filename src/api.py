@@ -125,7 +125,7 @@ class API:
     # File system helpers (diálogos nativos)
     # ========================================================
 
-    def choose_folder(self, initial: str = None) -> str | None:
+    def choose_folder(self, initial: str | None = None) -> str | None:
         """Abre un diálogo nativo para elegir carpeta."""
         try:
             import webview
@@ -138,13 +138,19 @@ class API:
                 directory=initial or str(Path.home()),
             )
             if result:
-                return result[0] if isinstance(result, (list, tuple)) else result
+                if isinstance(result, (list, tuple)):
+                    return str(result[0]) if result else None
+                return str(result)
             return None
         except Exception:
             log.exception("choose_folder")
             return None
 
-    def choose_files(self, initial: str = None, extensions: list[str] = None) -> list[str]:
+    def choose_files(
+        self,
+        initial: str | None = None,
+        extensions: list[str] | None = None,
+    ) -> list[str]:
         """Abre diálogo para elegir múltiples archivos."""
         try:
             import webview
@@ -152,7 +158,7 @@ class API:
             window = webview.windows[0] if webview.windows else None
             if not window:
                 return []
-            file_types = ()
+            file_types: tuple[str, ...] = ()
             if extensions:
                 desc = "Outlook Data Files"
                 pattern = ";".join(f"*.{e}" for e in extensions)
@@ -430,7 +436,7 @@ class API:
     # HISTORY
     # ========================================================
 
-    def list_history(self, base_dir: str = None) -> dict:
+    def list_history(self, base_dir: str | None = None) -> dict:
         """Lista todos los backups previos."""
         try:
             from history_manager import BackupHistory
@@ -489,10 +495,16 @@ class API:
                 self.config.set(k, v)
             self.config.save()
 
+            frequency = params.get("frequency") or ""
+            time_hhmm = params.get("time") or ""
+            day_of_week = params.get("day_of_week") or ""
+            if not frequency or not time_hhmm:
+                return {"success": False, "error": "frequency y time son obligatorios"}
+
             ok = create_task(
-                frequency=params.get("frequency"),
-                time_hhmm=params.get("time"),
-                day_of_week=params.get("day_of_week"),
+                frequency=frequency,
+                time_hhmm=time_hhmm,
+                day_of_week=day_of_week,
                 custom_days=params.get("custom_days", 7),
             )
             return {"success": ok}
@@ -535,9 +547,12 @@ class API:
             if include_passwords and not master_password:
                 return {"success": False, "error": "Master password required"}
 
+            if not output_dir:
+                return {"success": False, "error": "output_dir is required"}
+
             inventory = build_inventory(
                 outlook_client=self.outlook_client,
-                selected_smtps=smtp_list,
+                selected_smtp_addresses=smtp_list,
                 include_servers=include_servers,
                 include_passwords=include_passwords,
             )
@@ -597,57 +612,23 @@ class API:
     # ========================================================
 
     def test_connection(self, params: dict) -> dict:
-        """Testea conectividad IMAP/SMTP de una cuenta."""
+        """Testea conectividad IMAP/SMTP de una cuenta.
+
+        Delega a connection_tester.test_account_connection que lee el registry
+        y prueba IMAP+SMTP. La logica esta toda alla.
+        """
         try:
             smtp = params.get("smtp")
             if not smtp:
                 return {"success": False, "error": "smtp required"}
 
-            from account_inventory import _read_credential_vault, _read_registry_servers
-            from connection_tester import ConnectionTester
-            from outlook_client import WIN32_AVAILABLE
+            from connection_tester import test_account_connection
 
             timeout = params.get("timeout", 10)
             protocol = params.get("protocol", "auto")  # "auto", "imap", "smtp"
 
-            servers = _read_registry_servers(smtp) if WIN32_AVAILABLE else None
-            if not servers:
-                return {"success": False, "error": "No server settings found for this account"}
+            return test_account_connection(smtp, protocol=protocol, timeout=timeout)
 
-            tester = ConnectionTester(timeout=timeout)
-            results = {"imap": None, "smtp": None}
-
-            if protocol in ("auto", "imap"):
-                imap_s = servers.get("imap_server", "")
-                imap_p = servers.get("imap_port", 993)
-                imap_ssl = servers.get("imap_ssl", True)
-                if imap_s:
-                    imap_creds = _read_credential_vault(smtp) if WIN32_AVAILABLE else None
-                    password = imap_creds[0].get("password", "") if imap_creds else ""
-                    result = tester.test_imap(imap_s, imap_p, imap_ssl, smtp, password)
-                    results["imap"] = {
-                        "success": result.success,
-                        "message": result.message,
-                        "latency_ms": result.latency_ms,
-                        "server_banner": result.server_banner,
-                    }
-
-            if protocol in ("auto", "smtp"):
-                smtp_s = servers.get("smtp_server", "")
-                smtp_p = servers.get("smtp_port", 587)
-                smtp_ssl = servers.get("smtp_ssl", False)
-                if smtp_s:
-                    smtp_creds = _read_credential_vault(smtp) if WIN32_AVAILABLE else None
-                    password = smtp_creds[0].get("password", "") if smtp_creds else ""
-                    result = tester.test_smtp(smtp_s, smtp_p, smtp_ssl, smtp, password)
-                    results["smtp"] = {
-                        "success": result.success,
-                        "message": result.message,
-                        "latency_ms": result.latency_ms,
-                        "server_banner": result.server_banner,
-                    }
-
-            return {"success": True, "smtp": smtp, "results": results}
         except Exception as e:
             log.exception("test_connection")
             return {"success": False, "error": str(e)}
@@ -821,7 +802,7 @@ class API:
                     self._shell_state = "success" if success else "failed"
                     self._shell_result = info
 
-            self._shell_log = []
+            self._shell_log: list[dict] = []
             self._shell_state = "running"
             self._shell_result = None
             self._shell_lock = threading.Lock()

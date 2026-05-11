@@ -58,7 +58,7 @@ jobs:
   tests:
     name: Pytest (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -74,8 +74,25 @@ jobs:
       - name: Install dev deps
         run: uv sync --extra dev
 
+      # Cache de browsers de Playwright para evitar descarga de ~150MB
+      # cada run. La key se invalida si pyproject (deps) cambia.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/AppData/Local/ms-playwright
+          key: playwright-${{ matrix.os }}-${{ hashFiles('pyproject.toml') }}
+
+      # Instala chromium si el cache miss. --with-deps en Linux instala
+      # libs del sistema. En Windows --with-deps no aplica pero la flag
+      # se ignora silenciosamente.
+      - name: Install Playwright chromium
+        run: uv run playwright install --with-deps chromium
+
       # En Linux, los tests marcados @pytest.mark.windows se skipean.
       # En Windows, los tests corren con mocks de win32com (sin Outlook real).
+      # Los E2E tests corren si chromium esta instalado.
       - name: Pytest
         run: uv run pytest -v --cov=src --cov-report=term-missing
 
