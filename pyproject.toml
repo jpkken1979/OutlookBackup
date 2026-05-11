@@ -39,6 +39,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-mock>=3.12.0",
     "pytest-cov>=5.0.0",
+    "pytest-playwright>=0.5.0",
     "hypothesis>=6.100.0",
     "pre-commit>=3.7.0",
 ]
@@ -160,6 +161,7 @@ markers = [
     "slow: marks tests as slow (deselect with -m 'not slow')",
     "windows: marks tests that require Windows (deselect on Linux CI)",
     "outlook: marks tests that require real Outlook installation",
+    "e2e: marks E2E tests that require Playwright + chromium browser",
 ]
 filterwarnings = [
     "error",
