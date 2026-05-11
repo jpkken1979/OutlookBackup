@@ -26,15 +26,23 @@ def get_resource_path(relative: str) -> str:
 
 
 def setup_logging(log_to_file: bool = False):
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    """Configura logging via observability.setup_logger.
+
+    Mantiene la misma API que la version anterior (log_to_file bool) pero
+    ahora delega a structlog con sinks JSON (archivo) + consola formateada.
+    """
+    from observability import setup_logger
+
+    json_file = None
     if log_to_file:
         from config import get_config_dir
 
-        handlers.append(logging.FileHandler(get_config_dir() / "auto.log", encoding="utf-8"))
-    logging.basicConfig(
+        json_file = get_config_dir() / "auto.log"
+
+    setup_logger(
+        json_file=json_file,
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=handlers,
+        add_console=True,
     )
 
 
@@ -43,7 +51,9 @@ def run_gui():
     import webview
 
     from api import API
+    from observability.logging import bind_context
 
+    bind_context(operation="gui")
     api = API()
 
     # Path al index.html
@@ -80,6 +90,9 @@ def run_gui():
 def run_auto_backup():
     """Modo auto: ejecuta backup desde config sin GUI."""
     setup_logging(log_to_file=True)
+    from observability.logging import bind_context
+
+    bind_context(operation="auto-backup")
     log = logging.getLogger("uns-backup-auto")
     log.info("=" * 60)
     log.info("🤖 自動バックアップ開始")
@@ -183,6 +196,13 @@ def run_auto_backup():
 
 
 def main():
+    # Crash handler PRIMERO — captura excepciones de bootstrap incluso antes
+    # de setup_logging. Cualquier error no atrapado escribe crashdump JSON
+    # sanitizado a %APPDATA%\UNS-Kikaku\Backup\crashdumps\.
+    from observability import install_crash_handler
+
+    install_crash_handler()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--auto", action="store_true", help="Modo auto sin GUI (Task Scheduler)")
     args = parser.parse_args()
