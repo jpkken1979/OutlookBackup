@@ -1,6 +1,6 @@
 # ESTADO DEL PROYECTO — uns-backup-app-v3.1
 
-> Última actualización: 2026-05-10
+> Última actualización: 2026-05-12
 
 ---
 
@@ -8,11 +8,49 @@
 
 | Componente | Estado | Versión | Nota |
 |---|---|---|---|
-| Core | 🏗️ En desarrollo | 0.1.0 | Inicializado por Antigravity MCP Injector |
+| Core | ✅ Estable + refactor completo | 3.1.1 | Toolchain moderno + tests + observability |
+| Tests | ✅ 107 passed | — | 87 unit + 13 E2E + 7 i18n |
+| Mypy strict | ✅ 0 errores | — | 15 modulos bajo strict per-module |
+| CI | ✅ Verde | — | Lint + typecheck + tests Linux+Windows + E2E |
 
 ---
 
 ## Estado Operativo — Lo Real vs Lo Pendiente
+
+## Sesión 2026-05-11 a 2026-05-12 — Refactor de calidad completo
+
+### Cambios realizados
+
+| Área | Estado |
+|---|---|
+| Toolchain | **COMPLETADO** — uv + ruff + mypy + pytest + pre-commit (Fase 1) |
+| Cleanup legacy | **COMPLETADO** — app.js legacy eliminado (era handlers duplicados) |
+| Capa Outlook | **COMPLETADO** — Protocols + fakes + real adapter (Fase 2) |
+| Tests del core | **COMPLETADO** — backup 88%, import 73%, fakes 99% cov (Fase 2 batch 3) |
+| Observability | **COMPLETADO** — structlog + crash reporter + update check (Fase 4) |
+| Frontend testing | **COMPLETADO** — Playwright + 13 E2E tests (Fase 3 batch 1+2) |
+| CI E2E | **COMPLETADO** — Chromium cacheado, corre en Linux+Windows matrix |
+| i18n unify | **COMPLETADO** — ja.json fuente unica (Python y JS) |
+| Mypy strict | **COMPLETADO** — 0 errores en 24 archivos, 15 modulos strict |
+| Bugs reales | **FIXEADOS** — ConnectionTester typo, selected_smtps typo, ImportError inventario, null checks |
+
+### Resultado operativo
+
+- 15 commits en `main` desde el 2026-05-11
+- Tests: 107 passed (era 0)
+- Mypy: 0 errores (era 35 advisory)
+- 4 fases del plan refactor cerradas (Foundation + Outlook layer + Frontend E2E + Observability)
+- 11 modulos pasaron de no-strict a strict per-module
+- Capa observabilidad lista para integrar en main.py (DONE)
+- Bugs latentes que rompian flujo `--auto` con inventory_enabled: FIXEADOS
+
+### Pendiente
+
+- Smoke test manual de la UI (`run.bat`) para validar que la eliminacion de app.js legacy no rompio nada
+- Strict en `backup_engine`, `import_engine`, `api.py`, `main.py` — refactor mas grande, posponible
+- Fase 3 batch 3+ — mas E2E flows (restore form, cache scan, settings save)
+
+---
 
 ## Sesión 2026-05-10 — Release v3.1.1
 
