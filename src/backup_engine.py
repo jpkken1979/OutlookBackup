@@ -10,7 +10,7 @@ import datetime
 import json
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -20,20 +20,20 @@ if TYPE_CHECKING:
 class BackupReport:
     """Genera reportes del proceso de backup."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.start_time = datetime.datetime.now()
         self.end_time: datetime.datetime | None = None
-        self.accounts_processed = []
-        self.errors = []
+        self.accounts_processed: list[dict] = []
+        self.errors: list[dict] = []
         self.total_emails = 0
         self.total_size_bytes = 0
         self.output_dir = ""
 
-    def add_account(self, account_data: dict):
+    def add_account(self, account_data: dict) -> None:
         self.accounts_processed.append(account_data)
         self.total_emails += account_data.get("emails", 0)
 
-    def add_error(self, message: str):
+    def add_error(self, message: str) -> None:
         self.errors.append(
             {
                 "time": datetime.datetime.now().isoformat(),
@@ -41,7 +41,7 @@ class BackupReport:
             }
         )
 
-    def finish(self):
+    def finish(self) -> None:
         self.end_time = datetime.datetime.now()
 
     @property
@@ -61,11 +61,11 @@ class BackupReport:
             "output_dir": self.output_dir,
         }
 
-    def save_json(self, path: str):
+    def save_json(self, path: str) -> None:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, ensure_ascii=False, indent=2)
 
-    def save_html(self, path: str):
+    def save_html(self, path: str) -> None:
         """Genera reporte HTML visual con branding UNS."""
         html = self._render_html()
         with open(path, "w", encoding="utf-8") as f:
@@ -254,7 +254,7 @@ class BackupEngine:
         self,
         outlook_client: OutlookClientProtocol,
         output_dir: str,
-        selected_accounts: list[OutlookAccountInfo],
+        selected_accounts: Sequence[OutlookAccountInfo],
         export_format: str = "pst",
     ):
         self.client = outlook_client
@@ -266,7 +266,7 @@ class BackupEngine:
         self._cancel_flag = threading.Event()
         self._thread: threading.Thread | None = None
 
-    def run_async(self, progress_cb: Callable, finish_cb: Callable):
+    def run_async(self, progress_cb: Callable, finish_cb: Callable) -> None:
         """Ejecuta el backup en un thread separado."""
         self._thread = threading.Thread(
             target=self._run_internal,
@@ -275,10 +275,10 @@ class BackupEngine:
         )
         self._thread.start()
 
-    def cancel(self):
+    def cancel(self) -> None:
         self._cancel_flag.set()
 
-    def _run_internal(self, progress_cb: Callable, finish_cb: Callable):
+    def _run_internal(self, progress_cb: Callable, finish_cb: Callable) -> None:
         """Lógica principal del backup."""
         try:
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")

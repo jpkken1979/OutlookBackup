@@ -25,7 +25,7 @@ def get_resource_path(relative: str) -> str:
     return os.path.join(base, relative)
 
 
-def setup_logging(log_to_file: bool = False):
+def setup_logging(log_to_file: bool = False) -> None:
     """Configura logging via observability.setup_logger.
 
     Mantiene la misma API que la version anterior (log_to_file bool) pero
@@ -46,7 +46,7 @@ def setup_logging(log_to_file: bool = False):
     )
 
 
-def run_gui():
+def run_gui() -> None:
     """Lanza pywebview con la UI HTML/CSS/JS."""
     import webview
 
@@ -76,7 +76,7 @@ def run_gui():
     assert window is not None, "webview.create_window returned None"
 
     # Auto-detect Outlook al iniciar (con delay de 500ms para que UI cargue)
-    def on_loaded():
+    def on_loaded() -> None:
         try:
             window.evaluate_js("if (window.app && window.app.onAppReady) window.app.onAppReady();")
         except Exception:
@@ -87,7 +87,7 @@ def run_gui():
     webview.start(debug=False, http_server=False)
 
 
-def run_auto_backup():
+def run_auto_backup() -> int:
     """Modo auto: ejecuta backup desde config sin GUI."""
     setup_logging(log_to_file=True)
     from observability.logging import bind_context
@@ -150,10 +150,10 @@ def run_auto_backup():
         done_event = threading.Event()
         result = {"success": False, "info": ""}
 
-        def progress_cb(msg):
+        def progress_cb(msg: str) -> None:
             log.info(msg)
 
-        def finish_cb(success, info):
+        def finish_cb(success: bool, info: str) -> None:
             result["success"] = success
             result["info"] = info
             done_event.set()
@@ -195,7 +195,7 @@ def run_auto_backup():
         return 1
 
 
-def main():
+def main() -> None:
     # Crash handler PRIMERO — captura excepciones de bootstrap incluso antes
     # de setup_logging. Cualquier error no atrapado escribe crashdump JSON
     # sanitizado a %APPDATA%\UNS-Kikaku\Backup\crashdumps\.

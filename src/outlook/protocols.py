@@ -17,7 +17,7 @@ Decisiones:
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -181,7 +181,7 @@ class OutlookClientProtocol(Protocol):
         self,
         account: OutlookAccountInfo,
         output_path: str,
-        progress_cb: Any = None,
+        progress_cb: Callable[..., Any] | None = None,
     ) -> bool:
         """Exporta una cuenta entera a un archivo .pst. True si exito."""
         ...
@@ -190,13 +190,13 @@ class OutlookClientProtocol(Protocol):
         self,
         account: OutlookAccountInfo,
         output_dir: str,
-        progress_cb: Any = None,
+        progress_cb: Callable[..., Any] | None = None,
     ) -> int:
         """Exporta emails como archivos .msg individuales. Devuelve count."""
         ...
 
     def count_emails_for_account(
-        self, account: OutlookAccountInfo, progress_cb: Any = None
+        self, account: OutlookAccountInfo, progress_cb: Callable[..., Any] | None = None
     ) -> dict:
         """Cuenta correos. Devuelve dict con total_emails, total_folders, etc."""
         ...

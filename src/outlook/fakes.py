@@ -20,8 +20,10 @@ Ejemplo:
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from outlook import constants as olc
 
@@ -53,7 +55,7 @@ class FakeItems:
     def Count(self) -> int:
         return len(self._items)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[FakeMailItem]:
         return iter(self._items)
 
     def append(self, item: FakeMailItem) -> None:
@@ -132,11 +134,11 @@ class FakeNamespace:
     _removed_stores: list[FakeFolder] = field(default_factory=list)
 
     @property
-    def Accounts(self):
+    def Accounts(self) -> Iterator[FakeAccount]:
         return iter(self.accounts)
 
     @property
-    def Stores(self):
+    def Stores(self) -> Iterator[FakeStore]:
         return iter(self.stores)
 
     def GetDefaultFolder(self, folder_type: int) -> FakeFolder:
@@ -234,7 +236,9 @@ class FakeOutlookClient:
     _msg_calls: list[tuple[str, str]] = field(default_factory=list)
     _count_calls: list[str] = field(default_factory=list)
 
-    def export_account_to_pst(self, account, output_path: str, progress_cb=None) -> bool:
+    def export_account_to_pst(
+        self, account: Any, output_path: str, progress_cb: Callable | None = None
+    ) -> bool:
         smtp = account.smtp_address
         self._export_calls.append((smtp, output_path))
         if progress_cb:
@@ -249,7 +253,9 @@ class FakeOutlookClient:
             Path(output_path).touch()
         return success
 
-    def export_folder_to_msg_files(self, account, output_dir: str, progress_cb=None) -> int:
+    def export_folder_to_msg_files(
+        self, account: Any, output_dir: str, progress_cb: Callable | None = None
+    ) -> int:
         smtp = account.smtp_address
         self._msg_calls.append((smtp, output_dir))
         if progress_cb:
@@ -262,7 +268,7 @@ class FakeOutlookClient:
             Path(output_dir).mkdir(parents=True, exist_ok=True)
         return count
 
-    def count_emails_for_account(self, account, progress_cb=None) -> dict:
+    def count_emails_for_account(self, account: Any, progress_cb: Callable | None = None) -> dict:
         smtp = account.smtp_address
         self._count_calls.append(smtp)
         return self._count_returns.get(

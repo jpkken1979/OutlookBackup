@@ -13,7 +13,7 @@ import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 try:
     import pythoncom  # noqa: F401  # availability probe
@@ -53,7 +53,7 @@ class ImportEngine:
         self._thread: threading.Thread | None = None
         self.results: list[dict] = []
 
-    def run_async(self, progress_cb: Callable, finish_cb: Callable):
+    def run_async(self, progress_cb: Callable, finish_cb: Callable) -> None:
         self._thread = threading.Thread(
             target=self._run_internal,
             args=(progress_cb, finish_cb),
@@ -61,10 +61,10 @@ class ImportEngine:
         )
         self._thread.start()
 
-    def cancel(self):
+    def cancel(self) -> None:
         self._cancel_flag.set()
 
-    def _run_internal(self, progress_cb, finish_cb):
+    def _run_internal(self, progress_cb: Callable, finish_cb: Callable) -> None:
         try:
             progress_cb(f"📥 インポート開始 ({self.mode})")
             progress_cb(f"  PSTファイル数: {len(self.pst_files)}")
@@ -103,7 +103,7 @@ class ImportEngine:
             finish_cb(False, 0, len(self.pst_files))
 
     # ===== MODE 1: Separate folder (default) =====
-    def _import_as_separate_folder(self, pst_path: str, progress_cb) -> bool:
+    def _import_as_separate_folder(self, pst_path: str, progress_cb: Callable) -> bool:
         """Monta el PST como una carpeta separada en el sidebar de Outlook."""
         try:
             progress_cb("  📁 PSTを別フォルダとして開いています...")
@@ -115,7 +115,7 @@ class ImportEngine:
             return False
 
     # ===== MODE 2: New file (similar to mode 1, distinct semantics) =====
-    def _import_as_new_file(self, pst_path: str, progress_cb) -> bool:
+    def _import_as_new_file(self, pst_path: str, progress_cb: Callable) -> bool:
         """Igual que separate_folder pero usando AddStoreEx con formato Unicode."""
         try:
             progress_cb("  🗂️ 新規データファイルとして開いています...")
@@ -133,7 +133,7 @@ class ImportEngine:
                 return False
 
     # ===== MODE 3: Merge into existing account =====
-    def _import_merge(self, pst_path: str, progress_cb) -> bool:
+    def _import_merge(self, pst_path: str, progress_cb: Callable) -> bool:
         """Mergea items del PST al Inbox de la cuenta target."""
         try:
             if not self.target_smtp:
@@ -193,7 +193,7 @@ class ImportEngine:
             progress_cb(f"  ❌ {e}")
             return False
 
-    def _merge_folders(self, source_folder, target_folder, progress_cb) -> int:
+    def _merge_folders(self, source_folder: Any, target_folder: Any, progress_cb: Callable) -> int:
         """Copia subcarpetas y items del source al target."""
         count = 0
         try:

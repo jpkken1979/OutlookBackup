@@ -5,8 +5,14 @@ Maneja toda la interacción con Outlook vía COM (pywin32).
 Compatible con Outlook 2016, 2019, 2021, 365.
 """
 
+from __future__ import annotations
+
 import os
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from outlook.protocols import OutlookAccountInfo
 
 try:
     import pythoncom
@@ -58,14 +64,14 @@ class OutlookAccount:
 class OutlookClient:
     """Cliente para interactuar con Outlook."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         if not WIN32_AVAILABLE:
             raise RuntimeError("pywin32 no instalado. Ejecuta: pip install pywin32")
-        self.app = None
-        self.namespace = None
+        self.app: Any = None
+        self.namespace: Any = None
         self._connect()
 
-    def _connect(self):
+    def _connect(self) -> None:
         """Conecta a la instancia de Outlook (la abre si no está abierta)."""
         try:
             pythoncom.CoInitialize()
@@ -96,7 +102,7 @@ class OutlookClient:
             print(f"Error listando cuentas: {e}")
         return accounts
 
-    def _get_account_type(self, account) -> str:
+    def _get_account_type(self, account: Any) -> str:
         """Detecta el tipo de cuenta (IMAP/POP/Exchange/Otro)."""
         try:
             ol_type = account.AccountType
@@ -133,7 +139,7 @@ class OutlookClient:
         return stores
 
     def count_emails_for_account(
-        self, account: OutlookAccount, progress_cb: Callable | None = None
+        self, account: OutlookAccountInfo, progress_cb: Callable | None = None
     ) -> dict:
         """Cuenta los correos de una cuenta específica."""
         result = {"total_emails": 0, "total_folders": 0, "total_size_bytes": 0, "folders": []}
@@ -166,7 +172,13 @@ class OutlookClient:
 
         return result
 
-    def _walk_folders(self, folder, result: dict, progress_cb=None, depth=0):
+    def _walk_folders(
+        self,
+        folder: Any,
+        result: dict,
+        progress_cb: Callable | None = None,
+        depth: int = 0,
+    ) -> None:
         """Recorre recursivamente todas las carpetas y cuenta correos."""
         try:
             folder_name = folder.Name
@@ -198,7 +210,7 @@ class OutlookClient:
             print(f"Error en carpeta: {e}")
 
     def export_account_to_pst(
-        self, account: OutlookAccount, output_path: str, progress_cb: Callable | None = None
+        self, account: OutlookAccountInfo, output_path: str, progress_cb: Callable | None = None
     ) -> bool:
         """
         Exporta una cuenta completa a un archivo .pst.
@@ -282,7 +294,9 @@ class OutlookClient:
             print(error_msg)
             return False
 
-    def _copy_folder_recursive(self, source_folder, dest_folder, progress_cb=None):
+    def _copy_folder_recursive(
+        self, source_folder: Any, dest_folder: Any, progress_cb: Callable | None = None
+    ) -> None:
         """Copia una carpeta y todas sus subcarpetas al destino."""
         try:
             for subfolder in source_folder.Folders:
@@ -307,7 +321,7 @@ class OutlookClient:
             print(f"Error en copia recursiva: {e}")
 
     def export_folder_to_msg_files(
-        self, account: OutlookAccount, output_dir: str, progress_cb: Callable | None = None
+        self, account: OutlookAccountInfo, output_dir: str, progress_cb: Callable | None = None
     ) -> int:
         """
         Exporta correos como archivos .msg individuales (alternativa al PST).
@@ -346,7 +360,9 @@ class OutlookClient:
 
         return count
 
-    def _save_msg_recursive(self, folder, output_dir, progress_cb=None) -> int:
+    def _save_msg_recursive(
+        self, folder: Any, output_dir: str, progress_cb: Callable | None = None
+    ) -> int:
         """Guarda emails como .msg recursivamente."""
         count = 0
         try:
@@ -397,7 +413,7 @@ class OutlookClient:
             name = name.replace(ch, "_")
         return name.strip()[:200]
 
-    def close(self):
+    def close(self) -> None:
         """Cierra la conexión COM."""
         try:
             self.namespace = None

@@ -27,25 +27,25 @@ class API:
     vía `window.pywebview.api.<function_name>(args)`.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         from config import Config
 
         self.config = Config()
-        self.outlook_client = None
-        self.accounts = []
+        self.outlook_client: Any = None
+        self.accounts: list[Any] = []
 
         # Estado del backup actual
-        self._backup_engine = None
-        self._backup_log = []
+        self._backup_engine: Any = None
+        self._backup_log: list[dict] = []
         self._backup_state = "idle"  # idle | running | success | failed
-        self._backup_result = None  # str con la ruta cuando terminó
+        self._backup_result: Any = None  # str con la ruta cuando terminó
         self._backup_lock = threading.Lock()
 
         # Estado del import actual
-        self._import_engine = None
-        self._import_log = []
+        self._import_engine: Any = None
+        self._import_log: list[dict] = []
         self._import_state = "idle"
-        self._import_result = None
+        self._import_result: Any = None
         self._import_lock = threading.Lock()
 
     # ========================================================
@@ -243,7 +243,7 @@ class API:
                     export_format=fmt,
                 )
 
-                def progress(msg):
+                def progress(msg: str) -> None:
                     self._backup_log.append(
                         {
                             "ts": datetime.datetime.now().isoformat(),
@@ -251,7 +251,7 @@ class API:
                         }
                     )
 
-                def finish(success, info):
+                def finish(success: bool, info: str) -> None:
                     with self._backup_lock:
                         self._backup_state = "success" if success else "failed"
                         self._backup_result = info
@@ -294,14 +294,19 @@ class API:
         return {"success": False, "error": "No backup running"}
 
     def _auto_export_inventory(
-        self, backup_dir, smtp_list, include_servers, include_passwords, master_password
-    ):
+        self,
+        backup_dir: str,
+        smtp_list: list[str],
+        include_servers: bool,
+        include_passwords: bool,
+        master_password: str | None,
+    ) -> None:
         try:
             from account_inventory import build_inventory, save_inventory
 
             inventory = build_inventory(
                 outlook_client=self.outlook_client,
-                selected_smtps=smtp_list,
+                selected_smtp_addresses=smtp_list,
                 include_servers=include_servers,
                 include_passwords=include_passwords,
             )
@@ -404,7 +409,7 @@ class API:
                     target_smtp=target,
                 )
 
-                def progress(msg):
+                def progress(msg: str) -> None:
                     self._import_log.append(
                         {
                             "ts": datetime.datetime.now().isoformat(),
@@ -412,7 +417,7 @@ class API:
                         }
                     )
 
-                def finish(success, ok_count, total):
+                def finish(success: bool, ok_count: int, total: int) -> None:
                     with self._import_lock:
                         self._import_state = "success" if success else "failed"
                         self._import_result = {"ok_count": ok_count, "total": total}
@@ -721,7 +726,7 @@ class API:
                     close_outlook=close_outlook,
                 )
 
-                def progress(msg):
+                def progress(msg: str) -> None:
                     self._backup_log.append(
                         {
                             "ts": datetime.datetime.now().isoformat(),
@@ -729,7 +734,7 @@ class API:
                         }
                     )
 
-                def finish(success, info):
+                def finish(success: bool, info: str) -> None:
                     with self._backup_lock:
                         self._backup_state = "success" if success else "failed"
                         self._backup_result = info
@@ -789,7 +794,14 @@ class API:
                     "error": "unrar.exe o 7z.exe no encontrado. Instale WinRAR o 7-Zip.",
                 }
 
-            def progress(msg):
+            # Init estado ANTES de los closures (mypy chequea el cuerpo
+            # del closure inmediatamente, no espera a runtime).
+            self._shell_log: list[dict] = []
+            self._shell_state = "running"
+            self._shell_result: Any = None
+            self._shell_lock = threading.Lock()
+
+            def progress(msg: str) -> None:
                 self._shell_log.append(
                     {
                         "ts": datetime.datetime.now().isoformat(),
@@ -797,15 +809,10 @@ class API:
                     }
                 )
 
-            def finish(success, info):
+            def finish(success: bool, info: str) -> None:
                 with self._shell_lock:
                     self._shell_state = "success" if success else "failed"
                     self._shell_result = info
-
-            self._shell_log: list[dict] = []
-            self._shell_state = "running"
-            self._shell_result = None
-            self._shell_lock = threading.Lock()
 
             result = extractor.extract_rar(rar_path, output_dir, progress)
             return result
@@ -837,12 +844,13 @@ class API:
 
             extractor = ShellExtractor()
 
+            # Reuso de los attrs ya anotados en extract_rar (mismo class).
             self._shell_log = []
             self._shell_state = "running"
             self._shell_result = None
             self._shell_lock = threading.Lock()
 
-            def progress(msg):
+            def progress(msg: str) -> None:
                 self._shell_log.append(
                     {
                         "ts": datetime.datetime.now().isoformat(),
@@ -854,7 +862,7 @@ class API:
 
             with self._shell_lock:
                 self._shell_state = "success" if result.get("success") else "failed"
-                self._shell_result = result
+                self._shell_result = result  # type: ignore[assignment]
 
             return result
 

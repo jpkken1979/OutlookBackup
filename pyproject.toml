@@ -132,37 +132,37 @@ ignore_missing_imports = true
 # Strict per-module — modulos que pasan mypy strict.
 # Ir agregando aqui a medida que se anota completamente cada modulo
 # (parametros + return types en todas las funciones).
+# STRICT GLOBAL — todos los modulos pasan mypy con disallow_untyped_defs.
+# Esto es el cierre del refactor de calidad: ya no quedan modulos legacy
+# sin anotar. Mypy bloquea regresiones en TODO src/.
 [[tool.mypy.overrides]]
 module = [
-    # Base
     "crypto_utils",
     "config",
     "connection_tester",
     "i18n",
-    # Observability
     "observability",
     "observability.crash",
     "observability.logging",
     "observability.updater",
-    # Outlook abstraction
+    "outlook",
     "outlook.protocols",
     "outlook.constants",
-    # Manejadores / engines / utilities
+    "outlook.fakes",
+    "outlook.real",
+    "outlook_client",
     "history_manager",
     "account_inventory",
     "cache_backup",
     "shell_extractor",
     "pst_inspector",
+    "backup_engine",
+    "import_engine",
+    "api",
+    "main",
 ]
 disallow_untyped_defs = true
 warn_return_any = true
-
-# Modulos NO strict todavia (pasan mypy global pero les faltan
-# anotaciones en bodies de funciones legacy):
-# - backup_engine, import_engine: callbacks COM y closures profundos
-# - api.py:                       facade pywebview, ~900 lineas
-# - main.py:                      entry point, dynamic imports
-# Estos pasan mypy con la config global relaxed.
 
 # =============================================================
 # Pytest — config + coverage

@@ -53,7 +53,8 @@ def create_outlook_application() -> ApplicationProtocol:
             f"No se pudo conectar a Outlook (¿esta instalado?). Error: {exc}"
         ) from exc
 
-    return app  # type: ignore[return-value]
+    # Dispatch retorna Any; el Protocol lo cumple por duck-typing en runtime.
+    return app  # type: ignore[no-any-return]
 
 
 @contextlib.contextmanager
