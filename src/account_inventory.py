@@ -46,7 +46,7 @@ KNOWN_PORTS = {
 
 
 def build_inventory(
-    outlook_client,
+    outlook_client: Any,
     selected_smtp_addresses: list[str] | None = None,
     include_servers: bool = True,
     include_passwords: bool = False,
@@ -112,7 +112,7 @@ def build_inventory(
     return inventory
 
 
-def _read_com_info(account) -> dict:
+def _read_com_info(account: Any) -> dict:
     """Lee info básica de una cuenta vía Outlook COM."""
     info = {
         "smtp_address": "",

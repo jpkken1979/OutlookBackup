@@ -26,10 +26,10 @@ except ImportError:
 class ShellExtractor:
     """Extrae RAR y ejecuta comandos shell."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._cancel_flag = threading.Event()
         self._thread: threading.Thread | None = None
-        self._result = None
+        self._result: dict | None = None
 
         # Buscar unrar.exe
         self.unrar_path = self._find_unrar()

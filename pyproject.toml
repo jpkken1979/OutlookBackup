@@ -147,19 +147,22 @@ module = [
     # Outlook abstraction
     "outlook.protocols",
     "outlook.constants",
-    # Manejadores
+    # Manejadores / engines / utilities
     "history_manager",
+    "account_inventory",
+    "cache_backup",
+    "shell_extractor",
+    "pst_inspector",
 ]
 disallow_untyped_defs = true
 warn_return_any = true
 
-# Modulos pendientes de anotar para strict (proximo refactor):
-# - account_inventory: 2 funciones sin params type (callbacks COM)
-# - cache_backup:      10 funciones (lambdas, methods sin -> None)
-# - shell_extractor:   1 funcion (__init__ sin -> None)
-# - pst_inspector:     3 funciones (_walk con folder dinamico)
-# Estos pasan mypy con la config global relaxed. La inferencia es buena
-# pero las anotaciones explicitas ayudan al lector.
+# Modulos NO strict todavia (pasan mypy global pero les faltan
+# anotaciones en bodies de funciones legacy):
+# - backup_engine, import_engine: callbacks COM y closures profundos
+# - api.py:                       facade pywebview, ~900 lineas
+# - main.py:                      entry point, dynamic imports
+# Estos pasan mypy con la config global relaxed.
 
 # =============================================================
 # Pytest — config + coverage

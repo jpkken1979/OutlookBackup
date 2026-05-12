@@ -12,7 +12,7 @@ from typing import Any
 class PSTInspector:
     """Inspecciona el contenido de un PST sin agregarlo permanentemente."""
 
-    def __init__(self, outlook_client):
+    def __init__(self, outlook_client: Any) -> None:
         self.client = outlook_client
 
     def inspect(self, pst_path: str) -> dict:
@@ -81,7 +81,7 @@ class PSTInspector:
 
         return result
 
-    def _walk(self, folder, result: dict, depth: int):
+    def _walk(self, folder: Any, result: dict, depth: int) -> None:
         """Recorre carpetas recursivamente."""
         try:
             name = folder.Name

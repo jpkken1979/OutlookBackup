@@ -142,7 +142,7 @@ def map_cache_to_account(cache_files: list[dict]) -> list[dict]:
     return cache_files
 
 
-def _scan_profile_for_accounts(path: str, account_map: dict, depth: int = 0):
+def _scan_profile_for_accounts(path: str, account_map: dict, depth: int = 0) -> None:
     """Escanea recursivamente un perfil buscando datos de cuentas."""
     if depth > 5:
         return
@@ -248,16 +248,16 @@ class CacheBackupEngine:
         self._cancel_flag = threading.Event()
         self._thread: threading.Thread | None = None
 
-    def cancel(self):
+    def cancel(self) -> None:
         self._cancel_flag.set()
 
-    def run_async(self, progress_cb: Callable, finish_cb: Callable):
+    def run_async(self, progress_cb: Callable, finish_cb: Callable) -> None:
         self._thread = threading.Thread(
             target=self._run, args=(progress_cb, finish_cb), daemon=True
         )
         self._thread.start()
 
-    def _run(self, progress_cb, finish_cb):
+    def _run(self, progress_cb: Callable, finish_cb: Callable) -> None:
         try:
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             session_dir = self.output_dir / f"cache_backup_{timestamp}"
@@ -336,7 +336,7 @@ class CacheBackupEngine:
             progress_cb(f"❌ 致命的エラー: {e}")
             finish_cb(False, str(e))
 
-    def _copy_with_progress(self, src: Path, dest: Path, progress_cb):
+    def _copy_with_progress(self, src: Path, dest: Path, progress_cb: Callable) -> None:
         """Copia archivo grande con feedback periódico."""
         total = src.stat().st_size
         copied = 0
@@ -365,7 +365,7 @@ class CacheBackupEngine:
         except Exception:
             pass
 
-    def _verify_copy(self, src: Path, dest: Path, progress_cb) -> dict:
+    def _verify_copy(self, src: Path, dest: Path, progress_cb: Callable) -> dict:
         """Verifica que el archivo copiado tenga el mismo SHA256."""
         try:
             src_hash = self._sha256_of(src)
@@ -391,7 +391,7 @@ class CacheBackupEngine:
                 h.update(chunk)
         return h.hexdigest()
 
-    def _kill_outlook(self, progress_cb):
+    def _kill_outlook(self, progress_cb: Callable) -> None:
         """Cierra Outlook de forma elegante."""
         try:
             import subprocess
@@ -423,7 +423,7 @@ class CacheBackupEngine:
         except Exception as e:
             progress_cb(f"  ⚠️ Outlook終了失敗: {e}")
 
-    def _write_report(self, session_dir: Path, results: list[dict], progress_cb):
+    def _write_report(self, session_dir: Path, results: list[dict], progress_cb: Callable) -> None:
         """Escribe report.json con info del backup."""
         try:
             import json
