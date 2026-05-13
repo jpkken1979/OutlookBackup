@@ -11,6 +11,7 @@ import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from date_filter import filter_pst_items
 from path_utils import safe_path
 
 if TYPE_CHECKING:
@@ -212,11 +213,20 @@ class OutlookClient:
             print(f"Error en carpeta: {e}")
 
     def export_account_to_pst(
-        self, account: OutlookAccountInfo, output_path: str, progress_cb: Callable | None = None
+        self,
+        account: OutlookAccountInfo,
+        output_path: str,
+        progress_cb: Callable | None = None,
+        date_from: Any | None = None,
+        date_to: Any | None = None,
     ) -> bool:
         """
         Exporta una cuenta completa a un archivo .pst.
         Usa el método estándar de Outlook: AddStore + CopyTo.
+
+        Si date_from y/o date_to estan presentes (datetime.date), DESPUES de copiar
+        elimina items fuera del rango via `date_filter.filter_pst_items`. Backup
+        full + post-process es ineficiente pero NO requiere refactor del COM loop.
         """
         try:
             # Crear directorio si no existe
@@ -279,6 +289,16 @@ class OutlookClient:
                 progress_cb("📋 Copiando carpetas...")
 
             self._copy_folder_recursive(source_root, new_root, progress_cb)
+
+            # Aplicar filter por fecha si esta activo (Fase 6 partial Feature C).
+            # Borra items fuera del rango DESPUES de copiar — ineficiente pero simple.
+            # Optimizar a copy-on-the-fly con Items.Restrict() en una iteracion futura.
+            if date_from is not None or date_to is not None:
+                if progress_cb:
+                    progress_cb("📅 日付範囲フィルタを適用中...")
+                deleted = filter_pst_items(new_root, date_from, date_to, progress_cb)
+                if progress_cb:
+                    progress_cb(f"   フィルタ完了: {deleted}件削除")
 
             # Cerrar el PST (importante para que se finalice el archivo)
             if progress_cb:

@@ -166,6 +166,8 @@ module = [
     "path_utils",
     # Fase 4 plan v3.2 — Outlook version detection
     "outlook.version",
+    # Fase 6 partial plan v3.2 — Date range filter
+    "date_filter",
 ]
 disallow_untyped_defs = true
 warn_return_any = true

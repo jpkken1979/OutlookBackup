@@ -256,11 +256,18 @@ class BackupEngine:
         output_dir: str,
         selected_accounts: Sequence[OutlookAccountInfo],
         export_format: str = "pst",
+        date_from_iso: str | None = None,
+        date_to_iso: str | None = None,
     ):
+        from date_filter import parse_iso_date
+
         self.client = outlook_client
         self.output_dir = output_dir
         self.selected_accounts = selected_accounts
         self.export_format = export_format  # 'pst' o 'msg'
+        # Fase 6 partial Feature C: filter por fecha. None = sin filter.
+        self.date_from = parse_iso_date(date_from_iso)
+        self.date_to = parse_iso_date(date_to_iso)
         self.report = BackupReport()
         self.report.output_dir = output_dir
         self._cancel_flag = threading.Event()
@@ -314,7 +321,11 @@ class BackupEngine:
                     if self.export_format == "pst":
                         output_file = os.path.join(session_dir, f"{safe_name}.pst")
                         success = self.client.export_account_to_pst(
-                            account, output_file, progress_cb
+                            account,
+                            output_file,
+                            progress_cb,
+                            date_from=self.date_from,
+                            date_to=self.date_to,
                         )
                         acc_result["output_file"] = output_file
                         acc_result["success"] = success

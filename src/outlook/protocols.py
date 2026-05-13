@@ -182,8 +182,14 @@ class OutlookClientProtocol(Protocol):
         account: OutlookAccountInfo,
         output_path: str,
         progress_cb: Callable[..., Any] | None = None,
+        date_from: Any | None = None,
+        date_to: Any | None = None,
     ) -> bool:
-        """Exporta una cuenta entera a un archivo .pst. True si exito."""
+        """Exporta una cuenta entera a un archivo .pst. True si exito.
+
+        date_from / date_to (Fase 6 partial): si presentes, post-procesa el PST
+        eliminando items fuera del rango de fechas.
+        """
         ...
 
     def export_folder_to_msg_files(

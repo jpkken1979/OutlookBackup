@@ -237,7 +237,12 @@ class FakeOutlookClient:
     _count_calls: list[str] = field(default_factory=list)
 
     def export_account_to_pst(
-        self, account: Any, output_path: str, progress_cb: Callable | None = None
+        self,
+        account: Any,
+        output_path: str,
+        progress_cb: Callable | None = None,
+        date_from: Any | None = None,  # noqa: ARG002 — Fase 6 partial; fake no aplica filter
+        date_to: Any | None = None,  # noqa: ARG002 — fake no aplica filter
     ) -> bool:
         smtp = account.smtp_address
         self._export_calls.append((smtp, output_path))

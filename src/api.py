@@ -223,6 +223,9 @@ class API:
                 output_dir = params.get("output_dir", "")
                 smtp_list = params.get("accounts", [])
                 fmt = params.get("format", "pst")
+                # Fase 6 partial Feature C: filter por fecha (opcional, ISO 8601).
+                date_from_iso = params.get("date_from") or None
+                date_to_iso = params.get("date_to") or None
 
                 if not output_dir:
                     return {"success": False, "error": "output_dir required"}
@@ -241,6 +244,8 @@ class API:
                     output_dir=output_dir,
                     selected_accounts=selected,
                     export_format=fmt,
+                    date_from_iso=date_from_iso,
+                    date_to_iso=date_to_iso,
                 )
 
                 def progress(msg: str) -> None:
