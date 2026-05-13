@@ -37,3 +37,12 @@ repos:
         # Solo verificar src/ — tests tienen reglas relajadas
         files: ^src/
         args: [--config-file=pyproject.toml]
+
+  # gitleaks — detecta API tokens / OAuth / cloud keys que detect-private-key no captura.
+  # Especialmente importante para .agent/brain/ y .claude/memory/ que pueden ingestar
+  # transcripts de chat donde el usuario pego secrets sin querer.
+  # Bypass de emergencia (no usar): SKIP=gitleaks git commit ...
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
