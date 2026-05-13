@@ -58,12 +58,29 @@ def run_gui() -> int:
     Returns:
         0 en exit normal, 2 si el usuario rechazo instalar WebView2.
     """
+    from outlook.version import detect_outlook_version
     from runtime_check import ensure_webview2_runtime
 
     if not ensure_webview2_runtime(interactive=True):
         log = logging.getLogger("uns-backup-gui")
         log.error("WebView2 ausente y no se pudo instalar; la GUI no puede arrancar")
         return 2
+
+    # Log de version de Outlook detectada (Fase 4 plan v3.2). No bloqueante:
+    # si Outlook no esta instalado o no soportado, igual la GUI puede abrir
+    # (el usuario vera el error mas claro al intentar el primer backup).
+    outlook_v = detect_outlook_version()
+    log = logging.getLogger("uns-backup-gui")
+    if outlook_v.flavor == "unknown":
+        log.warning("Outlook no detectado; backups COM van a fallar")
+    elif not outlook_v.supported:
+        log.warning(
+            "Outlook %s (%s) NO esta soportado. v3.2 soporta major >= 16.",
+            outlook_v.version_str,
+            outlook_v.flavor,
+        )
+    else:
+        log.info("Outlook detectado: %s %s (supported)", outlook_v.flavor, outlook_v.version_str)
 
     import webview
 

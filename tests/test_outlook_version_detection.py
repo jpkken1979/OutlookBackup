@@ -13,6 +13,7 @@ se usa `monkeypatch.setattr` sobre `account_inventory.winreg`.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -147,35 +148,54 @@ def test_future_outlook_17_should_be_detected(monkeypatch: pytest.MonkeyPatch) -
     assert "17.0" in versions_probed, "Fase 4 debe enumerar dinamicamente, no hardcodear"
 
 
-@pytest.mark.xfail(
-    reason="Fase 4 del plan v3.2: distinguir Outlook M365 (Click-to-Run) vs perpetual",
-    strict=False,
-)
-def test_outlook_flavor_detection_distinguishes_m365_vs_perpetual() -> None:
-    """Fase 4 va a crear `src/outlook/version.py:detect_outlook_version()`.
+def test_outlook_flavor_detection_distinguishes_m365_vs_perpetual(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fase 4 implementada (2026-05-13): src/outlook/version.py:detect_outlook_version().
 
-    Debe retornar un dataclass con campo `flavor: Literal["M365", "perpetual", "unknown"]`
-    leyendo `HKLM\\SOFTWARE\\Microsoft\\Office\\ClickToRun\\Configuration` para M365 y
-    `HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Office\\{ver}\\Outlook\\InstallRoot\\Path`
-    para perpetual.
+    Devuelve OutlookVersion con campo `flavor: Literal["M365", "perpetual", "unknown"]`.
+    M365 detectado via HKLM\\SOFTWARE\\Microsoft\\Office\\ClickToRun\\Configuration.
+    Perpetual via HKLM\\SOFTWARE\\Microsoft\\Office\\{ver}\\Outlook\\InstallRoot.
+
+    Para evitar tocar registry real en Windows o el MagicMock de winreg en Linux,
+    forzamos os.name=posix para que la rama early-return de detect_outlook_version
+    devuelva unknown sin tocar winreg.
     """
-    # Cuando exista, hacer:
-    # from outlook.version import detect_outlook_version
-    # info = detect_outlook_version()
-    # assert info.flavor in ("M365", "perpetual", "unknown")
-    pytest.skip("Fase 4 no implementada todavia")
+    from outlook import version
+
+    monkeypatch.setattr(version.os, "name", "posix")
+    info = version.detect_outlook_version()
+    assert info.flavor in ("M365", "perpetual", "unknown")
+    # Con os.name=posix forzado, siempre unknown
+    assert info.flavor == "unknown"
 
 
-@pytest.mark.xfail(
-    reason="Fase 4 del plan v3.2: warnear si version no soportada (Outlook < 16.0)",
-    strict=False,
-)
 def test_outlook_2016_or_older_is_marked_unsupported() -> None:
-    """Por decision del usuario, Outlook 2016 (15.0) y anteriores no se soportan en v3.2.
+    """Fase 4 implementada (2026-05-13): supported=False para major < 16.
 
-    Fase 4 va a agregar campo `supported: bool` al resultado de `detect_outlook_version()`.
+    Por decision del usuario, Outlook 2016 (15.0/14.0) y anteriores no se soportan en v3.2.
     """
-    pytest.skip("Fase 4 no implementada todavia")
+    from outlook.version import OutlookVersion, is_supported
+
+    # Office 2013 (15.0): NO soportado
+    v_2013 = OutlookVersion(
+        version_str="15.0.0.0",
+        version_tuple=(15, 0, 0, 0),
+        flavor="perpetual",
+        install_path=None,
+        supported=False,
+    )
+    assert is_supported(v_2013) is False
+
+    # Office 2016+ (16.0): SI soportado
+    v_2016 = OutlookVersion(
+        version_str="16.0.10380.20002",
+        version_tuple=(16, 0, 10380, 20002),
+        flavor="perpetual",
+        install_path=None,
+        supported=True,
+    )
+    assert is_supported(v_2016) is True
 
 
 # ---------------------------------------------------------------------------

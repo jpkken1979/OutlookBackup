@@ -158,18 +158,14 @@ def validate_backup_dir(p: Path) -> tuple[bool, str]:
     # Ej: "\\backup_20260513_142312\\tanaka_taro_at_uns-kikaku_com.pst" ~= 60 chars
     expected_overhead = 80
     if base_len + expected_overhead > LONG_PATH_LIMIT:
-        return False, (
-            f"パスが長すぎます ({base_len} 文字)。"
-            "より短いフォルダを選択してください。"
-        )
+        return False, (f"パスが長すぎます ({base_len} 文字)。より短いフォルダを選択してください。")
 
     if base_len + expected_overhead > MAX_PATH and os.name == "nt":
         # No es bloqueante, pero advertencia (paths largos podrian fallar en
         # APIs viejas; safe_path los maneja pero algunos componentes de
         # terceros no usan el prefijo).
         log.warning(
-            "Backup dir cerca del limite MAX_PATH (%d chars). "
-            "Activando soporte de long paths.",
+            "Backup dir cerca del limite MAX_PATH (%d chars). Activando soporte de long paths.",
             base_len,
         )
 

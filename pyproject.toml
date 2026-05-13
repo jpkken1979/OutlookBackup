@@ -164,6 +164,8 @@ module = [
     "runtime_check",
     # Fase 3 plan v3.2 — Long path support
     "path_utils",
+    # Fase 4 plan v3.2 — Outlook version detection
+    "outlook.version",
 ]
 disallow_untyped_defs = true
 warn_return_any = true

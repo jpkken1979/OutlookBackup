@@ -1,6 +1,6 @@
 # Plan multi-fase: Hardening Win 10/11 + Features de competidores
 
-> **Estado**: Fase 0 ✅ + Fase 1 ✅ + Fase 2 ✅ + Fase 3 ✅ (cerradas 2026-05-13). Proxima: Fase 4 (Outlook version compat) o Fase 5 (audit competidores).
+> **Estado**: Fase 0 ✅ + Fase 1 ✅ + Fase 2 ✅ + Fase 3 ✅ + Fase 4 ✅ (cerradas 2026-05-13). Proxima: Fase 5 (audit competidores) o cerrar sesion.
 > **Creado**: 2026-05-13
 > **Aprobado**: 2026-05-13 por K. Kaneshiro
 > **Owner**: K. Kaneshiro (UNS-Kikaku)
@@ -218,10 +218,38 @@ el prefijo. Validable con `LONG_PATH_THRESHOLD` overrideable en config futura si
 **Tiempo estimado**: 1 sesion media (4h).
 **Handoff**: commit `feat(paths): soporte long paths con prefijo \\?\\`.
 
-### Fase 4 — Outlook version compat layer
+### Fase 4 — Outlook version compat layer ✅ CERRADA 2026-05-13
 
 **Objetivo**: detectar al boot que version de Outlook esta instalada y warnear si no soportada.
 Adaptar comportamiento de `AddStoreEx` segun flavor.
+
+**Implementacion completada**:
+- ✅ `src/outlook/version.py` — modulo nuevo, mypy strict, dataclass `OutlookVersion` (frozen)
+  con campos: `version_str`, `version_tuple`, `flavor` (M365|perpetual|unknown), `install_path`,
+  `supported`, `product_release_ids`. Funciones: `detect_outlook_version()`, `is_supported(v)`.
+- ✅ `_detect_m365()` lee `HKLM\\SOFTWARE\\Microsoft\\Office\\ClickToRun\\Configuration` (values
+  `VersionToReport`, `InstallationPath`, `ProductReleaseIds`).
+- ✅ `_detect_perpetual()` itera 16.0/15.0/14.0 sobre `Office\\{ver}\\Outlook\\InstallRoot`
+  en HKLM (32-bit y 64-bit branches).
+- ✅ `tests/test_outlook_version.py` — 19 tests (dataclass immutability, is_supported para
+  2013/2019/2025-future, parsing de version, mock M365 + perpetual + unknown, orquestador).
+- ✅ `tests/test_outlook_version_detection.py` — 2 xfail convertidos a tests reales (M365 vs
+  perpetual flavor + Office 2016+ supported).
+- ✅ `src/main.py` — log de version Outlook al inicio de `run_gui()`. Si `flavor=unknown`:
+  warning "Outlook no detectado". Si no soportada: warning con version + flavor. Si OK: info.
+- ✅ `pyproject.toml` — agregado `outlook.version` a mypy strict overrides.
+
+**Validacion local**: 155 passed, 0 failed, 1 xfailed (sin regresiones, +21 vs Fase 3).
+**Validacion pendiente** (requiere Outlook M365 + perpetual instalado):
+- Smoke manual: ejecutar app en maquina con M365 → verificar log `Outlook M365 detectado: 16.0.x`.
+- Smoke manual: ejecutar app en maquina con perpetual → verificar log `perpetual 16.0`.
+
+**xfail residual de Fase 4**: `test_future_outlook_17_should_be_detected` — la enumeracion
+dinamica del registry (`winreg.EnumKey` sobre `Office\\`) NO esta implementada porque seria
+scope creep. Cuando Microsoft saque Office 17, agregar "17.0" a `KNOWN_MAJOR_VERSIONS`.
+
+**Tiempo real**: ~1.5h (estimado 4h, mas rapido por reuso del patron de runtime_check).
+**Handoff**: commit `feat(outlook): detectar version y flavor M365 vs perpetual (Fase 4)`.
 
 **Scope**:
 - Crear `src/outlook/version.py`:
