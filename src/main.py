@@ -46,8 +46,25 @@ def setup_logging(log_to_file: bool = False) -> None:
     )
 
 
-def run_gui() -> None:
-    """Lanza pywebview con la UI HTML/CSS/JS."""
+def run_gui() -> int:
+    """Lanza pywebview con la UI HTML/CSS/JS.
+
+    Antes de abrir la ventana, valida que el runtime WebView2 este instalado
+    (Fase 2 plan v3.2). En Win 10 < 22H2 puede faltar y la app abriria ventana
+    en blanco sin error visible. `ensure_webview2_runtime` muestra un dialogo
+    japones via tkinter y, si el usuario acepta, ejecuta el bootstrapper
+    bundleado o lo descarga de Microsoft.
+
+    Returns:
+        0 en exit normal, 2 si el usuario rechazo instalar WebView2.
+    """
+    from runtime_check import ensure_webview2_runtime
+
+    if not ensure_webview2_runtime(interactive=True):
+        log = logging.getLogger("uns-backup-gui")
+        log.error("WebView2 ausente y no se pudo instalar; la GUI no puede arrancar")
+        return 2
+
     import webview
 
     from api import API
@@ -85,6 +102,7 @@ def run_gui() -> None:
     window.events.loaded += on_loaded
 
     webview.start(debug=False, http_server=False)
+    return 0
 
 
 def run_auto_backup() -> int:
@@ -210,7 +228,7 @@ def main() -> None:
     if args.auto:
         sys.exit(run_auto_backup())
     else:
-        run_gui()
+        sys.exit(run_gui())
 
 
 if __name__ == "__main__":

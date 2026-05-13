@@ -160,6 +160,8 @@ module = [
     "import_engine",
     "api",
     "main",
+    # Fase 2 plan v3.2 — WebView2 runtime detection
+    "runtime_check",
 ]
 disallow_untyped_defs = true
 warn_return_any = true

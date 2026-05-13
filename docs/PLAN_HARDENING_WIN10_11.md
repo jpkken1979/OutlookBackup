@@ -1,6 +1,6 @@
 # Plan multi-fase: Hardening Win 10/11 + Features de competidores
 
-> **Estado**: Fase 0 ✅ + Fase 1 ✅ (cerradas 2026-05-13). Proxima: Fase 2 (WebView2 detection + bundle).
+> **Estado**: Fase 0 ✅ + Fase 1 ✅ + Fase 2 ✅ (cerradas 2026-05-13). Proxima: Fase 3 (long path support).
 > **Creado**: 2026-05-13
 > **Aprobado**: 2026-05-13 por K. Kaneshiro
 > **Owner**: K. Kaneshiro (UNS-Kikaku)
@@ -116,10 +116,36 @@ manualmente cada release.
 **Tiempo real**: ~1.5h (estimado 4h, mas rapido por reuso de patrones existentes).
 **Handoff**: commit `test(ci): matrix Win 10 + tests xfail para Fases 2/3/4 (Fase 1 cerrada)`.
 
-### Fase 2 — WebView2 detection + bootstrap + bundling
+### Fase 2 — WebView2 detection + bootstrap + bundling ✅ CERRADA 2026-05-13
 
 **Objetivo**: que la app NO abra ventana en blanco si WebView2 falta. Detectar al boot, ofrecer
 descarga del runtime, Y bundlear el installer en el `.exe` setup.
+
+**Implementacion completada**:
+- ✅ `src/runtime_check.py` — modulo nuevo, mypy strict, 7 funciones publicas:
+  `is_webview2_installed`, `get_bundled_installer_path`, `download_bootstrapper`,
+  `run_installer_silent`, `show_japanese_install_dialog`, `ensure_webview2_runtime`.
+- ✅ `tests/test_runtime_check.py` — 18 tests, todos verdes (mock de winreg, urllib, subprocess).
+- ✅ `src/main.py` — integracion en `run_gui()` antes de `webview.create_window`.
+  `run_gui()` cambio retorno de None → int (exit code 2 si WebView2 falta).
+  `main()` ahora hace `sys.exit(run_gui())`.
+- ✅ `build/installer.iss` — bundling completo:
+  - Removido el `[Tasks]` `webview2` placeholder (era confuso UX).
+  - Agregado `[Files]` con `Source: ..\redist\MicrosoftEdgeWebview2Setup.exe; DestDir: {tmp}; Flags: deleteafterinstall`.
+  - Agregada funcion `WebView2NeedsInstall` en `[Code]` que lee 3 ubicaciones de registry.
+  - Agregada linea en `[Run]` con `/silent /install` antes del launch del programa.
+- ✅ `redist/` — directorio nuevo con `.gitkeep` + `README.md` con instrucciones de descarga.
+  Bootstrapper NO commiteado (cubierto por `*.exe` en `.gitignore`).
+- ✅ `tests/test_webview2_detection.py` — refactorizado, ahora solo cubre el contrato del installer.iss
+  (4 tests, todos verdes).
+- ✅ `pyproject.toml` — agregado `runtime_check` a mypy strict overrides.
+
+**Validacion local**: 123 passed, 0 failed, 6 skipped, 2 xfailed (sin regresiones).
+**Validacion pendiente** (requiere VM Win 10 sin WebView2):
+- Smoke manual: instalar el .exe en Win 10 21H2 sin runtime → verificar que el installer corre el bootstrapper silenciosamente.
+- Smoke manual: ejecutar la app dev (run.bat) en Win 10 sin runtime → verificar dialogo japones.
+**Tiempo real**: ~2h (estimado 3-4h, mas rapido por reuso del patron de tests xfail).
+**Handoff**: commit `feat(runtime): WebView2 detection + bundle bootstrapper en installer (Fase 2)`.
 
 **Scope**:
 - Agregar `src/runtime_check.py` con funcion `ensure_webview2_runtime()`:
