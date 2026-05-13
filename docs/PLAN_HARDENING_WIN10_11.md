@@ -1,6 +1,6 @@
 # Plan multi-fase: Hardening Win 10/11 + Features de competidores
 
-> **Estado**: Fase 0 ✅ + Fase 1 ✅ + Fase 2 ✅ + Fase 3 ✅ + Fase 4 ✅ (cerradas 2026-05-13). Proxima: Fase 5 (audit competidores) o cerrar sesion.
+> **Estado**: Fase 0 ✅ + Fase 1 ✅ + Fase 2 ✅ + Fase 3 ✅ + Fase 4 ✅ + Fase 5 ✅ (cerradas 2026-05-13). Proxima: Fase 6 (release v3.2.0). REQUIERE smoke manual previo en VM.
 > **Creado**: 2026-05-13
 > **Aprobado**: 2026-05-13 por K. Kaneshiro
 > **Owner**: K. Kaneshiro (UNS-Kikaku)
@@ -269,10 +269,33 @@ scope creep. Cuando Microsoft saque Office 17, agregar "17.0" a `KNOWN_MAJOR_VER
 **Tiempo estimado**: 1 sesion media (4h).
 **Handoff**: commit `feat(outlook): detectar version y flavor (M365/perpetual)`.
 
-### Fase 5 — Competitor feature audit (research formal)
+### Fase 5 — Competitor feature audit (research formal) ✅ CERRADA 2026-05-13
 
 **Objetivo**: validar la lista preliminar de la seccion "Investigacion de competidores" con
 busquedas reales en GitHub y la web. Filtrar segun criterios concretos.
+
+**Resultado**: ver `docs/COMPETITOR_AUDIT.md` (documento standalone con tabla cruzada
+features x productos + top 3 candidatos justificados).
+
+**Productos analizados**: MailStore Home (free), Stellar Repair for Outlook, libpff/libpst
+(C libs), libratom (Python wrapper), 4 add-ins OSS de GitHub, Veeam M365 (descartado por overkill).
+
+**Top 3 features candidatos para Fase 6**:
+1. **Backup incremental** (alto ROI: ahorra ~95% del tiempo en backups subsecuentes)
+2. **Indexed search across backup history** (diferenciador competitivo, util para auditoria)
+3. **Filter por fecha en backup** (quick win, util para nuevas cuentas)
+
+**Features descartadas con razon documentada**: recovery PST corrupto, split PST > 50GB,
+multi-language UI, cloud upload, Outlook add-in, libpff fallback (cubierto por cache_backup).
+
+**Decisiones pendientes para arrancar Fase 6** (a confirmar con usuario):
+- Cuantas features del top 3 entran en v3.2.0 (3 vs 2 vs 1).
+- Prioridad relativa VSS hot-copy vs features nuevas.
+- Si comprar code signing certificate antes del release.
+- Numero de version: v3.2.0 todo, o v3.2.0 parcial + v3.2.1 completion.
+
+**Tiempo real**: ~1h (estimado 4h, mas rapido por scope claro y 4 WebSearch en paralelo).
+**Handoff**: commit `docs(audit): COMPETITOR_AUDIT.md con top 3 features para Fase 6`.
 
 **Scope**:
 - WebSearch + WebFetch a:
