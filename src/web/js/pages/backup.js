@@ -104,6 +104,12 @@ const BackupPage = (() => {
         document.getElementById('inv-servers')?.addEventListener('change', (e) => {
             persistConfig({ inventory_include_servers: e.target.checked });
         });
+
+        // Fase 6 partial Feature C: filter por fecha
+        document.getElementById('date-filter-enabled')?.addEventListener('change', (e) => {
+            const fields = document.getElementById('date-filter-fields');
+            if (fields) fields.style.display = e.target.checked ? 'flex' : 'none';
+        });
     }
 
     function render() {
@@ -261,6 +267,15 @@ const BackupPage = (() => {
         const fmtEl = document.querySelector('input[name="format"]:checked');
         const fmt = fmtEl ? fmtEl.value : 'pst';
 
+        // Fase 6 partial Feature C: filter por fecha (opcional, ISO 8601)
+        const dateFilterEnabled = document.getElementById('date-filter-enabled')?.checked || false;
+        const dateFrom = dateFilterEnabled ? (document.getElementById('date-from')?.value || null) : null;
+        const dateTo = dateFilterEnabled ? (document.getElementById('date-to')?.value || null) : null;
+        if (dateFilterEnabled && !dateFrom && !dateTo) {
+            Toast.show('日付範囲フィルタが有効ですが、開始日も終了日も未指定です', 'warning');
+            return;
+        }
+
         const invEnabled = document.getElementById('inv-enabled')?.checked || false;
         const invServers = document.getElementById('inv-servers')?.checked !== false;
         const invPasswords = document.getElementById('inv-passwords')?.checked || false;
@@ -291,6 +306,8 @@ const BackupPage = (() => {
                 inv_servers: invServers,
                 inv_passwords: invPasswords,
                 master_password: masterPwd,
+                date_from: dateFrom,
+                date_to: dateTo,
             });
             if (!r.success) {
                 hideProgress();

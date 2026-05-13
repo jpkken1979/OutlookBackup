@@ -135,6 +135,20 @@
                         </label>
                     </div>
 
+                    <!-- Fase 6 partial Feature C: filter por fecha -->
+                    <div class="form-row">
+                        <label class="checkbox-inline">
+                            <input type="checkbox" id="date-filter-enabled">
+                            📅 日付範囲でフィルタする(指定範囲外のメールは含めない)
+                        </label>
+                    </div>
+                    <div class="form-row" id="date-filter-fields" style="display:none;">
+                        <label>FROM:</label>
+                        <input type="date" id="date-from" style="max-width:180px;">
+                        <label style="margin-left:16px;">TO:</label>
+                        <input type="date" id="date-to" style="max-width:180px;">
+                    </div>
+
                     <h2 class="panel-title">📡 OUTLOOK ACCOUNTS</h2>
                     <div class="account-grid" id="account-grid">
                         <div class="empty-state">
