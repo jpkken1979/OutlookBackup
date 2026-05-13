@@ -226,6 +226,8 @@ class API:
                 # Fase 6 partial Feature C: filter por fecha (opcional, ISO 8601).
                 date_from_iso = params.get("date_from") or None
                 date_to_iso = params.get("date_to") or None
+                # Feature A plan v3.2: backup incremental.
+                incremental = bool(params.get("incremental", False))
 
                 if not output_dir:
                     return {"success": False, "error": "output_dir required"}
@@ -246,6 +248,7 @@ class API:
                     export_format=fmt,
                     date_from_iso=date_from_iso,
                     date_to_iso=date_to_iso,
+                    incremental=incremental,
                 )
 
                 def progress(msg: str) -> None:

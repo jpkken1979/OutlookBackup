@@ -258,6 +258,7 @@ class BackupEngine:
         export_format: str = "pst",
         date_from_iso: str | None = None,
         date_to_iso: str | None = None,
+        incremental: bool = False,
     ):
         from date_filter import parse_iso_date
 
@@ -268,6 +269,9 @@ class BackupEngine:
         # Fase 6 partial Feature C: filter por fecha. None = sin filter.
         self.date_from = parse_iso_date(date_from_iso)
         self.date_to = parse_iso_date(date_to_iso)
+        # Feature A plan v3.2: backup incremental. Si True, por cuenta usa
+        # last_backup como date_from. Mutuamente exclusivo con date_from explicito.
+        self.incremental = incremental
         self.report = BackupReport()
         self.report.output_dir = output_dir
         self._cancel_flag = threading.Event()
@@ -292,6 +296,14 @@ class BackupEngine:
             session_dir = os.path.join(self.output_dir, f"backup_{timestamp}")
             os.makedirs(session_dir, exist_ok=True)
             self.report.output_dir = session_dir
+
+            # Feature A: cargar state si incremental
+            inc_state = None
+            if self.incremental:
+                from incremental_state import IncrementalState
+
+                inc_state = IncrementalState.load()
+                progress_cb("⚡ Modo incremental activado")
 
             progress_cb(f"🚀 Iniciando backup de {len(self.selected_accounts)} cuenta(s)")
             progress_cb(f"📂 Carpeta destino: {session_dir}")
@@ -320,13 +332,31 @@ class BackupEngine:
                 try:
                     if self.export_format == "pst":
                         output_file = os.path.join(session_dir, f"{safe_name}.pst")
+
+                        # Feature A: si incremental, usar last_backup como date_from
+                        # (solo si NO hay date_from explicito ya seteado).
+                        effective_date_from = self.date_from
+                        if inc_state is not None and self.date_from is None:
+                            last = inc_state.get_last_backup(account.smtp_address)
+                            if last is not None:
+                                effective_date_from = last.date()
+                                progress_cb(
+                                    f"   ⏱ Incremental: emails desde {effective_date_from.isoformat()}"
+                                )
+                            else:
+                                progress_cb("   📦 Incremental: primera vez (full backup)")
+
                         success = self.client.export_account_to_pst(
                             account,
                             output_file,
                             progress_cb,
-                            date_from=self.date_from,
+                            date_from=effective_date_from,
                             date_to=self.date_to,
                         )
+
+                        # Feature A: marcar la cuenta como recien backupeada
+                        if success and inc_state is not None:
+                            inc_state.update_last_backup(account.smtp_address)
                         acc_result["output_file"] = output_file
                         acc_result["success"] = success
 

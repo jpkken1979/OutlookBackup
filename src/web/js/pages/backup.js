@@ -276,6 +276,13 @@ const BackupPage = (() => {
             return;
         }
 
+        // Feature A plan v3.2: backup incremental
+        const incremental = document.getElementById('incremental-enabled')?.checked || false;
+        if (incremental && dateFilterEnabled && dateFrom) {
+            Toast.show('日付フィルタと差分モードは同時に使えません', 'warning');
+            return;
+        }
+
         const invEnabled = document.getElementById('inv-enabled')?.checked || false;
         const invServers = document.getElementById('inv-servers')?.checked !== false;
         const invPasswords = document.getElementById('inv-passwords')?.checked || false;
@@ -308,6 +315,7 @@ const BackupPage = (() => {
                 master_password: masterPwd,
                 date_from: dateFrom,
                 date_to: dateTo,
+                incremental: incremental,
             });
             if (!r.success) {
                 hideProgress();

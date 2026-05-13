@@ -1,6 +1,6 @@
 # Plan multi-fase: Hardening Win 10/11 + Features de competidores
 
-> **Estado**: Fase 0 ✅ + Fase 1 ✅ + Fase 2 ✅ + Fase 3 ✅ + Fase 4 ✅ + Fase 5 ✅ + Fase 6 partial (Feature C backend) ✅ (cerradas 2026-05-13). Pendiente para release v3.2.0: Feature A (incremental), Feature B (indexed search), VSS hot-copy, UI de Feature C, smoke manual en VM.
+> **Estado**: Fase 0 ✅ + Fase 1 ✅ + Fase 2 ✅ + Fase 3 ✅ + Fase 4 ✅ + Fase 5 ✅ + Fase 6 partial (Feature C completo + Feature A) ✅ (cerradas 2026-05-13). Pendiente para release v3.2.0: Feature B (indexed search), VSS hot-copy, smoke manual en VM, bump version.
 > **Creado**: 2026-05-13
 > **Aprobado**: 2026-05-13 por K. Kaneshiro
 > **Owner**: K. Kaneshiro (UNS-Kikaku)
