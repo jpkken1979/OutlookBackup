@@ -10,6 +10,8 @@ El proyecto vive **dentro** del repo `Jpkken1979` que tiene su propio ecosistema
 
 ## Comandos comunes
 
+### Dev / Build
+
 | Comando | Qué hace |
 |---|---|
 | `run.bat` | Modo dev: crea `.venv` si no existe, instala `requirements.txt`, ejecuta `python src\main.py` |
@@ -20,7 +22,21 @@ El proyecto vive **dentro** del repo `Jpkken1979` que tiene su propio ecosistema
 | `python build\generate_icon.py` | Regenerar `assets/icon.ico` |
 | `git tag v3.1.X && git push origin v3.1.X` | Dispara release en GitHub Actions con `.exe` + installer adjuntos |
 
-**No hay tests.** Verificación manual ejecutando `run.bat` o el `.exe` compilado.
+### Calidad (toolchain con `uv`)
+
+`pyproject.toml` es la fuente moderna de deps; `requirements.txt` se mantiene en sync para `build.yml` (regenerable con `uv export --no-hashes > requirements.txt`).
+
+| Comando | Qué hace |
+|---|---|
+| `uv sync --extra dev` | Instala deps de dev (ruff, mypy, pytest, playwright, hypothesis) |
+| `uv run ruff check src tests` | Lint (reglas E/W/F/I/B/C4/UP/ARG/SIM, línea 100) |
+| `uv run ruff format --check src tests` | Verifica formato (reemplaza black + isort) |
+| `uv run mypy src` | Typecheck — **strict global** (todos los 24 módulos pasan `disallow_untyped_defs`) |
+| `uv run pytest -v --cov=src --cov-report=term-missing` | Suite completa con coverage |
+| `uv run pytest tests/test_backup_engine.py::test_xxx` | Correr un solo test |
+| `uv run pytest -m "not e2e"` | Saltear los E2E de Playwright (más rápido) |
+| `uv run pytest -m "not windows"` | En Linux skipea los tests con `pytestmark = pytest.mark.windows` |
+| `uv run playwright install --with-deps chromium` | Instala el browser para los E2E |
 
 ## Arquitectura — pywebview bridge (v3.0+)
 
@@ -302,11 +318,60 @@ cryptography — AES-256-GCM + PBKDF2 (inventario encriptado)
 pywebview    — WebView2 nativa para la UI
 pythonnet    — CLR loader requerido por pywebview en Windows
 rarfile      — Lectura de archivos RAR (requiere WinRAR o 7-Zip instalado)
+structlog    — Logging estructurado (usado por src/observability)
 win32cred    — Windows Credential Vault para passwords
 winreg       — Registro de Windows para server settings y profile mapping
 ```
 
-Local: Python 3.10+ funciona. No hay tests automatizados.
+Runtime: Python 3.10+. Toolchain de dev: **uv + ruff + mypy + pytest + playwright**.
+
+## Testing — corre en Linux Y Windows
+
+`tests/` tiene 13 archivos cubriendo engines (backup/cache/import), observability, i18n, fakes de Outlook y E2E con Playwright.
+
+**El truco para correr en Linux**: `tests/conftest.py` define un fixture `mock_win32_modules(autouse=True, scope="session")` que inyecta `MagicMock` en `sys.modules` para `win32com`, `win32cred`, `winreg`, `pythoncom`, `pywintypes`, `webview` ANTES de cualquier import de `src/`. Esto permite que el código bajo test se importe sin pywin32 instalado.
+
+**Markers** (`pyproject.toml:182-187`):
+- `slow` — tests pesados, deselect con `-m "not slow"`
+- `windows` — requieren Windows real, skipean en Linux CI
+- `outlook` — requieren Outlook instalado de verdad
+- `e2e` — Playwright + chromium (necesita `playwright install`)
+
+**Coverage** (`pyproject.toml:194-210`): incluye todo `src/` excepto `main.py` y `src/web/*`. No hay umbral mínimo configurado en CI todavía.
+
+**Fakes tipados**: `src/outlook/fakes.py` reemplaza al `MagicMock` genérico para tests más realistas — usar via fixtures en `tests/test_outlook_fakes.py`.
+
+## Sub-packages del backend (refactor reciente)
+
+Además de los módulos top-level mencionados arriba, `src/` tiene dos subpackages:
+
+```
+src/outlook/
+├── protocols.py    # Protocols (PEP 544) que tipan la API COM de Outlook
+├── constants.py    # OL_FOLDER_INBOX = 6, OL_STORE_UNICODE = 3, etc.
+├── fakes.py        # Implementación in-memory para tests sin Outlook
+└── real.py         # Wrapper sobre win32com.client.Dispatch (producción)
+
+src/observability/
+├── logging.py      # structlog setup — JSON en prod, pretty en dev
+├── crash.py        # Captura excepciones no manejadas → archivo + telemetry
+└── updater.py      # Check de versiones contra GitHub Releases
+```
+
+`outlook_client.py` (top-level) sigue siendo el entry point legacy; el subpackage `outlook/` es la abstracción nueva con tipos. Verificar cuál usa el módulo que tocás antes de elegir.
+
+## CI — dos workflows independientes
+
+| Workflow | Trigger | Qué hace |
+|---|---|---|
+| `.github/workflows/build.yml` | push main/master, tags `v*`, manual | Build `.exe` + installer en Windows, publica release en tags |
+| `.github/workflows/quality.yml` | push/PR a main/master, manual | Lint (ruff), typecheck (mypy advisory), tests (pytest matrix Linux+Windows) con coverage |
+
+**Quality workflow detalle** (`quality.yml`):
+- `lint` — Ruff check + format check, bloqueante
+- `typecheck` — Mypy con `continue-on-error: true` (advisory hasta que limpie todo el legacy)
+- `tests` — Matrix Linux+Windows; cachea browsers de Playwright; sube `htmlcov/` como artifact en Windows
+- Usa `astral-sh/setup-uv@v3` con cache habilitado
 
 ## Convenciones
 
