@@ -15,6 +15,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from path_utils import safe_path
+
 try:
     import pythoncom  # noqa: F401  # availability probe
     import win32com.client  # noqa: F401  # availability probe
@@ -107,7 +109,8 @@ class ImportEngine:
         """Monta el PST como una carpeta separada en el sidebar de Outlook."""
         try:
             progress_cb("  📁 PSTを別フォルダとして開いています...")
-            self.client.namespace.AddStore(pst_path)
+            # safe_path() agrega prefijo \\?\ si pst_path > 240 chars (Fase 3 plan v3.2).
+            self.client.namespace.AddStore(safe_path(pst_path))
             progress_cb("  ✅ Outlookのサイドバーに表示されました")
             return True
         except Exception as e:
@@ -119,13 +122,14 @@ class ImportEngine:
         """Igual que separate_folder pero usando AddStoreEx con formato Unicode."""
         try:
             progress_cb("  🗂️ 新規データファイルとして開いています...")
-            self.client.namespace.AddStoreEx(pst_path, 3)
+            # safe_path() para soporte long paths (Fase 3).
+            self.client.namespace.AddStoreEx(safe_path(pst_path), 3)
             progress_cb("  ✅ データファイルが追加されました")
             return True
         except Exception:
             try:
                 # Fallback al método simple si AddStoreEx falla
-                self.client.namespace.AddStore(pst_path)
+                self.client.namespace.AddStore(safe_path(pst_path))
                 progress_cb("  ✅ データファイルが追加されました(基本モード)")
                 return True
             except Exception as e2:
@@ -141,7 +145,8 @@ class ImportEngine:
                 return False
 
             progress_cb("  📂 PSTをマウント中...")
-            self.client.namespace.AddStore(pst_path)
+            # safe_path() para soporte long paths (Fase 3).
+            self.client.namespace.AddStore(safe_path(pst_path))
 
             # Buscar el store recién montado
             source_store = None

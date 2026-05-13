@@ -1,6 +1,6 @@
 # Plan multi-fase: Hardening Win 10/11 + Features de competidores
 
-> **Estado**: Fase 0 ✅ + Fase 1 ✅ + Fase 2 ✅ (cerradas 2026-05-13). Proxima: Fase 3 (long path support).
+> **Estado**: Fase 0 ✅ + Fase 1 ✅ + Fase 2 ✅ + Fase 3 ✅ (cerradas 2026-05-13). Proxima: Fase 4 (Outlook version compat) o Fase 5 (audit competidores).
 > **Creado**: 2026-05-13
 > **Aprobado**: 2026-05-13 por K. Kaneshiro
 > **Owner**: K. Kaneshiro (UNS-Kikaku)
@@ -172,9 +172,35 @@ descarga del runtime, Y bundlear el installer en el `.exe` setup.
 **Tiempo estimado**: 1 sesion media (3-4h, mas que antes por el bundling en Inno Setup).
 **Handoff**: commit `feat(runtime): detectar WebView2 + bundle bootstrapper en installer`.
 
-### Fase 3 — Long path support + Japanese path tests
+### Fase 3 — Long path support + Japanese path tests ✅ CERRADA 2026-05-13
 
 **Objetivo**: backups con paths japoneses largos NO fallan silenciosamente.
+
+**Implementacion completada**:
+- ✅ `src/path_utils.py` — modulo nuevo, mypy strict, 3 funciones publicas:
+  `is_long_path`, `safe_path`, `validate_backup_dir` + constants (MAX_PATH=260,
+  LONG_PATH_THRESHOLD=240, LONG_PATH_LIMIT=32_767, LONG_PATH_PREFIX, LONG_PATH_PREFIX_UNC).
+- ✅ `tests/test_long_paths.py` — reescrito de xfail/skip a 13 tests reales
+  (paths cortos, paths largos, UNC, no-double-prefix, validate writeability, validate length).
+- ✅ Refactor incremental de 4 engines:
+  - `src/cache_backup.py` — `safe_path()` en `open()` (3 lugares: copia + sha256) + `shutil.copystat`.
+  - `src/outlook_client.py` — `safe_path()` en `AddStoreEx(output_path)` para crear PST.
+  - `src/import_engine.py` — `safe_path()` en 4 calls de `AddStore`/`AddStoreEx`
+    (separate_folder, new_files, fallback, merge).
+  - `src/pst_inspector.py` — `safe_path()` en `AddStore(pst_path)` para preview.
+- ✅ `pyproject.toml` — agregado `path_utils` a mypy strict overrides.
+
+**Validacion local**: 134 passed, 0 failed, 2 skipped, 1 xfailed (sin regresiones).
+**Validacion pendiente** (requiere Outlook + path > 260 chars en Windows):
+- Smoke manual: backup con `output_dir` japones de ~250 chars → verificar PST creado.
+- Smoke manual: import PST con path > 260 chars → verificar AddStore funciona.
+
+**Decision conservadora**: `safe_path()` solo activa el prefijo cuando length > 240
+(passthrough para paths cortos), preservando compat con APIs viejas que no soportan
+el prefijo. Validable con `LONG_PATH_THRESHOLD` overrideable en config futura si hace falta.
+
+**Tiempo real**: ~2.5h (estimado 4h, mas rapido por reuso de patron path-aware).
+**Handoff**: commit `feat(paths): soporte long paths con prefijo \\\\?\\\\ (Fase 3)`.
 
 **Scope**:
 - Crear `src/path_utils.py`:

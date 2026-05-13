@@ -162,6 +162,8 @@ module = [
     "main",
     # Fase 2 plan v3.2 — WebView2 runtime detection
     "runtime_check",
+    # Fase 3 plan v3.2 — Long path support
+    "path_utils",
 ]
 disallow_untyped_defs = true
 warn_return_any = true

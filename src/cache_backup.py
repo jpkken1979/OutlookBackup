@@ -19,6 +19,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from path_utils import safe_path
+
 try:
     import winreg
 
@@ -343,7 +345,9 @@ class CacheBackupEngine:
         chunk = 4 * 1024 * 1024  # 4MB chunks
         last_pct = -1
 
-        with open(src, "rb") as fsrc, open(dest, "wb") as fdst:
+        # safe_path() agrega prefijo \\?\ si el path > 240 chars (Fase 3 plan v3.2).
+        # Necesario para OST/PST en backup_dir japones largo.
+        with open(safe_path(src), "rb") as fsrc, open(safe_path(dest), "wb") as fdst:
             while True:
                 if self._cancel_flag.is_set():
                     raise InterruptedError("Cancelled")
@@ -361,7 +365,7 @@ class CacheBackupEngine:
 
         # Preservar mtime
         try:
-            shutil.copystat(src, dest)
+            shutil.copystat(safe_path(src), safe_path(dest))
         except Exception:
             pass
 
@@ -386,7 +390,7 @@ class CacheBackupEngine:
     @staticmethod
     def _sha256_of(path: Path) -> str:
         h = hashlib.sha256()
-        with open(path, "rb") as f:
+        with open(safe_path(path), "rb") as f:
             while chunk := f.read(8192 * 16):
                 h.update(chunk)
         return h.hexdigest()

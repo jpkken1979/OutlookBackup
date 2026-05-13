@@ -11,6 +11,8 @@ import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from path_utils import safe_path
+
 if TYPE_CHECKING:
     from outlook.protocols import OutlookAccountInfo
 
@@ -227,8 +229,9 @@ class OutlookClient:
             if os.path.exists(output_path):
                 os.remove(output_path)
 
-            # Crear nuevo store PST (formato Unicode = UTF-8 compatible)
-            self.namespace.AddStoreEx(output_path, 3)  # 3 = olStoreUnicode
+            # Crear nuevo store PST (formato Unicode = UTF-8 compatible).
+            # safe_path() agrega prefijo \\?\ si output_path > 240 chars (Fase 3).
+            self.namespace.AddStoreEx(safe_path(output_path), 3)  # 3 = olStoreUnicode
 
             # Buscar el store recién creado
             new_store = None

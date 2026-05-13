@@ -1,22 +1,18 @@
-r"""Tests de soporte de paths largos (> MAX_PATH = 260 chars).
+r"""Tests de soporte de paths largos (Fase 3 plan v3.2).
 
-Fase 1 del plan v3.2 (docs/PLAN_HARDENING_WIN10_11.md):
-- Define el contrato esperado para Fase 3 (long path support con prefijo \\?\).
-- Tests xfail hasta que `src/path_utils.py` exista (Fase 3).
+Cubre `src/path_utils.py`:
+- `safe_path()` agrega prefijo \\?\ si el path supera el umbral conservador.
+- `is_long_path()` detecta paths potencialmente problematicos.
+- `validate_backup_dir()` chequea writability + length antes del backup.
 
-Por que importa para UNS-Kikaku:
-- Paths japoneses con kanji ocupan mas bytes que ASCII pero el limite MAX_PATH
-  cuenta CHARS, no bytes. Un path como
-  `デスクトップ\\バックアップ\\2026年5月\\ユニバーサル企画株式会社\\` ya tiene
-  ~50 chars que se suman al backup_dir del usuario.
-- Si el usuario elige `Documents\\OneDrive\\Trabajo\\backups\\` (~50 chars) +
-  `backup_20260513_142312\\kenji_at_uns-kikaku_com.pst` (~50 chars), ya hay
-  ~100 chars de overhead constante. Quedan ~160 chars para el backup_dir
-  custom — facilmente excedible en clientes con paths de OneDrive sincronizados.
+Notas:
+- Los tests corren en Linux Y Windows. En Linux, `safe_path` es passthrough.
+- Para forzar comportamiento Windows en Linux, los tests usan `monkeypatch.setattr(os, 'name', 'nt')`.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -27,12 +23,6 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 pytestmark = pytest.mark.long_paths
-
-
-# Limite NTFS sin prefijo \\?\
-MAX_PATH = 260
-# Limite con prefijo \\?\ (32k - epsilon por overhead)
-LONG_PATH_LIMIT = 32_767
 
 
 def _make_japanese_path(target_chars: int, base: Path) -> Path:
@@ -47,17 +37,12 @@ def _make_japanese_path(target_chars: int, base: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Test smoke: paths cortos siempre deben funcionar
+# Smoke: paths cortos siempre deben funcionar
 # ---------------------------------------------------------------------------
 
 
 def test_short_japanese_path_works(tmp_path: Path) -> None:
-    """Path japones de ~100 chars debe funcionar sin tratamiento especial.
-
-    Sanity check: el comportamiento ACTUAL ya sirve para paths cortos. Si este
-    test falla, hay un bug serio en el handling de Unicode en general (no es
-    sobre long paths).
-    """
+    """Path japones de ~100 chars debe funcionar sin tratamiento especial."""
     short_dir = tmp_path / "テスト" / "バックアップ"
     short_dir.mkdir(parents=True)
     test_file = short_dir / "test.txt"
@@ -65,99 +50,153 @@ def test_short_japanese_path_works(tmp_path: Path) -> None:
 
     assert test_file.exists()
     assert test_file.read_text(encoding="utf-8") == "hello"
-    assert len(str(test_file)) < MAX_PATH  # confirma que es "corto"
 
 
 # ---------------------------------------------------------------------------
-# Tests xfail — comportamiento que Fase 3 debe implementar
+# is_long_path
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="Fase 3 del plan v3.2: src/path_utils.py:safe_path() debe agregar prefijo \\\\?\\",
-    strict=False,
-)
-def test_path_utils_module_exists() -> None:
-    """Fase 3 va a crear `src/path_utils.py`.
+def test_is_long_path_short_returns_false(tmp_path: Path) -> None:
+    import path_utils
 
-    Cuando exista, debe exponer:
-        from path_utils import safe_path, validate_backup_dir
-    """
-    from path_utils import safe_path, validate_backup_dir  # noqa: F401
+    assert path_utils.is_long_path(tmp_path / "short.txt") is False
 
 
-@pytest.mark.xfail(
-    reason="Fase 3: safe_path() debe agregar prefijo \\\\?\\ a paths > 240 chars",
-    strict=False,
-)
-def test_safe_path_adds_long_prefix_when_needed(tmp_path: Path) -> None:
-    """`safe_path(p)` debe devolver path con prefijo \\\\?\\\\ si len(p) > 240."""
-    try:
-        from path_utils import safe_path
-    except ImportError:
-        pytest.skip("path_utils no existe todavia (Fase 3)")
+def test_is_long_path_above_threshold_returns_true() -> None:
+    import path_utils
 
+    long = "C:\\" + ("very_long_segment_" * 20)  # > 240 chars
+    assert path_utils.is_long_path(long) is True
+
+
+def test_is_long_path_discounts_existing_prefix() -> None:
+    """Si ya tiene prefijo, lo descuenta antes de comparar."""
+    import path_utils
+
+    # Path corto pero con prefijo: NO debe contar el prefijo en el largo
+    short_with_prefix = path_utils.LONG_PATH_PREFIX + "C:\\short.txt"
+    assert path_utils.is_long_path(short_with_prefix) is False
+
+
+# ---------------------------------------------------------------------------
+# safe_path
+# ---------------------------------------------------------------------------
+
+
+def test_safe_path_passthrough_on_non_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """En Linux/Mac no debe modificar el path."""
+    import path_utils
+
+    monkeypatch.setattr(path_utils.os, "name", "posix")
+    long = "/very/long/" + ("segment/" * 50)  # > 240 chars
+    assert path_utils.safe_path(long) == long
+
+
+def test_safe_path_short_returns_unchanged(tmp_path: Path) -> None:
+    """Path corto en Windows: no debe agregar prefijo."""
+    import path_utils
+
+    short = tmp_path / "short.pst"
+    result = path_utils.safe_path(short)
+    assert not result.startswith(path_utils.LONG_PATH_PREFIX)
+
+
+def test_safe_path_long_adds_prefix(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Path largo en Windows: debe agregar prefijo \\\\?\\."""
+    import path_utils
+
+    monkeypatch.setattr(path_utils.os, "name", "nt")
     long_path = _make_japanese_path(target_chars=270, base=tmp_path)
-    safe = safe_path(long_path)
-    assert str(safe).startswith("\\\\?\\"), (
-        f"Path > 240 chars debe llevar prefijo \\\\?\\\\: {safe}"
+    long_path.mkdir(parents=True, exist_ok=True)
+    result = path_utils.safe_path(long_path)
+    # En non-Windows real, Path.resolve() puede generar algo distinto, pero el
+    # contrato es que el resultado deba arrancar con el prefijo cuando os.name=nt
+    assert result.startswith(path_utils.LONG_PATH_PREFIX), (
+        f"Path largo debe llevar prefijo, got: {result[:50]}..."
     )
 
 
-@pytest.mark.xfail(
-    reason="Fase 3: safe_path() NO debe agregar prefijo a paths cortos (compat APIs viejas)",
-    strict=False,
-)
-def test_safe_path_does_not_add_prefix_for_short_paths(tmp_path: Path) -> None:
-    """`safe_path(p)` debe ser pass-through para paths cortos."""
-    try:
-        from path_utils import safe_path
-    except ImportError:
-        pytest.skip("path_utils no existe todavia (Fase 3)")
+def test_safe_path_no_double_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Si ya tiene prefijo, no se duplica."""
+    import path_utils
 
-    short_path = tmp_path / "short.pst"
-    safe = safe_path(short_path)
-    assert not str(safe).startswith("\\\\?\\"), f"Path < 240 chars NO debe llevar prefijo: {safe}"
+    monkeypatch.setattr(path_utils.os, "name", "nt")
+    already_prefixed = path_utils.LONG_PATH_PREFIX + "C:\\some\\very\\long\\" + ("seg\\" * 50)
+    result = path_utils.safe_path(already_prefixed)
+    # Solo UN prefijo
+    assert result.count(path_utils.LONG_PATH_PREFIX) == 1
 
 
-@pytest.mark.xfail(
-    reason="Fase 3: validate_backup_dir() debe avisar si el path final excederia limites",
-    strict=False,
-)
-def test_validate_backup_dir_warns_when_close_to_limit(tmp_path: Path) -> None:
-    """`validate_backup_dir(p)` debe devolver (False, msg_japones) si p esta cerca del limite."""
-    try:
-        from path_utils import validate_backup_dir
-    except ImportError:
-        pytest.skip("path_utils no existe todavia (Fase 3)")
+@pytest.mark.skipif(os.name != "nt", reason="UNC paths solo aplican en Windows real")
+def test_safe_path_unc_uses_unc_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """UNC paths usan prefijo especial \\\\?\\UNC\\."""
+    import path_utils
 
-    long_dir = _make_japanese_path(target_chars=240, base=tmp_path)
-    long_dir.mkdir(parents=True, exist_ok=True)
-    ok, msg = validate_backup_dir(long_dir)
+    monkeypatch.setattr(path_utils.os, "name", "nt")
+    unc_long = "\\\\server\\share\\" + ("very_long_segment_" * 20)
+    result = path_utils.safe_path(unc_long)
+    assert result.startswith(path_utils.LONG_PATH_PREFIX_UNC), (
+        f"UNC path debe usar prefijo UNC: {result[:50]}..."
+    )
+
+
+# ---------------------------------------------------------------------------
+# validate_backup_dir
+# ---------------------------------------------------------------------------
+
+
+def test_validate_backup_dir_creates_if_missing(tmp_path: Path) -> None:
+    """Si el dir no existe, lo crea y retorna True."""
+    import path_utils
+
+    new_dir = tmp_path / "subdir" / "deeper"
+    assert not new_dir.exists()
+
+    ok, msg = path_utils.validate_backup_dir(new_dir)
+    assert ok is True
+    assert msg == ""
+    assert new_dir.is_dir()
+
+
+def test_validate_backup_dir_writeability_check(tmp_path: Path) -> None:
+    """Crea archivo temp para verificar writability."""
+    import path_utils
+
+    ok, msg = path_utils.validate_backup_dir(tmp_path)
+    assert ok is True
+    assert msg == ""
+    # Verificar que el writetest no dejo basura
+    leftovers = list(tmp_path.glob(".uns_writetest_*"))
+    assert leftovers == []
+
+
+def test_validate_backup_dir_path_too_long_returns_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Si el path final excederia LONG_PATH_LIMIT, retorna False con mensaje japones."""
+    import path_utils
+
+    # Forzamos el limite super bajo para que cualquier tmp_path activate la rama
+    monkeypatch.setattr(path_utils, "LONG_PATH_LIMIT", 10)
+
+    ok, msg = path_utils.validate_backup_dir(tmp_path)
     assert ok is False
-    assert msg, "Debe haber mensaje de error en japones"
-
-
-@pytest.mark.xfail(
-    reason="Fase 3: backup_engine debe usar safe_path() en AddStoreEx para paths largos",
-    strict=False,
-)
-def test_backup_engine_handles_long_destination(tmp_path: Path) -> None:
-    """Backup integration test: PST destination > 260 chars debe funcionar via safe_path()."""
-    try:
-        from path_utils import safe_path  # noqa: F401
-    except ImportError:
-        pytest.skip("path_utils no existe todavia (Fase 3)")
-
-    pytest.skip("Integration test placeholder — Fase 3 implementa el refactor de engines")
+    # Mensaje en japones
+    assert "パス" in msg or "長" in msg
 
 
 # ---------------------------------------------------------------------------
-# Documentacion del contrato (no es un test, es referencia)
+# Constants
 # ---------------------------------------------------------------------------
 
 
-def test_max_path_constants_are_correct() -> None:
-    """Sanity check de los limites NTFS — no deben cambiar."""
-    assert MAX_PATH == 260, "Windows MAX_PATH es 260 chars (incluye terminador NUL)"
-    assert LONG_PATH_LIMIT == 32_767, "Limite con prefijo \\\\?\\\\ es 32767 wchars"
+def test_path_constants_are_correct() -> None:
+    """Sanity check de los limites NTFS."""
+    import path_utils
+
+    assert path_utils.MAX_PATH == 260
+    assert path_utils.LONG_PATH_LIMIT == 32_767
+    assert path_utils.LONG_PATH_THRESHOLD < path_utils.MAX_PATH
+    assert path_utils.LONG_PATH_PREFIX == "\\\\?\\"
+    assert path_utils.LONG_PATH_PREFIX_UNC == "\\\\?\\UNC\\"

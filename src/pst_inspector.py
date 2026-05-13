@@ -8,6 +8,8 @@ Lo monta temporalmente, recorre carpetas, lo desmonta.
 import os
 from typing import Any
 
+from path_utils import safe_path
+
 
 class PSTInspector:
     """Inspecciona el contenido de un PST sin agregarlo permanentemente."""
@@ -42,8 +44,8 @@ class PSTInspector:
             result["exists"] = True
             result["size_mb"] = round(os.path.getsize(pst_path) / (1024 * 1024), 2)
 
-            # Montar PST
-            self.client.namespace.AddStore(pst_path)
+            # Montar PST. safe_path() agrega prefijo \\?\ si pst_path > 240 chars (Fase 3).
+            self.client.namespace.AddStore(safe_path(pst_path))
             result["mounted"] = True
 
             # Encontrar el store que acabamos de montar
