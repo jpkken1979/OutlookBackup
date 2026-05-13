@@ -62,7 +62,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Win 11 = windows-latest (windows-2022 al 2026-05).
+        # Win 10 baseline = windows-2019 — para validar comportamiento sin
+        # WebView2 preinstalado y con Outlook 2019 perpetual disponible en runner.
+        # Linux = baseline para tests no-windows (mocks de win32 via conftest).
+        # Targets de Fase 1 del plan v3.2 (docs/PLAN_HARDENING_WIN10_11.md).
+        os: [ubuntu-latest, windows-latest, windows-2019]
     steps:
       - uses: actions/checkout@v4
 
