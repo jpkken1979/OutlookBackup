@@ -49,7 +49,9 @@ def test_load_reads_existing_file(tmp_path: Path) -> None:
     (tmp_path / STATE_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
 
     state = IncrementalState.load(config_dir=tmp_path)
-    assert state.get_last_backup("kenji@uns-kikaku.com") == datetime.datetime(2026, 5, 13, 14, 23, 12)
+    assert state.get_last_backup("kenji@uns-kikaku.com") == datetime.datetime(
+        2026, 5, 13, 14, 23, 12
+    )
     assert state.get_last_backup("info@uns-kikaku.com") == datetime.datetime(2026, 5, 12, 8, 0, 0)
 
 
@@ -118,7 +120,11 @@ def test_update_last_backup_uses_now_when_ts_none(tmp_path: Path) -> None:
     saved = state.get_last_backup("kenji@uns-kikaku.com")
     assert saved is not None
     # Tolerancia: el ts esta entre before y after (con segundos truncados)
-    assert before.replace(microsecond=0) <= saved <= after.replace(microsecond=0) + datetime.timedelta(seconds=1)
+    assert (
+        before.replace(microsecond=0)
+        <= saved
+        <= after.replace(microsecond=0) + datetime.timedelta(seconds=1)
+    )
 
 
 def test_update_overrides_previous_value(tmp_path: Path) -> None:

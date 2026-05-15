@@ -113,9 +113,7 @@ class IncrementalState:
         # Atomic write: tmp file + rename
         tmp_path = self.path.with_suffix(".tmp")
         try:
-            tmp_path.write_text(
-                json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
+            tmp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
             tmp_path.replace(self.path)
         except OSError as e:
             log.error("No se pudo escribir state a disco: %s", e)
@@ -139,9 +137,7 @@ class IncrementalState:
             log.warning("Timestamp corrupto para %s: %r; trato como None", smtp, iso)
             return None
 
-    def update_last_backup(
-        self, smtp: str, ts: datetime.datetime | None = None
-    ) -> None:
+    def update_last_backup(self, smtp: str, ts: datetime.datetime | None = None) -> None:
         """Marca esta cuenta como recien backupeada exitosamente.
 
         Args:

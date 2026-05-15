@@ -754,6 +754,30 @@ class API:
                 log.exception("start_cache_backup")
                 return {"success": False, "error": str(e)}
 
+    def get_backup_history(self, base_dir: str | None = None) -> dict:
+        """Alias para list_history — nombre que espera el frontend."""
+        return self.list_history(base_dir)
+
+    def delete_backup(self, path: str) -> dict:
+        """Alias para delete_history."""
+        return self.delete_history(path)
+
+    def open_backup_folder(self, path: str) -> dict:
+        """Alias para open_path."""
+        return self.open_path(path)
+
+    def select_folder(self, initial: str | None = None) -> str | None:
+        """Alias para choose_folder."""
+        return self.choose_folder(initial)
+
+    def select_file(
+        self,
+        initial: str | None = None,
+        extensions: list[str] | None = None,
+    ) -> list[str]:
+        """Alias para choose_files."""
+        return self.choose_files(initial, extensions)
+
     # ========================================================
     # SHELL EXTRACTOR (RAR + Migration Scripts)
     # ========================================================

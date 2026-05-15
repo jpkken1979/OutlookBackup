@@ -180,7 +180,10 @@ def test_filter_pst_items_recurses_into_subfolders() -> None:
     """Recorre subfolders recursivamente."""
     from date_filter import filter_pst_items
 
-    inbox_items = [FakeItem(datetime.datetime(2025, 1, 1)), FakeItem(datetime.datetime(2026, 5, 13))]
+    inbox_items = [
+        FakeItem(datetime.datetime(2025, 1, 1)),
+        FakeItem(datetime.datetime(2026, 5, 13)),
+    ]
     sent_items = [FakeItem(datetime.datetime(2027, 1, 1))]
 
     inbox = FakeFolder(inbox_items)
@@ -203,9 +206,7 @@ def test_filter_pst_items_calls_progress_cb_with_count() -> None:
     folder = FakeFolder(items)
 
     messages: list[str] = []
-    deleted = filter_pst_items(
-        folder, datetime.date(2026, 1, 1), None, progress_cb=messages.append
-    )
+    deleted = filter_pst_items(folder, datetime.date(2026, 1, 1), None, progress_cb=messages.append)
 
     assert deleted == 1
     assert len(messages) == 1
