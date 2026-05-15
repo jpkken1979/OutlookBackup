@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Sobre el proyecto
 
-App Windows en japonés para **ユニバーサル企画株式会社 (UNS-Kikaku)** que respalda y restaura correos de Outlook. La versión actual es **v3.1.1** (verificable en `build/installer.iss:5`; `src/api.py:get_app_info` puede quedar atrás — el `installer.iss` es la fuente de verdad para el release).
+App Windows en japonés para **ユニバーサル企画株式会社 (UNS-Kikaku)** que respalda y restaura correos de Outlook. La versión actual es **v3.1.1**, declarada en tres lugares que deben mantenerse en sync al bumpear: `build/installer.iss:5` (`MyAppVersion`, fuente de verdad para el release), `pyproject.toml:10` y `src/api.py:get_app_info`.
 
 El proyecto vive **dentro** del repo `Jpkken1979` que tiene su propio ecosistema Antigravity. Las reglas globales en `../CLAUDE.md` y `../.claude/rules/` aplican aquí (respuestas en español, commits convencionales, etc.).
 
@@ -302,7 +302,7 @@ DEFAULT_CONFIG = {
 `.github/workflows/build.yml` corre en `push` a `main`/`master`, en tags `v*`, y manualmente. El job necesita `permissions: contents: write` para crear releases con `softprops/action-gh-release`.
 
 Para publicar release:
-1. Bump versión en `src/api.py` (`get_app_info`), `build/installer.iss` (`MyAppVersion`), workflow (`name`).
+1. Bump versión en `src/api.py` (`get_app_info`), `pyproject.toml` (`version`), `build/installer.iss` (`MyAppVersion`), workflow (`name`).
 2. Commit, push.
 3. `git tag v3.1.X && git push origin v3.1.X`.
 4. Esperar el workflow → release aparece con `.exe` portable + installer.
@@ -327,17 +327,20 @@ Runtime: Python 3.10+. Toolchain de dev: **uv + ruff + mypy + pytest + playwrigh
 
 ## Testing — corre en Linux Y Windows
 
-`tests/` tiene 13 archivos cubriendo engines (backup/cache/import), observability, i18n, fakes de Outlook y E2E con Playwright.
+`tests/` tiene 15 archivos cubriendo engines (backup/cache/import), observability, i18n, fakes de Outlook, deteccion de runtime (WebView2, version Outlook), long paths, date filter, incremental state y E2E con Playwright.
 
 **El truco para correr en Linux**: `tests/conftest.py` define un fixture `mock_win32_modules(autouse=True, scope="session")` que inyecta `MagicMock` en `sys.modules` para `win32com`, `win32cred`, `winreg`, `pythoncom`, `pywintypes`, `webview` ANTES de cualquier import de `src/`. Esto permite que el código bajo test se importe sin pywin32 instalado.
 
-**Markers** (`pyproject.toml:182-187`):
+**Markers** (`pyproject.toml:192-201`):
 - `slow` — tests pesados, deselect con `-m "not slow"`
 - `windows` — requieren Windows real, skipean en Linux CI
 - `outlook` — requieren Outlook instalado de verdad
 - `e2e` — Playwright + chromium (necesita `playwright install`)
+- `outlook_version` — tests version-specific de Outlook (introducido por Fase 1 plan v3.2)
+- `webview2` — flujo de deteccion del runtime WebView2 (Fase 2 plan v3.2)
+- `long_paths` — paths > MAX_PATH (260 chars) con prefijo `\\?\` (Fase 3 plan v3.2)
 
-**Coverage** (`pyproject.toml:194-210`): incluye todo `src/` excepto `main.py` y `src/web/*`. No hay umbral mínimo configurado en CI todavía.
+**Coverage** (`pyproject.toml:208-224`): incluye todo `src/` excepto `main.py` y `src/web/*`. No hay umbral mínimo configurado en CI todavía.
 
 **Fakes tipados**: `src/outlook/fakes.py` reemplaza al `MagicMock` genérico para tests más realistas — usar via fixtures en `tests/test_outlook_fakes.py`.
 
@@ -360,17 +363,33 @@ src/observability/
 
 `outlook_client.py` (top-level) sigue siendo el entry point legacy; el subpackage `outlook/` es la abstracción nueva con tipos. Verificar cuál usa el módulo que tocás antes de elegir.
 
+## Módulos del plan v3.2 (hardening Win 10/11)
+
+El plan `docs/PLAN_HARDENING_WIN10_11.md` introdujo módulos de detección de entorno y robustez. Todos pasan mypy `disallow_untyped_defs`.
+
+| Módulo | Fase | Responsabilidad |
+|---|---|---|
+| `runtime_check.py` | 2 | Detección de WebView2: `is_webview2_installed()` lee registry (`HKLM/HKCU` PV value). Si falta, `ensure_webview2_runtime()` muestra diálogo en japonés, busca bootstrapper bundleado o lo baja, y corre `MicrosoftEdgeWebview2Setup.exe /silent /install` |
+| `path_utils.py` | 3 | Long path support para Win 10 sin la policy habilitada. `is_long_path()` detecta >260 chars, `safe_path()` antepone `\\?\` para evitar `FileNotFoundError`, `validate_backup_dir()` chequea permisos antes de empezar |
+| `outlook/version.py` | 4 | Detección de versión Outlook: `detect_outlook_version()` distingue M365 (`HKCU\Software\Microsoft\Office\ClickToRun\Configuration`) de perpetual (`HKLM\Software\Microsoft\Office\{ver}\Outlook\InstallRoot`). `is_supported()` valida ≥ Outlook 2016 |
+| `date_filter.py` | 6 (partial) | Filtro por rango de fechas para Feature C. `should_include(item, start, end)` evalúa cada email; `filter_pst_items()` recorre el store aplicando el filtro |
+| `incremental_state.py` | Feature A | Estado del backup incremental: clase `IncrementalState` que persiste último timestamp procesado por cuenta para evitar re-exportar emails ya backupeados |
+
+Cuando agregues un módulo nuevo del plan: registralo en el bloque strict de `pyproject.toml:138-173`, agregalo al `hidden` de `build/pyinstaller.spec` si se importa lazy, y bajalo a tests con su marker correspondiente.
+
 ## CI — dos workflows independientes
 
 | Workflow | Trigger | Qué hace |
 |---|---|---|
 | `.github/workflows/build.yml` | push main/master, tags `v*`, manual | Build `.exe` + installer en Windows, publica release en tags |
-| `.github/workflows/quality.yml` | push/PR a main/master, manual | Lint (ruff), typecheck (mypy advisory), tests (pytest matrix Linux+Windows) con coverage |
+| `.github/workflows/quality.yml` | push/PR a main/master, manual | Lint (ruff), typecheck (mypy advisory), tests (pytest matrix Linux + Win 11 + Win 10) con coverage |
 
 **Quality workflow detalle** (`quality.yml`):
 - `lint` — Ruff check + format check, bloqueante
-- `typecheck` — Mypy con `continue-on-error: true` (advisory hasta que limpie todo el legacy)
-- `tests` — Matrix Linux+Windows; cachea browsers de Playwright; sube `htmlcov/` como artifact en Windows
+- `typecheck` — Mypy con `continue-on-error: true` (advisory hasta que limpie todo el legacy). Notar que aunque `pyproject.toml` declara strict per-module sobre todo `src/`, el CI no lo bloquea todavia
+- `tests` — Matrix de **3 plataformas**: `ubuntu-latest`, `windows-latest` (Win 11) y `windows-2019` (Win 10 baseline para validar sin WebView2 preinstalado y con Outlook 2019 perpetual)
+- Cachea browsers de Playwright entre runs; sube `htmlcov/` como artifact solo en Windows 11
+- Concurrency cancela runs viejos al pushear de nuevo
 - Usa `astral-sh/setup-uv@v3` con cache habilitado
 
 ## Convenciones
