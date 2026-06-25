@@ -1,37 +1,3 @@
-<!-- ANTIGRAVITY-RULES-START -->
-# Antigravity Ecosystem Rules
-
-This project uses **Antigravity v6.1.4** — a modular AI runtime
-with 126 active agents and 803 skills.
-
-## MCP Gateway
-
-- Local gateway: `http://localhost:4747` (localhost:4747)
-- Active MCP servers: antigravity, antigravity-agents, antigravity-skills, antigravity-observations, antigravity-intelligence, antigravity-ui, antigravity-memory, antigravity-watcher, antigravity-context-engine
-
-## Agent Protocol
-
-1. Read `.agent/agents/<name>/SYSTEM_PROMPT.md` before delegating tasks.
-2. Use the MCP server `antigravity-agents` to invoke agents via the gateway.
-3. Use `antigravity-skills` to load modular skills on demand.
-
-## Key Directories
-
-- `.agent/agents/`   — 126 agents (tier 1–7)
-- `.agent/skills/`   — 803 skills
-- `.agent/workflows/` — multi-agent orchestration workflows
-- `.antigravity/`    — config, manifest, rules, SDK
-- `.mcp.json`        — MCP server configuration
-
-## Rules
-
-- Always prefer agent-delegated tasks over inline code for complex operations.
-- Read `ESTADO_PROYECTO.md` for current project memory before starting work.
-- Respect `.antigravity/rules.md` and `.claude/rules/` for project-specific constraints.
-
-
-## Ponytail — lazy senior dev mode
-
 # Regla: Ponytail — Lazy Senior Dev Mode
 
 > Fuente única del ruleset ponytail (DietrichGebert/ponytail) para todo el ecosistema.
@@ -67,5 +33,3 @@ Rules:
 - Mark intentional simplifications with a `ponytail:` comment. If the shortcut has a known ceiling (global lock, O(n²) scan, naive heuristic), the comment names the ceiling and the upgrade path.
 
 Not lazy about: understanding the problem (read it fully and trace the real flow before picking a rung, a small diff you don't understand is just laziness dressed up as efficiency), input validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs (the platform is never the spec ideal, a clock drifts, a sensor reads off), anything explicitly requested. Lazy code without its check is unfinished: non-trivial logic leaves ONE runnable check behind, the smallest thing that fails if the logic breaks (an assert-based demo/self-check or one small test file; no frameworks, no fixtures). Trivial one-liners need no test.
-
-<!-- ANTIGRAVITY-RULES-END -->
