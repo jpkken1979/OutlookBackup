@@ -105,6 +105,36 @@ def test_list_stores_returns_display_and_path() -> None:
 
 
 # ---------------------------------------------------------------------------
+# get_account_inbox
+# ---------------------------------------------------------------------------
+
+
+def test_get_account_inbox_returns_matching_store_default_folder() -> None:
+    from outlook.fakes import FakeItems, FakeMailItem, FakeNamespace, FakeStore
+    from outlook_client import OL_FOLDER_INBOX
+
+    store = FakeStore(DisplayName="kenji@uns-kikaku.com")
+    store.GetDefaultFolder(OL_FOLDER_INBOX).Items = FakeItems([FakeMailItem(), FakeMailItem()])
+
+    client = _make_client(FakeNamespace(stores=[store]))
+    account = SimpleNamespace(smtp_address="kenji@uns-kikaku.com", display_name="Kenji")
+
+    inbox = client.get_account_inbox(account)
+
+    assert inbox is not None
+    assert inbox.Items.Count == 2
+
+
+def test_get_account_inbox_returns_none_when_no_store_matches() -> None:
+    from outlook.fakes import FakeNamespace
+
+    client = _make_client(FakeNamespace())
+    account = SimpleNamespace(smtp_address="ghost@uns-kikaku.com", display_name="Ghost")
+
+    assert client.get_account_inbox(account) is None
+
+
+# ---------------------------------------------------------------------------
 # count_emails_for_account
 # ---------------------------------------------------------------------------
 

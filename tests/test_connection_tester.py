@@ -265,37 +265,28 @@ def test_infer_port_uses_explicit_registry_port() -> None:
     import connection_tester
 
     servers = {"ports_detected": [{"protocol": "imaps", "port": 993}]}
-    port = connection_tester._infer_port(
-        servers, "incoming", connection_tester.IMAP_PORT_SSL, connection_tester.IMAP_PORT_PLAIN
-    )
+    port = connection_tester._infer_port(servers, "incoming", connection_tester.IMAP_PORT_SSL)
     assert port == 993
 
 
 def test_infer_port_incoming_default_is_ssl_port() -> None:
     import connection_tester
 
-    port = connection_tester._infer_port(
-        {}, "incoming", connection_tester.IMAP_PORT_SSL, connection_tester.IMAP_PORT_PLAIN
-    )
+    port = connection_tester._infer_port({}, "incoming", connection_tester.IMAP_PORT_SSL)
     assert port == connection_tester.IMAP_PORT_SSL
 
 
-def test_infer_port_outgoing_default_returns_plain_port_param() -> None:
-    """Documenta el comportamiento actual: sin puerto detectado, 'outgoing'
-    devuelve el parametro `plain_port` (SMTP_PORT_PLAIN=25), pese a que el
-    comentario en el codigo fuente dice "587 for SMTP". El caller
-    (test_account_connection) invoca con ssl_port=SMTP_PORT_STARTTLS(587) y
-    plain_port=SMTP_PORT_PLAIN(25), asi que el default real termina siendo 25.
+def test_infer_port_outgoing_default_is_starttls_port() -> None:
+    """Sin puerto detectado en el registro, 'outgoing' debe preferir el
+    puerto seguro (587/STARTTLS) y no el plano (25) — bug corregido: antes
+    devolvia el parametro plain_port pese a que el comentario decia "587
+    for SMTP". El parametro plain_port se elimino de la firma porque ya
+    no lo usa ninguna rama de la funcion.
     """
     import connection_tester
 
-    port = connection_tester._infer_port(
-        {},
-        "outgoing",
-        connection_tester.SMTP_PORT_STARTTLS,
-        connection_tester.SMTP_PORT_PLAIN,
-    )
-    assert port == connection_tester.SMTP_PORT_PLAIN
+    port = connection_tester._infer_port({}, "outgoing", connection_tester.SMTP_PORT_STARTTLS)
+    assert port == connection_tester.SMTP_PORT_STARTTLS
 
 
 # ---------------------------------------------------------------------------

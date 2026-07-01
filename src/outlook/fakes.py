@@ -103,11 +103,20 @@ class FakeStore:
     StoreID: str = ""
     IsDataFileStore: bool = False
     _root: FakeFolder | None = None
+    _default_folders: dict[int, FakeFolder] = field(default_factory=dict)
 
     def GetRootFolder(self) -> FakeFolder:
         if self._root is None:
             self._root = FakeFolder(Name=f"root::{self.DisplayName}")
         return self._root
+
+    def GetDefaultFolder(self, folder_type: int) -> FakeFolder:
+        """Carpeta por defecto del store (Inbox, Sent, etc — via olDefaultFolders)."""
+        if folder_type not in self._default_folders:
+            self._default_folders[folder_type] = FakeFolder(
+                Name=f"default::{self.DisplayName}::{folder_type}"
+            )
+        return self._default_folders[folder_type]
 
 
 @dataclass

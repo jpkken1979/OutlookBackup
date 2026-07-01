@@ -456,6 +456,30 @@ def test_estimate_backup_size_sums_inbox_counts(api: Any) -> None:
     assert result["total_emails"] == 42
 
 
+def test_estimate_backup_size_end_to_end_with_real_outlook_client(api: Any) -> None:
+    """Regresion: `get_account_inbox` no existia en OutlookClient (bug real,
+    la estimacion siempre devolvia 0 en produccion). Prueba la cadena
+    completa api -> OutlookClient real -> FakeNamespace/FakeStore."""
+    from outlook.fakes import FakeItems, FakeMailItem, FakeNamespace, FakeOutlookAccount, FakeStore
+    from outlook_client import OL_FOLDER_INBOX, OutlookClient
+
+    store = FakeStore(DisplayName="kenji@uns-kikaku.com")
+    store.GetDefaultFolder(OL_FOLDER_INBOX).Items = FakeItems(
+        [FakeMailItem(), FakeMailItem(), FakeMailItem()]
+    )
+    client = OutlookClient.__new__(OutlookClient)
+    client.app = None
+    client.namespace = FakeNamespace(stores=[store])
+
+    api.outlook_client = client
+    api.accounts = [FakeOutlookAccount(smtp_address="kenji@uns-kikaku.com")]
+
+    result = api.estimate_backup_size(["kenji@uns-kikaku.com"])
+
+    assert result["success"] is True
+    assert result["total_emails"] == 3
+
+
 # ---------------------------------------------------------------------------
 # App info
 # ---------------------------------------------------------------------------

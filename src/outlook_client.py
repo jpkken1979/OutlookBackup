@@ -141,6 +141,28 @@ class OutlookClient:
             print(f"Error listando stores: {e}")
         return stores
 
+    def get_account_inbox(self, account: OutlookAccountInfo) -> Any | None:
+        """Devuelve la carpeta Inbox del store de una cuenta especifica, o None.
+
+        Usado para estimaciones rapidas (ej. `estimate_backup_size`) donde
+        recorrer todas las carpetas via `count_emails_for_account` seria
+        demasiado lento — alcanza con el `Items.Count` del Inbox.
+        """
+        try:
+            for store in self.namespace.Stores:
+                try:
+                    if (
+                        store.DisplayName == account.smtp_address
+                        or store.DisplayName == account.display_name
+                        or account.smtp_address in store.DisplayName
+                    ):
+                        return store.GetDefaultFolder(OL_FOLDER_INBOX)
+                except Exception:
+                    continue
+        except Exception as e:
+            print(f"Error buscando inbox de {account.smtp_address}: {e}")
+        return None
+
     def count_emails_for_account(
         self, account: OutlookAccountInfo, progress_cb: Callable | None = None
     ) -> dict:

@@ -262,7 +262,7 @@ def test_account_connection(smtp: str, protocol: str = "auto", timeout: int = 10
     # Test IMAP
     if test_imap:
         imap_host = servers.get("incoming_server", "")
-        imap_port = _infer_port(servers, "incoming", IMAP_PORT_SSL, IMAP_PORT_PLAIN)
+        imap_port = _infer_port(servers, "incoming", IMAP_PORT_SSL)
 
         if imap_host:
             logger.info(f"Testing IMAP: {imap_host}:{imap_port}")
@@ -277,7 +277,7 @@ def test_account_connection(smtp: str, protocol: str = "auto", timeout: int = 10
     # Test SMTP
     if test_smtp:
         smtp_host = servers.get("outgoing_server", "")
-        smtp_port = _infer_port(servers, "outgoing", SMTP_PORT_STARTTLS, SMTP_PORT_PLAIN)
+        smtp_port = _infer_port(servers, "outgoing", SMTP_PORT_STARTTLS)
 
         if smtp_host:
             logger.info(f"Testing SMTP: {smtp_host}:{smtp_port}")
@@ -499,14 +499,14 @@ def _read_line(sock: socket.socket) -> str:
         return ""
 
 
-def _infer_port(servers: dict, direction: str, ssl_port: int, plain_port: int) -> int:
+def _infer_port(servers: dict, direction: str, ssl_port: int) -> int:
     """Infer port from registry data or use default.
 
     Args:
         servers: Registry servers dict
         direction: "incoming" or "outgoing"
-        ssl_port: Default SSL port
-        plain_port: Default plain port
+        ssl_port: Default port when nothing explicit is found in the registry
+            (SSL/STARTTLS — the secure default, never the plaintext fallback)
 
     Returns:
         Port number to use
@@ -520,11 +520,9 @@ def _infer_port(servers: dict, direction: str, ssl_port: int, plain_port: int) -
         if direction == "outgoing" and proto in ("smtps", "smtp_starttls", "smtp"):
             return int(p.get("port", ssl_port))
 
-    # Default: use SSL port for imaps/smtps, plain for others
-    if direction == "incoming":
-        return ssl_port  # 993
-    else:
-        return plain_port  # 587 for SMTP
+    # Sin info explicita en el registro: preferir siempre el puerto seguro
+    # (993 para IMAP, 587/STARTTLS para SMTP) antes que el puerto plano.
+    return ssl_port
 
 
 def format_test_result(result: dict) -> str:
