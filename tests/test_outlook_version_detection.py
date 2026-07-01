@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -56,6 +57,7 @@ def test_registry_servers_enumerates_known_versions(monkeypatch: pytest.MonkeyPa
 
     fake_winreg.OpenKey = fake_open_key
     monkeypatch.setattr(account_inventory, "winreg", fake_winreg)
+    monkeypatch.setattr(account_inventory, "os", SimpleNamespace(name="nt"))
 
     result = account_inventory._read_registry_servers("test@example.com")
 
