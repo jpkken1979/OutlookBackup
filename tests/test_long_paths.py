@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -88,7 +89,7 @@ def test_safe_path_passthrough_on_non_windows(monkeypatch: pytest.MonkeyPatch) -
     """En Linux/Mac no debe modificar el path."""
     import path_utils
 
-    monkeypatch.setattr(path_utils.os, "name", "posix")
+    monkeypatch.setattr(path_utils, "os", SimpleNamespace(name="posix"))
     long = "/very/long/" + ("segment/" * 50)  # > 240 chars
     assert path_utils.safe_path(long) == long
 
@@ -106,7 +107,7 @@ def test_safe_path_long_adds_prefix(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     """Path largo en Windows: debe agregar prefijo \\\\?\\."""
     import path_utils
 
-    monkeypatch.setattr(path_utils.os, "name", "nt")
+    monkeypatch.setattr(path_utils, "os", SimpleNamespace(name="nt"))
     long_path = _make_japanese_path(target_chars=270, base=tmp_path)
     long_path.mkdir(parents=True, exist_ok=True)
     result = path_utils.safe_path(long_path)
@@ -121,7 +122,7 @@ def test_safe_path_no_double_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
     """Si ya tiene prefijo, no se duplica."""
     import path_utils
 
-    monkeypatch.setattr(path_utils.os, "name", "nt")
+    monkeypatch.setattr(path_utils, "os", SimpleNamespace(name="nt"))
     already_prefixed = path_utils.LONG_PATH_PREFIX + "C:\\some\\very\\long\\" + ("seg\\" * 50)
     result = path_utils.safe_path(already_prefixed)
     # Solo UN prefijo
@@ -133,7 +134,7 @@ def test_safe_path_unc_uses_unc_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
     """UNC paths usan prefijo especial \\\\?\\UNC\\."""
     import path_utils
 
-    monkeypatch.setattr(path_utils.os, "name", "nt")
+    monkeypatch.setattr(path_utils, "os", SimpleNamespace(name="nt"))
     unc_long = "\\\\server\\share\\" + ("very_long_segment_" * 20)
     result = path_utils.safe_path(unc_long)
     assert result.startswith(path_utils.LONG_PATH_PREFIX_UNC), (
