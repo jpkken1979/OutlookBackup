@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -264,7 +265,7 @@ def test_detect_returns_unknown_on_non_windows(monkeypatch: pytest.MonkeyPatch) 
     """En POSIX siempre devuelve unknown."""
     from outlook import version
 
-    monkeypatch.setattr(version.os, "name", "posix")
+    monkeypatch.setattr(version, "os", SimpleNamespace(name="posix"))
     result = version.detect_outlook_version()
     assert result.flavor == "unknown"
     assert result.supported is False
@@ -275,7 +276,7 @@ def test_detect_prefers_m365_over_perpetual(monkeypatch: pytest.MonkeyPatch) -> 
     """Si ambos M365 y perpetual estan presentes, M365 gana."""
     from outlook import version
 
-    monkeypatch.setattr(version.os, "name", "nt")
+    monkeypatch.setattr(version, "os", SimpleNamespace(name="nt"))
 
     fake_m365 = version.OutlookVersion(
         version_str="16.0.17726.20126",
@@ -299,7 +300,7 @@ def test_detect_falls_back_to_perpetual(monkeypatch: pytest.MonkeyPatch) -> None
     """Si M365 no detectado, prueba perpetual."""
     from outlook import version
 
-    monkeypatch.setattr(version.os, "name", "nt")
+    monkeypatch.setattr(version, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(version, "_detect_m365", lambda: None)
 
     fake_perpetual = version.OutlookVersion(
@@ -319,7 +320,7 @@ def test_detect_returns_unknown_when_nothing_found(monkeypatch: pytest.MonkeyPat
     """Sin M365 ni perpetual: unknown."""
     from outlook import version
 
-    monkeypatch.setattr(version.os, "name", "nt")
+    monkeypatch.setattr(version, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(version, "_detect_m365", lambda: None)
     monkeypatch.setattr(version, "_detect_perpetual", lambda: None)
 
