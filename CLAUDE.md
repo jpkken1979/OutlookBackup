@@ -250,7 +250,7 @@ Para `merge`: busca source_store por `FilePath` match y target_store por `Displa
 | `crypto_utils.py` | AES-256-GCM + PBKDF2-HMAC-SHA256 (200K iter). `estimate_password_strength()` → score 0-100 con label japonés |
 | `connection_tester.py` | Test de conectividad IMAP/SMTP con `socket` + `ssl` puros (sin libs externas). Mide latencia, captura banner, prueba LOGIN. Usado por `API.test_connection()` en tab Settings |
 | `config.py` | Config persistente en `%APPDATA%\UNS-Kikaku\Backup\config.json`. DEFAULT_CONFIG incluye todos los settings con defaults |
-| `i18n.py` | 213 strings japoneses en el dict `JA`. Función `t(key, **kwargs)` para interpolación (UI Python). El frontend tiene su propio i18n separado en `src/web/js/i18n/ja.json` |
+| `i18n.py` | Loader que lee los strings desde `src/web/js/i18n/ja.json` (~192 keys) — **fuente única compartida con el frontend**, no un dict inline. `t(key, **kwargs)` interpola y devuelve la key tal cual si falta (defensivo, nunca crashea). El backend usa `json.load()`, el frontend `fetch()` sobre el mismo archivo, así no divergen |
 
 ### Configuración por defecto (`config.py:30-57`)
 
@@ -327,7 +327,7 @@ Runtime: Python 3.10+. Toolchain de dev: **uv + ruff + mypy + pytest + playwrigh
 
 ## Testing — corre en Linux Y Windows
 
-`tests/` tiene 15 archivos cubriendo engines (backup/cache/import), observability, i18n, fakes de Outlook, deteccion de runtime (WebView2, version Outlook), long paths, date filter, incremental state y E2E con Playwright.
+`tests/` tiene ~23 archivos `test_*.py` top-level + 3 E2E en `tests/e2e/` (Playwright), cubriendo engines (backup/cache/import), observability, i18n, fakes de Outlook, deteccion de runtime (WebView2, version Outlook), long paths, date filter, incremental state y connection tester.
 
 **El truco para correr en Linux**: `tests/conftest.py` define un fixture `mock_win32_modules(autouse=True, scope="session")` que inyecta `MagicMock` en `sys.modules` para `win32com`, `win32cred`, `winreg`, `pythoncom`, `pywintypes`, `webview` ANTES de cualquier import de `src/`. Esto permite que el código bajo test se importe sin pywin32 instalado.
 
@@ -444,7 +444,7 @@ Busca en `HKCU\Software\Microsoft\Office\{ver}\Outlook\Profiles` (ver=16.0, 15.0
 ## Integracion Antigravity
 
 Proyecto integrado con **Antigravity v6.1.4**.
-Instalado por Nexus el 2026-05-09.
+Instalado por Nexus el 2026-07-10.
 
 ### Persona activa: gentleman
 
@@ -489,3 +489,22 @@ result = client.run("explorer", "analiza el repo")
 - Reglas compartidas: `.claude/rules/` y `.antigravity/rules.md`
 
 <!-- ANTIGRAVITY-END -->
+---
+
+## Skills y Agentes prioritarios para esta app
+
+**Dominio**: Backup / Storage (respaldo y gestion de archivos y datos del ecosistema)
+
+| Tipo | Nombre | Para que |
+|---|---|---|
+| skill | `cross-pc-memory-sync` | Sincronizacion de memorias y configuracion entre PCs via git |
+| skill | `aspirador` | Auditoria exhaustiva y limpieza segura de archivos y dependencias |
+| skill | `security-audit` | Verificacion de integridad y seguridad de los backups |
+| skill | `code-review` | Revision de scripts de backup y restore |
+| agent | `subagent-orchestrator` | Coordinacion de tareas de backup multi-destino |
+
+**Como invocarlos**:
+- Skills: `Skill(skill="<nombre>")` o `python .agent/skills-custom/<nombre>/scripts/main.py`
+- Agents: `python .agent/scripts/invoke-agent.py <nombre>`
+
+**Inventario completo**: ver `RULES.md` en OpenAntigravity26.3.30 para los 879 skills + 113 agents disponibles.
