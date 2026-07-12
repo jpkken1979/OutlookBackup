@@ -4,12 +4,12 @@
 - Antigravity: 5.0.0
 - Gateway: http://localhost:4747
 
-## Agents (115 agentes)
+## Agents (113 agentes)
 
 ### Tier 0- `debugger`- `performance-optimizer`
 ### Tier 2- `code-reviewer`
 ### Tier 3- `local-executor`
-### Specialized / No-tier (111 agents)- `__pycache__`- `a11y`- `activator`- `agent-composer`- `analyst`- `api-designer`- `api-gateway-specialist`- `api-tester`- `app-auditor`- `app-creator`- ... y 101 mas
+### Specialized / No-tier (109 agents)- `__pycache__`- `_archive`- `_docs`- `a11y`- `activator`- `agent-composer`- `analyst`- `api-designer`- `api-gateway-specialist`- `api-tester`- ... y 99 mas
 
 ## Skills
 - Base: `.agent/skills/` (801 skills)

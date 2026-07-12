@@ -1,6 +1,0 @@
-{
-  "name": "debugger",
-  "description": "Interactive debugging agent — root cause analysis and bug diagnosis",
-  "version": "1.0.0",
-  "enabled": true
-}

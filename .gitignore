@@ -51,3 +51,29 @@ coverage.xml
 # uv
 .uv-cache/
 # uv.lock SI se commitea — reproducibilidad de deps entre PCs y CI
+
+# === ECOSYSTEM IGNORE ===
+# Los dirs del ecosistema Antigravity (.agent/, .claude/, .antigravity/, etc.)
+# NO se trackean en este repo de la app de backup: son archivos generados/
+# inyectados por el runtime y generan ruido masivo en el historial.
+# Si se necesita versionar algo puntual, descomentar la linea especifica.
+.agent/
+.claude/
+.antigravity/
+.context/
+.mcp.local.json
+mcp-server/
+.cursor/
+.cursorrules
+.gemini/
+.clinerules
+.continue/
+.windsurf/
+.windsurfrules
+.zed/
+.aider.conf.yml
+AGENTS.md
+GEMINI.md
+
+# .mcp.json SI se trackea: es portable (rutas relativas) y define el runtime MCP
+!.mcp.json

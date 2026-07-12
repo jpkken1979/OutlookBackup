@@ -1,164 +1,129 @@
 {
   "mcpServers": {
     "antigravity": {
-      "command": "py",
+      "command": "C:\\Windows\\py.EXE",
       "args": [
-        "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\mcp-server\\server.py"
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/mcp-server/server.py"
       ],
       "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
         "ANTIGRAVITY_PERSONA": "gentleman"
       }
     },
     "antigravity-agents": {
-      "command": "py",
+      "command": "C:\\Windows\\py.EXE",
       "args": [
-        "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\agents-server.py"
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/agents-server.py"
       ],
       "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
         "ANTIGRAVITY_PERSONA": "gentleman"
       }
     },
     "antigravity-skills": {
-      "command": "py",
+      "command": "C:\\Windows\\py.EXE",
       "args": [
-        "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\skills-server.py"
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/skills-server.py"
       ],
       "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
         "ANTIGRAVITY_PERSONA": "gentleman"
       }
     },
     "antigravity-observations": {
-      "command": "py",
+      "command": "C:\\Windows\\py.EXE",
       "args": [
-        "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\observations-server.py"
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/observations-server.py"
       ],
       "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
         "ANTIGRAVITY_PERSONA": "gentleman"
       }
     },
     "antigravity-intelligence": {
-      "command": "py",
+      "command": "C:\\Windows\\py.EXE",
       "args": [
-        "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\intelligence-server.py"
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/intelligence-server.py"
       ],
       "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
         "ANTIGRAVITY_PERSONA": "gentleman"
       }
     },
     "antigravity-ui": {
-      "command": "py",
+      "command": "C:\\Windows\\py.EXE",
       "args": [
-        "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\ui-server.py"
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/ui-server.py"
       ],
       "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
         "ANTIGRAVITY_PERSONA": "gentleman"
       }
     },
     "antigravity-memory": {
-      "command": "py",
+      "command": "C:\\Windows\\py.EXE",
       "args": [
-        "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\memory-server.py"
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/memory-server.py"
       ],
       "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
         "ANTIGRAVITY_PERSONA": "gentleman"
       }
     },
     "antigravity-watcher": {
-      "command": "py",
+      "command": "C:\\Windows\\py.EXE",
       "args": [
-        "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\watcher-server.py"
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/watcher-server.py"
       ],
       "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
         "ANTIGRAVITY_PERSONA": "gentleman",
         "ANTIGRAVITY_WATCHER_GATEWAY": "true",
         "ANTIGRAVITY_WATCHER_BRAIN": "true"
       }
     },
     "antigravity-context-engine": {
-      "command": "py",
+      "command": "C:\\Windows\\py.EXE",
       "args": [
-        "C:\\Users\\kenji\\Github\\Jpkken1979\\uns-backup-app-v3.1\\.agent\\mcp\\context-engine-server.py"
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/context-engine-server.py"
       ],
       "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
         "ANTIGRAVITY_PERSONA": "gentleman"
       }
-    },
-    "stitch": {
-      "command": "cmd",
-      "args": [
-        "/c",
-        "npx",
-        "-y",
-        "stitch-mcp"
-      ],
-      "env": {
-        "GOOGLE_CLOUD_PROJECT": "${GOOGLE_CLOUD_PROJECT}",
-        "STITCH_API_KEY": "${STITCH_API_KEY}"
-      }
-    },
-    "context7": {
-      "command": "cmd",
-      "args": [
-        "/c",
-        "npx",
-        "-y",
-        "@upstash/context7-mcp@latest"
-      ]
-    },
-    "git": {
-      "command": "cmd",
-      "args": [
-        "/c",
-        "uvx",
-        "mcp-server-git"
-      ]
-    },
-    "chrome-devtools": {
-      "command": "cmd",
-      "args": [
-        "/c",
-        "npx",
-        "-y",
-        "chrome-devtools-mcp@latest",
-        "--no-usage-statistics"
-      ]
-    },
-    "filesystem": {
-      "command": "cmd",
-      "args": [
-        "/c",
-        "npx",
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "C:/Users/kenji/Github/Jpkken1979/uns-backup-app-v3.1"
-      ]
     },
     "antigravity-brain": {
-      "command": "py",
+      "command": "C:\\Windows\\py.EXE",
       "args": [
-        "//?/C:/Users/kenji/Github/Jpkken1979/OpenAntigravity26.3.30/.agent/mcp/brain-server.py"
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/brain-server.py"
       ],
       "env": {
-        "ANTIGRAVITY_PERSONA": "gentleman"
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1"
       }
     },
     "antigravity-excel": {
-      "command": "py",
+      "command": "C:\\Windows\\py.EXE",
       "args": [
-        "//?/C:/Users/kenji/Github/Jpkken1979/OpenAntigravity26.3.30/.agent/mcp/excel-server.py"
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/excel-server.py"
       ],
       "env": {
-        "ANTIGRAVITY_PERSONA": "gentleman"
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1"
       }
     },
     "antigravity-delta-reader": {
-      "command": "py",
+      "command": "C:\\Windows\\py.EXE",
       "args": [
-        "//?/C:/Users/kenji/Github/Jpkken1979/OpenAntigravity26.3.30/.agent/mcp/delta-reader-server.py"
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/delta-reader-server.py"
       ],
       "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
         "ANTIGRAVITY_PERSONA": "gentleman",
-        "ANTIGRAVITY_DELTA_ROOTS": "//?/C:/Users/kenji/Github/Jpkken1979/OpenAntigravity26.3.30"
+        "ANTIGRAVITY_ROOT": "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1",
+        "ANTIGRAVITY_DELTA_ROOTS": "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1"
       }
     },
     "deepwiki": {
@@ -179,6 +144,169 @@
         "npm_config_cache": "${HOME}/.cache/antigravity/npm",
         "TMP": "${HOME}/.cache/antigravity/tmp",
         "TEMP": "${HOME}/.cache/antigravity/tmp"
+      }
+    },
+    "antigravity-provider": {
+      "command": "C:\\Windows\\py.EXE",
+      "args": [
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/provider-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "jpkkenfull": {
+      "command": "C:\\Windows\\py.EXE",
+      "args": [
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/jpkkenfull-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman"
+      }
+    },
+    "antigravity-brain-graph": {
+      "command": "C:\\Windows\\py.EXE",
+      "args": [
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/brain-graph-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-shu-discord": {
+      "command": "C:\\Windows\\py.EXE",
+      "args": [
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/shu_discord_bridge.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-shu-github": {
+      "command": "C:\\Windows\\py.EXE",
+      "args": [
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/shu_github_bridge.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-shu-slack": {
+      "command": "C:\\Windows\\py.EXE",
+      "args": [
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/shu_slack_bridge.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-shu-webhook": {
+      "command": "C:\\Windows\\py.EXE",
+      "args": [
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/shu-webhook-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-shu-webhooks": {
+      "command": "C:\\Windows\\py.EXE",
+      "args": [
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/shu_webhook_dispatcher.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "context7": {
+      "command": "C:\\Windows\\System32\\cmd.EXE",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@upstash/context7-mcp@3.2.3"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd"
+      }
+    },
+    "git": {
+      "command": "C:\\Windows\\System32\\cmd.EXE",
+      "args": [
+        "/c",
+        "uvx",
+        "mcp-server-git==2026.6.16"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd"
+      }
+    },
+    "chrome-devtools": {
+      "command": "C:\\Windows\\System32\\cmd.EXE",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@1.5.0",
+        "--no-usage-statistics"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd"
+      }
+    },
+    "magic-21st": {
+      "command": "C:\\Windows\\System32\\cmd.EXE",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@21st-dev/magic@0.1.0",
+        "API_KEY=\"${MAGIC_21ST_API_KEY}\""
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "MAGIC_21ST_API_KEY": "${MAGIC_21ST_API_KEY}"
+      }
+    },
+    "sqlite": {
+      "command": "C:\\Windows\\System32\\cmd.EXE",
+      "args": [
+        "/c",
+        "uvx",
+        "mcp-server-sqlite==2025.4.25",
+        "--db-path",
+        "${ANTIGRAVITY_ROOT}/.antigravity/antigravity.db"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd"
+      }
+    },
+    "filesystem": {
+      "command": "C:\\Windows\\System32\\cmd.EXE",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem@2026.7.4",
+        "${USERPROFILE}/Github/Jpkken1979/uns-backup-app-v3.1"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd"
       }
     }
   }

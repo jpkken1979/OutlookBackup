@@ -1,1 +1,0 @@
-"""Antigravity MCP Server package."""

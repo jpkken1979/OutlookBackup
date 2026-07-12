@@ -1,8 +1,0 @@
-🔴 ビザ期限アラート / VISA EXPIRY ALERT
-
-従業員: {{employee_name}}
-在留資格: {{visa_type}}
-期限: {{visa_expiry}}
-残り: {{days_left}}日
-
-⚠️ 早急に更新手続きを開始してください。
