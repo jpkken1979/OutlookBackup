@@ -71,7 +71,8 @@ const Api = (() => {
   // ===== History =====
   const get_backup_history = () => call('get_backup_history'),
         delete_backup = (path) => call('delete_backup', path),
-        open_backup_folder = (path) => call('open_backup_folder', path);
+        open_backup_folder = (path) => call('open_backup_folder', path),
+        search_backups = (params) => call('search_backups', params);
 
   // ===== Dialogs =====
   const select_folder = () => call('select_folder'),
@@ -121,6 +122,7 @@ const Api = (() => {
     get_backup_history,
     delete_backup,
     open_backup_folder,
+    search_backups,
     // Dialogs
     select_folder,
     select_file,

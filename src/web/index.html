@@ -281,6 +281,13 @@
                     <h2 class="panel-title">📊 BACKUP HISTORY</h2>
                     <button class="btn btn-secondary" id="btn-refresh-history">🔄 REFRESH</button>
                 </div>
+                <div class="search-bar" style="display:flex; gap:8px; margin-bottom:12px; align-items:center;">
+                    <input type="text" id="history-search-input"
+                           placeholder="🔍 Search by account, date (2025-01), status (success), PST name..."
+                           style="flex:1; padding:8px 12px; border:1px solid var(--border-color, #ccc); border-radius:6px; background:var(--bg-input, #fff); color:var(--text-primary, #000);" />
+                    <button class="btn btn-primary" id="btn-history-search">🔎 Search</button>
+                    <button class="btn btn-secondary" id="btn-history-search-clear">✕ Clear</button>
+                </div>
                 <div class="history-list" id="history-list">
                     <div class="empty-state">
                         <div style="font-size: 48px;">📭</div>

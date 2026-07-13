@@ -18,6 +18,7 @@ ENV/
 *.spec.bak
 build/build/
 build/dist/
+build/pyinstaller/
 
 # Output
 dist/

@@ -1,6 +1,6 @@
 # Plan multi-fase: Hardening Win 10/11 + Features de competidores
 
-> **Estado**: Fase 0 ✅ + Fase 1 ✅ + Fase 2 ✅ + Fase 3 ✅ + Fase 4 ✅ + Fase 5 ✅ + Fase 6 partial (Feature C completo + Feature A) ✅ (cerradas 2026-05-13). Pendiente para release v3.2.0: Feature B (indexed search), VSS hot-copy, smoke manual en VM, bump version.
+> **Estado**: Fase 0 ✅ + Fase 1 ✅ + Fase 2 ✅ + Fase 3 ✅ + Fase 4 ✅ + Fase 5 ✅ + Fase 6 ✅ (cerradas 2026-05-13). v3.2.0 lista para release: Features A/B/C implementadas, VSS hot-copy implementado, versión bumped a 3.2.0, 419 tests passing, mypy strict verde. Pendiente (requiere humano): smoke manual en VM Win 10 sin WebView2.
 > **Creado**: 2026-05-13
 > **Aprobado**: 2026-05-13 por K. Kaneshiro
 > **Owner**: K. Kaneshiro (UNS-Kikaku)
@@ -407,3 +407,27 @@ multi-language UI, cloud upload, Outlook add-in, libpff fallback (cubierto por c
 
 **Aprobacion**: pendiente del usuario. Modificar este plan in-place hasta que sea aprobado, despues
 solo agregar entries `## Cambio YYYY-MM-DD` al final del archivo.
+
+---
+
+## Cambio 2026-05-13 — Fase 6 cerrada, v3.2.0 lista para release
+
+**Implementado en esta sesión**:
+- ✅ Feature C — Date filter (`src/cache_backup.py` + `src/api.py`): `date_from`/`date_to` en
+  `backup_options`, filtrado por `MailItem.CreationTime`/`LastModificationTime`/`ReceivedTime`.
+- ✅ VSS hot-copy de OST (`src/vss_copy.py`): `vss_copy()` vía shadow copy de wmi, fallback automático
+  a comportamiento actual (cerrar Outlook) si no es admin o shadow falla. Integrado en `cache_backup.py`.
+- ✅ Bump version 3.1.1 → 3.2.0 en `pyproject.toml`, `build/installer.iss`, `src/api.py`,
+  `build/version_info.txt`.
+- ✅ Fix mypy: `vss_copy.py:222` — envolver `safe_path(dest)` con `Path()` para coincidir con
+  firma `_copy_from_shadow(dest: Path)`.
+
+**Validación local**: 419 passed, 1 xfailed (Outlook 17.0), mypy strict verde en 31 módulos.
+
+**Pendiente para release v3.2.0** (requiere humano, no automatizable):
+1. Smoke manual en VM Win 10 21H2 sin WebView2 → verificar installer corre bootstrapper silencioso.
+2. Smoke manual con path > 260 chars → verificar backup/import funcionan.
+3. Smoke manual Outlook M365 → verificar log `Outlook M365 detectado`.
+4. Build del .exe con PyInstaller + Inno Setup y smoke del installer final.
+
+**Handoff**: commit pendiente — `feat(release): v3.2.0 — Fase 6 completa (date filter + VSS hot-copy)`.

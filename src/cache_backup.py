@@ -236,17 +236,22 @@ class CacheBackupEngine:
         output_dir: str,
         verify_integrity: bool = True,
         close_outlook: bool = False,
+        use_vss: bool = True,
     ):
         """
         :param cache_files: lista de paths absolutos a OST/PST
         :param output_dir: carpeta destino
         :param verify_integrity: si calcular SHA256 después del copy
         :param close_outlook: si cerrar Outlook antes (necesario para algunos OST)
+        :param use_vss: si intentar VSS hot-copy cuando no se cierra Outlook.
+            VSS copia el OST "en caliente" sin cerrar Outlook, pero requiere
+            admin. Si no es admin o falla, hace fallback al copy clásico.
         """
         self.cache_files = cache_files
         self.output_dir = Path(output_dir)
         self.verify_integrity = verify_integrity
         self.close_outlook = close_outlook
+        self.use_vss = use_vss
         self._cancel_flag = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -290,11 +295,39 @@ class CacheBackupEngine:
                 size_mb = src.stat().st_size / (1024 * 1024)
                 progress_cb(f"\n[{idx}/{total}] 📦 {src.name} ({size_mb:.1f} MB)")
 
-                # Copiar con shutil.copy2 (preserva metadata)
+                # Copiar. Si close_outlook=False y use_vss=True, intentamos VSS
+                # hot-copy primero (sin cerrar Outlook). Si VSS no aplica o falla,
+                # hacemos fallback al copy clásico (que puede dar PermissionError).
                 dest = session_dir / src.name
                 try:
-                    progress_cb("  ⏳ コピー中...")
-                    self._copy_with_progress(src, dest, progress_cb)
+                    vss_used = False
+                    if not self.close_outlook and self.use_vss:
+                        try:
+                            from vss_copy import vss_copy
+
+                            progress_cb("  ⏳ コピー中 (VSSホットコピー試行)...")
+                            result = vss_copy(
+                                src,
+                                dest,
+                                cancel_check=self._cancel_flag.is_set,
+                                progress_cb=progress_cb,
+                            )
+                            if result.success:
+                                vss_used = True
+                                progress_cb("  ✓ VSSホットコピー成功")
+                            else:
+                                # Fallback al copy clásico
+                                progress_cb(
+                                    f"  ℹ️ VSSスキップ ({result.reason}) -> 通常コピー"
+                                )
+                                progress_cb("  ⏳ コピー中...")
+                                self._copy_with_progress(src, dest, progress_cb)
+                        except ImportError:
+                            progress_cb("  ⏳ コピー中...")
+                            self._copy_with_progress(src, dest, progress_cb)
+                    else:
+                        progress_cb("  ⏳ コピー中...")
+                        self._copy_with_progress(src, dest, progress_cb)
 
                     # Verificar integridad
                     integrity = None
@@ -310,6 +343,7 @@ class CacheBackupEngine:
                             "success": True,
                             "size_mb": round(size_mb, 2),
                             "integrity": integrity,
+                            "vss_used": vss_used,
                         }
                     )
                 except PermissionError as e:

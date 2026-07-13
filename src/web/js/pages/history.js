@@ -25,7 +25,46 @@ const HistoryPage = (() => {
 
     // ─── Bind Events ───────────────────────────────────────────
     function bindEvents() {
-        document.getElementById('btn-refresh-history')?.addEventListener('click', loadHistory);
+        document.getElementById('btn-refresh-history')?.addEventListener('click', () => {
+            // Limpiar búsqueda al refrescar
+            const input = document.getElementById('history-search-input');
+            if (input) input.value = '';
+            loadHistory();
+        });
+        document.getElementById('btn-history-search')?.addEventListener('click', runSearch);
+        document.getElementById('history-search-input')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') runSearch();
+        });
+        document.getElementById('btn-history-search-clear')?.addEventListener('click', clearSearch);
+    }
+
+    // ─── Search (Feature B v3.2.0) ─────────────────────────────
+    async function runSearch() {
+        const input = document.getElementById('history-search-input');
+        const query = (input?.value || '').trim();
+        if (!query) {
+            Toast.show('Enter a search term', 'info');
+            return;
+        }
+        setStatus(`🔍 Searching "${query}"...`);
+        try {
+            const r = await Api.search_backups({ query, limit: 50 });
+            if (!r?.success) throw new Error(r?.error || 'Search failed');
+            backups = r.results || [];
+            State.set('history', backups);
+            renderHistoryList();
+            setStatus(`✓ ${backups.length} result(s) for "${query}"`);
+        } catch (err) {
+            console.error('[HistoryPage] runSearch:', err);
+            Toast.show('Search failed: ' + err.message, 'error');
+            setStatus('❌ Search failed');
+        }
+    }
+
+    function clearSearch() {
+        const input = document.getElementById('history-search-input');
+        if (input) input.value = '';
+        loadHistory();
     }
 
     // ─── Load History ─────────────────────────────────────────
@@ -132,5 +171,5 @@ const HistoryPage = (() => {
     }
 
     // ─── Public API ────────────────────────────────────────────
-    return { init, mount, unmount, bindEvents, loadHistory };
+    return { init, mount, unmount, bindEvents, loadHistory, runSearch, clearSearch };
 })();

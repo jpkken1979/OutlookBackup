@@ -472,6 +472,43 @@ class API:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def search_backups(self, params: dict) -> dict:
+        """Búsqueda full-text sobre el historial de respaldos (Feature B v3.2.0).
+
+        Construye un índice FTS5 efímero desde el historial y lo consulta.
+        Para una app desktop con cientos de backups el rebuild en memoria
+        toma milisegundos — no vale la pena persistir el .db en disco.
+
+        params:
+            query (str): texto a buscar (cuenta, fecha YYYY-MM-DD, estado, PST).
+            limit (int, opcional): máximo de resultados. Default 50.
+        """
+        try:
+            from history_manager import BackupHistory
+            from search_index import SearchIndex
+
+            params = params or {}
+            query = str(params.get("query", "")).strip()
+            limit = int(params.get("limit", 50))
+
+            if not query:
+                return {"success": True, "query": "", "results": [], "total": 0}
+
+            base = params.get("base_dir") or self.config.get("default_backup_dir")
+            history = BackupHistory(base)
+            backups = history.list_backups()
+
+            # Índice efímero en el directorio temporal del SO.
+            import tempfile
+
+            idx_path = Path(tempfile.gettempdir()) / "uns_search_efimero.db"
+            with SearchIndex(idx_path) as idx:
+                idx.rebuild_from_history(backups)
+                results = idx.search(query, limit=limit)
+            return {"success": True, "query": query, "results": results, "total": len(results)}
+        except Exception as e:
+            return {"success": False, "error": str(e), "results": []}
+
     # ========================================================
     # SCHEDULER
     # ========================================================
@@ -716,6 +753,7 @@ class API:
                 output_dir = params.get("output_dir", "")
                 verify = params.get("verify_integrity", True)
                 close_outlook = params.get("close_outlook", False)
+                use_vss = params.get("use_vss", True)
 
                 if not files:
                     return {"success": False, "error": "No files selected"}
@@ -732,6 +770,7 @@ class API:
                     output_dir=output_dir,
                     verify_integrity=verify,
                     close_outlook=close_outlook,
+                    use_vss=use_vss,
                 )
 
                 def progress(msg: str) -> None:
@@ -921,7 +960,7 @@ class API:
 
     def get_app_info(self) -> dict:
         return {
-            "version": "3.1.1",
+            "version": "3.2.0",
             "company": "ユニバーサル企画株式会社",
             "company_short": "UNS-Kikaku",
         }
