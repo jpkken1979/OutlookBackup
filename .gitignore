@@ -54,12 +54,24 @@ coverage.xml
 # uv.lock SI se commitea — reproducibilidad de deps entre PCs y CI
 
 # === ECOSYSTEM IGNORE ===
-# Los dirs del ecosistema Antigravity (.agent/, .claude/, .antigravity/, etc.)
-# NO se trackean en este repo de la app de backup: son archivos generados/
-# inyectados por el runtime y generan ruido masivo en el historial.
-# Si se necesita versionar algo puntual, descomentar la linea especifica.
-.agent/
-.claude/
+# Los dirs del ecosistema Antigravity generan ruido masivo (skills, agents,
+# core, plugins...). Se ignora el grueso PERO se preserva la memoria real del
+# proyecto, que DEBE sincronizarse entre PCs (regla .claude/rules/memory-sync.md).
+
+# .agent/: ignorar todo salvo el Brain Network (memoria estructurada, capa 2)
+.agent/*
+!.agent/brain/
+
+# .claude/: ignorar caches/worktrees, PERO trackear memoria + reglas + comandos +
+# hooks + settings (contenido real del proyecto, no ruido inyectado)
+.claude/*
+!.claude/memory/
+!.claude/rules/
+!.claude/commands/
+!.claude/hooks/
+!.claude/settings.json
+!.claude/settings.local.json
+
 .antigravity/
 .context/
 .mcp.local.json

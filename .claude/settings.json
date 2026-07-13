@@ -1,0 +1,153 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && \".claude/hooks/scripts/session-report.sh\"",
+            "timeout": 10000
+          },
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && \".claude/hooks/scripts/memory-sync.sh\"",
+            "timeout": 30000
+          },
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && \".claude/hooks/scripts/claude-md-drift-check.sh\"",
+            "timeout": 15000
+          },
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && \".claude/hooks/scripts/git-status-reminder.sh\"",
+            "timeout": 10000
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\".claude/hooks/scripts/session-report.sh\"",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && \".claude/hooks/scripts/setup-deps.sh\"",
+            "timeout": 180000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && \".claude/hooks/scripts/lint-on-edit.sh\"",
+            "timeout": 15000
+          },
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && \".claude/hooks/scripts/complexity-check.sh\"",
+            "timeout": 15000
+          },
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && \".claude/hooks/scripts/frontmatter-validator.sh\"",
+            "timeout": 10000
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && python -X utf8 \".agent/scripts/hook_runner.py\" observation_hook.py",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && python -X utf8 \".agent/hooks/memory/user_prompt_submit.py\"",
+            "timeout": 35000
+          }
+        ]
+      }
+    ],
+    "TaskCreated": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && python -X utf8 \".claude/hooks/scripts/team_event_capture.py\"",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && python -X utf8 \".claude/hooks/scripts/team_event_capture.py\"",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && python -X utf8 \".claude/hooks/scripts/team_event_capture.py\"",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  },
+  "context": {
+    "autoInject": [
+      ".claude/rules/*.md"
+    ],
+    "maxTokens": 24000
+  },
+  "project": {
+    "name": "uns-backup-app-v3.1",
+    "description": "Proyecto integrado con Antigravity Agents"
+  },
+  "permissions": {
+    "allow": [
+      "write",
+      "C:/Users/kenji/Github/Jpkken1979/uns-backup-app-v3.1/src/web/**"
+    ]
+  },
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true
+  },
+  "enableAllProjectMcpServers": true
+}
