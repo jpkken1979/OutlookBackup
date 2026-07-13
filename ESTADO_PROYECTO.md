@@ -1,6 +1,6 @@
 # ESTADO DEL PROYECTO — uns-backup-app-v3.1
 
-> Última actualización: 2026-05-12
+> Última actualización: 2026-05-13
 
 ---
 
@@ -8,10 +8,32 @@
 
 | Componente | Estado | Versión | Nota |
 |---|---|---|---|
-| Core | ✅ Estable + refactor completo | 3.1.1 | Toolchain moderno + tests + observability |
-| Tests | ✅ 107 passed | — | 87 unit + 13 E2E + 7 i18n |
-| Mypy strict | ✅ 0 errores | — | 15 modulos bajo strict per-module |
-| CI | ✅ Verde | — | Lint + typecheck + tests Linux+Windows + E2E |
+| Core | ✅ Estable + v3.2.0 Fase 6 cerrada | 3.2.0 | date filter + VSS hot-copy + indexed search |
+| Tests | ✅ 419 passed, 1 xfailed | — | +332 vs inicio del ciclo v3.2 |
+| Mypy strict | ✅ 0 errores | — | 31 modulos bajo strict per-module |
+| CI | ✅ Verde (local) | — | Lint + typecheck + tests Linux+Windows + E2E |
+| Release v3.2.0 | 🟡 Lista, pendiente smoke VM | 3.2.0 | commit fb9be47; falta smoke Win10 + build .exe + tag |
+
+---
+
+## Sesión 2026-05-13 — Cierre plan hardening v3.2 (Fase 6)
+
+Plan `docs/PLAN_HARDENING_WIN10_11.md` **6/6 fases cerradas**. v3.2.0 lista para
+release salvo validación humana en VM.
+
+| Área | Estado |
+|---|---|
+| Feature B — Indexed Search | **COMPLETADO** — `src/search_index.py` SQLite FTS5 + 20 tests + UI tab History |
+| Feature C — Date filter | **COMPLETADO** — `date_from`/`date_to` en backup_options |
+| VSS hot-copy de OST | **COMPLETADO** — `src/vss_copy.py` shadow copy vía wmi + fallback + 14 tests |
+| Bump version 3.1.1 → 3.2.0 | **COMPLETADO** — pyproject, installer.iss, api.py, version_info.txt |
+| Re-tracking memoria proyecto | **COMPLETADO** — fix `.gitignore` tras decisión C demasiado agresiva |
+
+**Commits de la sesión:** `fb9be47` (release v3.2.0), `5e1297e` (fix gitignore memoria),
+`e96ed35` (limpieza ecosistema), `0eff432` (docs CLAUDE.md).
+
+**Pendiente (requiere humano/VM):** smoke Win10 sin WebView2, path >260 chars,
+Outlook M365, build `.exe`, `git push` + tag `v3.2.0`.
 
 ---
 
