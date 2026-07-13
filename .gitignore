@@ -70,7 +70,7 @@ coverage.xml
 !.claude/commands/
 !.claude/hooks/
 !.claude/settings.json
-!.claude/settings.local.json
+# settings.local.json queda ignorado: permisos locales de la maquina, nunca trackeado
 
 .antigravity/
 .context/
