@@ -1,0 +1,313 @@
+{
+  "mcpServers": {
+    "deepwiki": {
+      "type": "http",
+      "url": "https://mcp.deepwiki.com/mcp"
+    },
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@0.0.70",
+        "--browser",
+        "chromium"
+      ],
+      "cwd": "${HOME}",
+      "env": {
+        "NPM_CONFIG_CACHE": "${HOME}/.cache/antigravity/npm",
+        "npm_config_cache": "${HOME}/.cache/antigravity/npm",
+        "TMP": "${HOME}/.cache/antigravity/tmp",
+        "TEMP": "${HOME}/.cache/antigravity/tmp"
+      }
+    },
+    "antigravity": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/mcp-server/server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman"
+      }
+    },
+    "antigravity-agents": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/agents-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman"
+      }
+    },
+    "antigravity-skills": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/skills-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman"
+      }
+    },
+    "antigravity-observations": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/observations-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman"
+      }
+    },
+    "antigravity-intelligence": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/intelligence-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman"
+      }
+    },
+    "antigravity-ui": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/ui-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman"
+      }
+    },
+    "antigravity-memory": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/memory-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman"
+      }
+    },
+    "antigravity-brain": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/brain-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-excel": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/excel-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-delta-reader": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/delta-reader-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1",
+        "ANTIGRAVITY_DELTA_ROOTS": "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-provider": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/provider-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-watcher": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/watcher-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_WATCHER_GATEWAY": "true",
+        "ANTIGRAVITY_WATCHER_BRAIN": "true"
+      }
+    },
+    "antigravity-context-engine": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/context-engine-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman"
+      }
+    },
+    "jpkkenfull": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/jpkkenfull-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman"
+      }
+    },
+    "antigravity-brain-graph": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/brain-graph-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-shu-discord": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/shu_discord_bridge.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-shu-github": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/shu_github_bridge.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-shu-slack": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/shu_slack_bridge.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-shu-webhook": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/shu-webhook-server.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "antigravity-shu-webhooks": {
+      "command": "${USERPROFILE}\\AppData\\Local\\Programs\\Python\\Launcher\\py.EXE",
+      "args": [
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1/.agent/mcp/shu_webhook_dispatcher.py"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "ANTIGRAVITY_PERSONA": "gentleman",
+        "ANTIGRAVITY_ROOT": "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1"
+      }
+    },
+    "context7": {
+      "command": "C:\\WINDOWS\\system32\\cmd.EXE",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@upstash/context7-mcp@3.2.3"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd"
+      }
+    },
+    "git": {
+      "command": "C:\\WINDOWS\\system32\\cmd.EXE",
+      "args": [
+        "/c",
+        "uvx",
+        "mcp-server-git==2026.6.16"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd"
+      }
+    },
+    "chrome-devtools": {
+      "command": "C:\\WINDOWS\\system32\\cmd.EXE",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@1.5.0",
+        "--no-usage-statistics"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd"
+      }
+    },
+    "magic-21st": {
+      "command": "C:\\WINDOWS\\system32\\cmd.EXE",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@21st-dev/magic@0.1.0",
+        "API_KEY=\"${MAGIC_21ST_API_KEY}\""
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd",
+        "MAGIC_21ST_API_KEY": "${MAGIC_21ST_API_KEY}"
+      }
+    },
+    "sqlite": {
+      "command": "C:\\WINDOWS\\system32\\cmd.EXE",
+      "args": [
+        "/c",
+        "uvx",
+        "mcp-server-sqlite==2025.4.25",
+        "--db-path",
+        "${ANTIGRAVITY_ROOT}/.antigravity/antigravity.db"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd"
+      }
+    },
+    "filesystem": {
+      "command": "C:\\WINDOWS\\system32\\cmd.EXE",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem@2026.7.4",
+        "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/uns-backup-app-v3.1"
+      ],
+      "env": {
+        "PATH": "C:\\Windows;C:\\Windows\\System32;C:\\Program Files\\nodejs;${USERPROFILE}\\.local\\bin;C:\\Program Files\\Git\\cmd"
+      }
+    }
+  }
+}

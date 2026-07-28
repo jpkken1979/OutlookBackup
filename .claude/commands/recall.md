@@ -43,6 +43,9 @@ elif argumento:
     if results:
         top = results[0]
         neighborhood = brain.get_neighborhood(top.slug, depth=2)
+
+# Modo híbrido NotebookLM (si está activo):
+# Exec: python .agent/scripts/notebooklm_auto_recall.py --prompt "<argumento>"
 ```
 
 3. Presentar al usuario de forma estructurada:

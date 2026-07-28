@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""UNS Outlook Backup v3.1 - PyInstaller spec (pywebview)"""
+"""UNS Outlook Backup v3.2 - PyInstaller spec (pywebview)"""
 
 import os
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
@@ -34,6 +34,16 @@ hidden += [
     # Outlook abstraction layer (Fase 2)
     'outlook', 'outlook.protocols', 'outlook.constants',
     'outlook.real',  # adapter Dispatch
+    # Plan v3.2 — se importan lazy dentro de funciones, PyInstaller no los
+    # detecta solo. Sin esto el .exe tira ModuleNotFoundError en runtime
+    # aunque el build pase. NO agregar 'outlook.fakes': es solo de tests.
+    'runtime_check',       # main.py:62
+    'outlook.version',     # main.py:61
+    'search_index',        # api.py:488
+    'vss_copy',            # cache_backup.py:306
+    'incremental_state',   # backup_engine.py:303
+    'date_filter',         # backup_engine.py:263 (lazy) + outlook_client.py:14
+    'path_utils',          # dependencia de vss_copy y engines
 ]
 
 datas = [

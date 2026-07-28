@@ -1,0 +1,10 @@
+# Direct runtime and build inputs for the Windows x64 portable broker.
+# The bundle builder records the complete `pip freeze` plus wheel hashes in
+# install.json after resolving these exact top-level versions.
+mcp==1.27.1
+aiohttp==3.14.1
+anyio==4.13.0
+httpx==0.28.1
+pydantic==2.13.4
+pyinstaller==6.21.0
+zstandard==0.25.0

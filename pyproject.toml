@@ -170,6 +170,12 @@ module = [
     "date_filter",
     # Feature A plan v3.2 — Incremental backup state
     "incremental_state",
+    # Feature B plan v3.2 — Indice FTS5 sobre metadatos del historial
+    "search_index",
+    # Fase 6 plan v3.2 — VSS hot-copy
+    "vss_copy",
+    # Wrapper de schtasks.exe (quedo fuera de la lista por omision)
+    "scheduler",
 ]
 disallow_untyped_defs = true
 warn_return_any = true

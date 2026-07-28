@@ -1,0 +1,4 @@
+[mcp_servers.antigravity]
+command = "D:/BackupJp26.5.11/DesdelaAppBackup/Jpkken1979/OpenAntigravity26.3.30/.venv/Scripts/python.exe"
+args = ["-m", "core.mcp_stdio_proxy"]
+env = { ANTIGRAVITY_MCP_URL = "http://localhost:4747/mcp", ANTIGRAVITY_ROOT = ".", PYTHONPATH = ".agent" }

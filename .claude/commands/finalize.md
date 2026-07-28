@@ -3,7 +3,7 @@
 Ejecuta este flujo completo cada vez que terminás una tarea o sesión de desarrollo.
 Nunca saltes un paso. Si uno falla, detente y reportá antes de continuar.
 
-> Version 3.0 — incluye verificaciones de integridad, stash, divergencia, y conflictos.
+> Version 3.5 Ultimate — incluye verificaciones de integridad, stash, divergencia, auto-sincronización a todos los IDEs globales, y limpieza preventiva.
 
 ---
 
@@ -59,6 +59,13 @@ git fsck --full 2>&1 | tail -5
 - Corré `git fsck` para verificar integridad del repo
 
 **Si hay archivos untracked nuevos:** preguntá al usuario si deben incluirse o ignorarse.
+
+**Si hay cambios sin commitear en `.claude/memory/` o `.agent/brain/`:** ofrece commitearlos ahora 
+(son memorias de sesión — críticas para multi-PC). Si responde 'y', llamá a:
+```bash
+git add .claude/memory/*.md .agent/brain/
+git commit -m "chore(memory): guardar cambios de sesion"
+```
 
 **Si hay stash:** informá qué hay y sugierí que se commitee o se descarte antes de continuar.
 
@@ -300,29 +307,69 @@ Ver `docs/rules-reference/repo-crawler.md` para política completa de tags y pat
 
 ---
 
-## PASO 4.6 — Ofrecer sync opcional a NotebookLM
+## PASO 4.7 — Auto-Sincronización de Comandos y Skills a IDEs Globales
 
-Si la tarea produjo documentación, reportes, PDFs, specs, workbooks o resúmenes
-útiles como memoria documental externa, sincronizalos con el notebook del
-proyecto cuando exista asociación local en `.agent/notebooklm/projects.json`.
-Este repo usa política privada confiable: no trates reportes internos, Excel,
-DBs de trabajo o nómina como un problema por defecto.
-
-Primero lista candidatos seguros:
+Si se crearon o modificaron comandos o skills durante la sesión (o para asegurar que los editores estén 100% al día):
 
 ```bash
-python .agent/scripts/notebooklm_workflow.py candidates
+python .agent/scripts/sync_commands.py --all
 ```
 
-Si hay candidatos y el proyecto tiene notebook asociado, súbelos. Para subir:
+Comportamiento esperado:
+- Exporta todos los comandos y skills críticos a `~/.cursor/skills`, `~/.codex/skills`, `~/.windsurf/skills` y `~/.vscode/chat/extensions`.
+- Sincroniza `.cursorrules` a `~/.cursor/.cursorrules`.
+- Permite que `/` autocomplete todos los comandos en cualquier proyecto de la máquina.
 
+---
+
+## PASO 4.6 — Sincronización Optional a NotebookLM (con graceful fallback)
+
+NotebookLM es una **biblioteca documental externa** que espeja archivos del repo (docs, CLAUDE.md, ESTADO_PROYECTO.md, etc). El notebook del proyecto YA EXISTE si está registrado en `.agent/notebooklm/projects.json`. Los cambios se sincronizan en este paso:
+
+**TIMING EN NOTEBOOKLM:**
+
+1. **Candidatos (NEW):** Archivos del repo que NUNCA se han subido a NotebookLM → se crean como nuevas sources
+2. **Resync (UPDATE):** Archivos que YA están en NotebookLM pero su mtime local > added_at del registry → se reemplazan (borran + re-suben)
+3. **Archive:** Archivos que estaban en NotebookLM pero ya no existen localmente → se marcan archived
+
+**IMPORTANTE:** Si la auth de NotebookLM está expirada, este paso debe fallar **gracefully**:
+- No bloquear el flujo de `/finalize`
+- No hacer push sin completar la memoria (Capas 1 y 2 sí son obligatorias)
+- Reportar al usuario: `⚠️ NotebookLM auth expirada — sync opcional SKIPPED`
+- Sugerir: `python .agent/scripts/notebooklm_bridge.py login` o `/notebooklm-sync login`
+
+**Procedimiento:**
+
+1. Verificar si el proyecto tiene notebook asociado:
 ```bash
-python .agent/scripts/notebooklm_workflow.py add --project <proyecto> <archivo>
+grep -q '"OpenAntigravity"' .agent/notebooklm/projects.json && echo "Notebook exists"
 ```
 
-Si el guard bloquea un archivo, asumilo como credencial técnica real (`.env`,
-cookie, clave privada o token embebido). No uses `--force-sensitive` salvo
-confirmación explícita del usuario.
+2. Listar candidatos a sincronizar (dry-run, sin credenciales):
+```bash
+python .agent/scripts/notebooklm_workflow.py candidates 2>&1 | head -20
+```
+Mostrará candidatos NEW (nunca subidos) y RESYNC (drifteados).
+
+3. Si la salida contiene "auth" o "401" o "credential", skip este paso y reportar warning.
+
+4. Si hay candidatos y la auth es válida, proceder:
+```bash
+# Subir nuevos candidatos
+python .agent/scripts/notebooklm_workflow.py add --project OpenAntigravity <archivo>
+
+# Resincronizar archivos drifteados (mtime local > registry)
+python .agent/scripts/notebooklm_workflow.py resync --project OpenAntigravity --dry-run
+python .agent/scripts/notebooklm_workflow.py resync --project OpenAntigravity  # sin --dry-run para aplicar
+```
+
+5. Si el guard bloquea un archivo por "sensitive", asumilo como credencial técnica real (`.env`,
+cookie, clave privada o token embebido). No uses `--force-sensitive` salvo confirmación explícita del usuario.
+
+**Resultado esperado:** 
+- Auth OK → reporta: "N nuevos sincronizados, M actualizados, K archivados"
+- Auth expirada → skip + warning al usuario (no bloquea flujo)
+- Notebook ahora refleja el estado del repo al momento de `/finalize`
 
 ---
 
@@ -420,26 +467,48 @@ git push
 
 ---
 
-## PASO 7 — Reporte final
+## PASO 7 — Reporte final (detallado)
 
-Mostrá un resumen conciso:
+Mostrá un resumen estructurado que cubra integridad, memoria, commits y artifacts:
 
 ```
+═══ VALIDACIÓN ═══
 ✅ Repo integrity: OK (git fsck passed)
-✅ Tests: X passaram / 0 fallaron
+✅ Tests: X passed / 0 failed
 ✅ Stash: limpio (sin cambios sin commitear)
 ✅ Conflictos: ninguno
-✅ Memoria: actualizada (auto-memory + mem0 + brain)
-✅ ESTADO_PROYECTO.md: actualizado
-✅ Commit: <hash> — <mensaje>
-✅ Push: origin/<rama>
-✅ Brain: sincronizado en git
+✅ Pre-commit checks: OK
+
+═══ MEMORIA (3 CAPAS) ═══
+✅ Capa 1 (Markdown): .claude/memory/session_YYYY-MM-DD.md creado
+✅ Capa 2 (Brain):   <N> nodos ingestados en .agent/brain/
+⚠️ Capa 3 (mem0):    [✅ OK | ⚠️ auth expired | ❌ failed] — [detalle si hubo error]
+
+Archivos guardados en memoria:
+- .claude/memory/session_YYYY-MM-DD.md
+- .claude/memory/decision_*.md (si aplica)
+- .claude/memory/bugfix_*.md (si aplica)
+- .claude/memory/discovery_*.md (si aplica)
+
+═══ COMMITS ═══
+✅ Commit 1: <hash> — <mensaje>
+✅ Commit 2: <hash> — <mensaje>
+✅ Push:     origin/<rama> (<N> commits)
 
 Cambios incluidos:
-- [lista de lo que se hizo]
+- [lista detallada de archivos y por qué]
 
-Pendiente (si hay):
-- [si hay algo que quedó fuera o fue dejado para después]
+═══ EXTRAS ═══
+✅ ESTADO_PROYECTO.md: actualizado
+✅ CLAUDE.md: sincronizado (si hubo drift)
+✅ Brain index: reconstruido
+⚠️ NotebookLM: [✅ synced | ⚠️ auth expired | ❌ skipped] — [detalles]
+
+═══ PENDIENTE ═══
+[Si hay algo que quedó fuera o diferido:]
+- [tareas del siguiente ciclo]
+- [PRs que falta mergear]
+- [credenciales a rotar]
 ```
 
 ---

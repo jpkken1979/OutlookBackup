@@ -1,0 +1,299 @@
+================================================================================
+                    ShuMobile PWA Sync Module Architecture
+================================================================================
+
+LAYER 1: Frontend (PWA Service Worker + IndexedDB)
+────────────────────────────────────────────────────
+                      ┌──────────────────┐
+                      │  ShuMobile PWA   │
+                      │  (React + TS)    │
+                      │                  │
+                      │ ┌──────────────┐ │
+                      │ │ IndexedDB    │ │
+                      │ │ (Offline)    │ │
+                      │ └────┬─────────┘ │
+                      │      │ (HTTP)    │
+                      │      │ POST body │
+                      │      ▼           │
+                      │ ┌──────────────┐ │
+                      │ │ async fetch  │ │
+                      │ │ /v1/shu/pwa │ │
+                      │ └────┬─────────┘ │
+                      └─────┼────────────┘
+                            │
+                            │ {
+                            │   "session_id": "uuid",
+                            │   "responses": {"dim": "val"}
+                            │ }
+                            │
+                            ▼
+LAYER 2: Gateway HTTP Handler (to be implemented)
+──────────────────────────────────────────────────
+                   ┌────────────────────┐
+                   │  gateway.py        │
+                   │ POST /v1/shu/pwa   │
+                   │                    │
+                   │ ┌────────────────┐ │
+                   │ │ Validate       │ │
+                   │ │ - session_id   │ │
+                   │ │ - responses    │ │
+                   │ └────┬───────────┘ │
+                   │      │             │
+                   │      ▼             │
+                   │ ┌────────────────┐ │
+                   │ │ get_pwa_sync() │ │ (import)
+                   │ │ (singleton)    │ │
+                   │ └────┬───────────┘ │
+                   │      │             │
+                   │      ▼             │
+                   │ ┌────────────────┐ │
+                   │ │ async_sync_    │ │
+                   │ │ responses()    │ │
+                   │ └────┬───────────┘ │
+                   │      │             │
+                   │      ▼             │
+                   │ ┌────────────────┐ │
+                   │ │ Log + Return   │ │
+                   │ │ JSON response  │ │
+                   │ └────┬───────────┘ │
+                   └─────┼──────────────┘
+                         │
+                         ▼
+LAYER 3: ShuPWASync Service
+────────────────────────────
+    ┌──────────────────────────────────────────────┐
+    │  class ShuPWASync                            │
+    │  ├─ __init__(db_path=None)                   │
+    │  ├─ async_sync_responses(...)                │
+    │  ├─ async_get_sessions(...)                  │
+    │  ├─ async_get_session(...)                   │
+    │  ├─ async_create_session(...)                │
+    │  ├─ async_get_offline_queue()                │
+    │  ├─ async_delete_session(...)                │
+    │  │                                           │
+    │  └─ _ensure_db_initialized()                 │
+    │     (called at construction)                 │
+    │                                              │
+    │  Methods:                                    │
+    │  • Input validation (session_id, responses)  │
+    │  • Response merging (last-write-wins)        │
+    │  • Status transitions (draft → submitted)    │
+    │  • Timestamp management (UTC ISO-8601)       │
+    │  • Error handling with descriptive messages  │
+    │  • Structured logging (INFO/ERROR/DEBUG)     │
+    └──────────────────────────────────────────────┘
+                         │
+                         │ sqlite3.connect()
+                         │
+                         ▼
+LAYER 4: SQLite Database
+────────────────────────
+    ┌──────────────────────────────────────────────┐
+    │  pwa_sessions.db                             │
+    │  (~/.antigravity/pwa_sessions.db)            │
+    │                                              │
+    │  ┌──────────────────────────────────────┐   │
+    │  │ TABLE: pwa_sessions                  │   │
+    │  ├──────────────────────────────────────┤   │
+    │  │ session_id      TEXT   [PK]          │   │
+    │  │ goal_id         TEXT   [NOT NULL]    │   │
+    │  │ responses       TEXT   [JSON]        │   │
+    │  │ status          TEXT   [NOT NULL]    │   │
+    │  │ created_at      TEXT   [NOT NULL]    │   │
+    │  │ synced_at       TEXT   [NULLABLE]    │   │
+    │  │ updated_at      TEXT   [NOT NULL]    │   │
+    │  └──────────────────────────────────────┘   │
+    │                                              │
+    │  ┌──────────────────────────────────────┐   │
+    │  │ INDICES                              │   │
+    │  │ • idx_pwa_status (status)            │   │
+    │  │ • idx_pwa_goal (goal_id)             │   │
+    │  └──────────────────────────────────────┘   │
+    │                                              │
+    │  Schema auto-created on first init()        │
+    │  Transactions for multi-statement ops       │
+    │  WAL mode recommended for concurrency       │
+    └──────────────────────────────────────────────┘
+
+
+DATA FLOW: Normal Sync Operation
+═════════════════════════════════
+
+1. Frontend (PWA)
+   ↓ HTTP POST with {"session_id", "responses"}
+
+2. Gateway Handler (to implement)
+   ↓ Validate inputs
+   ↓ Call sync.async_sync_responses()
+
+3. ShuPWASync.async_sync_responses()
+   ↓ Validate session_id exists
+   ↓ Fetch existing responses from DB
+   ↓ Merge new responses (new values override)
+   ↓ Update status → "submitted"
+   ↓ Set synced_at timestamp
+   ↓ Log operation at INFO level
+   ↓ Return {"status": "success", "synced_to_goal": "..."}
+
+4. Gateway Handler
+   ↓ Return HTTP 200 + JSON response
+
+5. Frontend
+   ↓ Clear IndexedDB draft
+   ↓ Mark as synced
+
+
+SESSION LIFECYCLE
+═════════════════
+
+    Creation (draft)
+         ↓
+    [--- Offline Period (no sync) ---]
+         ↓
+    Sync Attempt
+         ├─ Success ────→ submitted
+         │                  ↓
+         │            synced_at set
+         │                  ↓
+         │            (can delete)
+         │
+         └─ Failure ───→ remains draft
+                            ↓
+                    (retry later)
+
+
+SINGLETON PATTERN
+═════════════════
+
+    get_pwa_sync() ────┐
+                       ├─→ First call: create instance
+                       │   store in _sync_instance
+                       │
+    get_pwa_sync() ────┤
+    (2nd call)         ├─→ Return existing instance
+                       │
+    get_pwa_sync() ────┘
+
+    Result: Single database connection, thread-safe instance
+
+
+ERROR SCENARIOS & RESPONSES
+═══════════════════════════
+
+Invalid Input
+  {"status": "error", "error": "Invalid session_id"}
+
+Session Not Found
+  {"status": "error", "error": "Session <id> not found"}
+
+Duplicate Create
+  {"status": "error", "error": "Session already exists"}
+
+Database Error
+  {"status": "error", "error": "Database error: <details>"}
+
+
+INTEGRATION CHECKLIST
+═════════════════════
+
+Phase 1: Module Only (COMPLETED)
+  ✓ shu_pwa_sync.py module created
+  ✓ Full type hints
+  ✓ Comprehensive logging
+  ✓ SQLite schema auto-initialization
+  ✓ 13 tests with async support
+  ✓ Complete documentation
+
+Phase 2: Gateway Integration (PENDING)
+  □ Import ShuPWASync and get_pwa_sync
+  □ Create POST /v1/shu/pwa_sync handler
+  □ Add request validation
+  □ Add logging/monitoring
+  □ Handle errors gracefully
+  □ Return appropriate HTTP status codes
+
+Phase 3: Frontend Integration (SEPARATE)
+  □ PWA service worker updates
+  □ HTTP fetch to /v1/shu/pwa_sync
+  □ Offline queue in IndexedDB
+  □ Retry logic with backoff
+  □ User feedback on sync status
+
+Phase 4: Monitoring (OPTIONAL)
+  □ Track sync success/failure rates
+  □ Monitor offline queue size
+  □ Alert on database errors
+  □ Performance metrics
+
+
+FILES CREATED
+═════════════
+
+Code:
+  .agent/core/shu_pwa_sync.py              (~500 LOC)
+  tests/core/test_shu_pwa_sync.py          (~400 LOC, 13 tests)
+
+Documentation:
+  .agent/core/SHU_PWA_SYNC.md              (~450 LOC, complete API)
+  .agent/core/SHU_PWA_QUICK_REFERENCE.md   (~250 LOC, quick lookup)
+  .agent/core/SHU_PWA_IMPLEMENTATION_SUMMARY.md (verification)
+  .agent/core/SHU_PWA_ARCHITECTURE.txt     (this file)
+
+
+TECHNOLOGY STACK
+════════════════
+
+Frontend:
+  • React 19 + TypeScript
+  • Service Worker (offline)
+  • IndexedDB (local queue)
+  • Fetch API (sync)
+
+Backend:
+  • Python 3.10+
+  • asyncio (async/await)
+  • sqlite3 (persistence)
+  • pathlib (path handling)
+
+Testing:
+  • pytest (framework)
+  • pytest-asyncio (async tests)
+  • pytest-cov (coverage)
+
+
+PERFORMANCE NOTES
+═════════════════
+
+Database:
+  • Suitable for <10k sessions
+  • Indices on status, goal_id for fast filtering
+  • Consider PostgreSQL for >100k sessions
+
+Memory:
+  • Singleton pattern prevents duplicate connections
+  • Lazy loading of database module
+
+Concurrency:
+  • SQLite with default timeout handling
+  • Enable WAL mode for concurrent reads
+  • Serialize writes for safety
+
+
+SECURITY CONSIDERATIONS
+═══════════════════════
+
+Current Implementation:
+  • No encryption at rest (SQLite plain text)
+  • No authentication on service
+  • No input sanitization (relies on gateway)
+
+Future Enhancements:
+  • Encrypt responses column
+  • Add HMAC-SHA256 integrity check
+  • Rate limiting at gateway level
+  • Audit log of all sync operations
+
+
+================================================================================
+End of Architecture Documentation
+================================================================================

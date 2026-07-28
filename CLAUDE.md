@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Sobre el proyecto
 
-App Windows en japonés para **ユニバーサル企画株式会社 (UNS-Kikaku)** que respalda y restaura correos de Outlook. La versión actual es **v3.1.1**, declarada en tres lugares que deben mantenerse en sync al bumpear: `build/installer.iss:5` (`MyAppVersion`, fuente de verdad para el release), `pyproject.toml:10` y `src/api.py:get_app_info`.
+App Windows en japonés para **ユニバーサル企画株式会社 (UNS-Kikaku)** que respalda y restaura correos de Outlook. La versión actual es **v3.2.0**, declarada en tres lugares que deben mantenerse en sync al bumpear: `build/installer.iss:5` (`MyAppVersion`, fuente de verdad para el release), `pyproject.toml:10` y `src/api.py:get_app_info`. El `name:` de `.github/workflows/build.yml` todavía dice "v3.1" — es cosmético (solo el título del workflow), no afecta el release.
 
 El proyecto vive **dentro** del repo `Jpkken1979` que tiene su propio ecosistema Antigravity. Las reglas globales en `../CLAUDE.md` y `../.claude/rules/` aplican aquí (respuestas en español, commits convencionales, etc.).
 
@@ -20,7 +20,7 @@ El proyecto vive **dentro** del repo `Jpkken1979` que tiene su propio ecosistema
 | `python src\main.py` | Lanzar GUI directamente (requiere venv activo) |
 | `python src\main.py --auto` | Modo background usado por Windows Task Scheduler (sin GUI) |
 | `python build\generate_icon.py` | Regenerar `assets/icon.ico` |
-| `git tag v3.1.X && git push origin v3.1.X` | Dispara release en GitHub Actions con `.exe` + installer adjuntos |
+| `git tag v3.2.X && git push origin v3.2.X` | Dispara release en GitHub Actions con `.exe` + installer adjuntos |
 
 ### Calidad (toolchain con `uv`)
 
@@ -31,12 +31,14 @@ El proyecto vive **dentro** del repo `Jpkken1979` que tiene su propio ecosistema
 | `uv sync --extra dev` | Instala deps de dev (ruff, mypy, pytest, playwright, hypothesis) |
 | `uv run ruff check src tests` | Lint (reglas E/W/F/I/B/C4/UP/ARG/SIM, línea 100) |
 | `uv run ruff format --check src tests` | Verifica formato (reemplaza black + isort) |
-| `uv run mypy src` | Typecheck — **strict global** (todos los 24 módulos pasan `disallow_untyped_defs`) |
+| `uv run mypy src` | Typecheck — `disallow_untyped_defs` se aplica por **lista explícita** de módulos en `pyproject.toml`; un módulo nuevo no queda cubierto hasta agregarlo ahí |
 | `uv run pytest -v --cov=src --cov-report=term-missing` | Suite completa con coverage |
 | `uv run pytest tests/test_backup_engine.py::test_xxx` | Correr un solo test |
 | `uv run pytest -m "not e2e"` | Saltear los E2E de Playwright (más rápido) |
 | `uv run pytest -m "not windows"` | En Linux skipea los tests con `pytestmark = pytest.mark.windows` |
 | `uv run playwright install --with-deps chromium` | Instala el browser para los E2E |
+
+**Gotcha multi-PC**: el `.venv/` está en el working tree pero `pyvenv.cfg` guarda rutas absolutas de la máquina que lo creó. En otra PC `uv run` falla con `uv trampoline failed to canonicalize script path` — el fix es recrearlo (`uv sync --extra dev`), no debuggear el comando. Sin `structlog` y `rarfile` instalados fallan 15 tests (`test_observability.py`, `test_shell_extractor.py`) por `ModuleNotFoundError`, no por código roto.
 
 ## Arquitectura — pywebview bridge (v3.0+)
 
@@ -69,8 +71,8 @@ src/web/
 │   ├── components.css      # Estilos por componente
 │   └── styles.css          # Layout global, tabs, overlays
 └── js/
-    ├── app-orchestrator.js # Routing tabs + init sequence + connection badge
-    ├── app.js              # Legacy (mantener por compat — el orquestador es lo nuevo)
+    ├── app-orchestrator.js # Routing tabs + init sequence + connection badge (único entry point;
+    │                       # el viejo app.js monolítico ya no existe)
     ├── i18n/
     │   ├── i18n.js         # Helper t() y carga
     │   └── ja.json         # Strings japoneses del frontend
@@ -197,6 +199,7 @@ CacheBackupEngine._run()
 **Opciones**:
 - `verify_integrity` — calcula SHA256 después de copiar (default: True)
 - `close_outlook` — cierra Outlook antes de copiar OST (necesario porque OST está bloqueado)
+- `use_vss` — (default: True) sólo aplica cuando `close_outlook=False`. Intenta hot-copy VSS (requiere admin); si no es admin, falla o el módulo no está, cae al copy clásico, que sobre un OST abierto puede dar `PermissionError`
 
 ## Tres modos de import
 
@@ -250,7 +253,9 @@ Para `merge`: busca source_store por `FilePath` match y target_store por `Displa
 | `crypto_utils.py` | AES-256-GCM + PBKDF2-HMAC-SHA256 (200K iter). `estimate_password_strength()` → score 0-100 con label japonés |
 | `connection_tester.py` | Test de conectividad IMAP/SMTP con `socket` + `ssl` puros (sin libs externas). Mide latencia, captura banner, prueba LOGIN. Usado por `API.test_connection()` en tab Settings |
 | `config.py` | Config persistente en `%APPDATA%\UNS-Kikaku\Backup\config.json`. DEFAULT_CONFIG incluye todos los settings con defaults |
-| `i18n.py` | Loader que lee los strings desde `src/web/js/i18n/ja.json` (~192 keys) — **fuente única compartida con el frontend**, no un dict inline. `t(key, **kwargs)` interpola y devuelve la key tal cual si falta (defensivo, nunca crashea). El backend usa `json.load()`, el frontend `fetch()` sobre el mismo archivo, así no divergen |
+| `search_index.py` | Índice FTS5 (SQLite stdlib) sobre los **metadatos** del historial de backups — cuentas, fechas, tamaños, estado, rutas PST. La app no parsea PST, así que "búsqueda" nunca significa buscar dentro de los emails. `rebuild_from_history()` es idempotente (borra y reconstruye) |
+| `vss_copy.py` | Hot-copy de OST/PST vía Volume Shadow Copy **sin cerrar Outlook**. Requiere admin (`IsUserAnAdmin`); si no lo es devuelve `VssCopyResult(success=False, reason="not_admin")` y el caller hace fallback a cerrar Outlook. Siempre limpia el shadow en `finally` |
+| `i18n.py` | Loader que lee los strings desde `src/web/js/i18n/ja.json` (192 keys) — **fuente única compartida con el frontend**, no un dict inline. `t(key, **kwargs)` interpola y devuelve la key tal cual si falta (defensivo, nunca crashea). El backend usa `json.load()`, el frontend `fetch()` sobre el mismo archivo, así no divergen |
 
 ### Configuración por defecto (`config.py:30-57`)
 
@@ -289,7 +294,7 @@ DEFAULT_CONFIG = {
 
 `build/pyinstaller.spec` calcula paths con `SPECPATH` (el directorio del spec, **no** el CWD). Usa `ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))`.
 
-**Módulos en `hidden`** (líneas 11-28): cualquier módulo nuevo en `src/` que se importe dinámicamente (dentro de funciones, como hace `api.py`) debe agregarse aquí. Si el `.exe` falla con `ModuleNotFoundError`, falta en el spec.
+**Módulos en `hidden`** (líneas 11-28): cualquier módulo nuevo en `src/` que se importe dinámicamente (dentro de funciones, como hace `api.py`) debe agregarse aquí. Si el `.exe` falla con `ModuleNotFoundError`, falta en el spec — ver "Imports lazy y el `.exe`" más abajo para la lista y por qué el build no lo detecta.
 
 **Excludes** (líneas 45-50): PyQt, PySide, matplotlib, numpy, pandas, scipy, IPython, pytest — mantenidos para reducir tamaño.
 
@@ -304,7 +309,7 @@ DEFAULT_CONFIG = {
 Para publicar release:
 1. Bump versión en `src/api.py` (`get_app_info`), `pyproject.toml` (`version`), `build/installer.iss` (`MyAppVersion`), workflow (`name`).
 2. Commit, push.
-3. `git tag v3.1.X && git push origin v3.1.X`.
+3. `git tag v3.2.X && git push origin v3.2.X`.
 4. Esperar el workflow → release aparece con `.exe` portable + installer.
 
 CI usa **Python 3.11** en `windows-latest`. Timeout de 25 min.
@@ -327,7 +332,7 @@ Runtime: Python 3.10+. Toolchain de dev: **uv + ruff + mypy + pytest + playwrigh
 
 ## Testing — corre en Linux Y Windows
 
-`tests/` tiene ~23 archivos `test_*.py` top-level + 3 E2E en `tests/e2e/` (Playwright), cubriendo engines (backup/cache/import), observability, i18n, fakes de Outlook, deteccion de runtime (WebView2, version Outlook), long paths, date filter, incremental state y connection tester.
+`tests/` tiene 25 archivos `test_*.py` top-level + 3 E2E en `tests/e2e/` (Playwright), cubriendo engines (backup/cache/import), observability, i18n, fakes de Outlook, deteccion de runtime (WebView2, version Outlook), long paths, date filter, incremental state y connection tester.
 
 **El truco para correr en Linux**: `tests/conftest.py` define un fixture `mock_win32_modules(autouse=True, scope="session")` que inyecta `MagicMock` en `sys.modules` para `win32com`, `win32cred`, `winreg`, `pythoncom`, `pywintypes`, `webview` ANTES de cualquier import de `src/`. Esto permite que el código bajo test se importe sin pywin32 instalado.
 
@@ -365,7 +370,7 @@ src/observability/
 
 ## Módulos del plan v3.2 (hardening Win 10/11)
 
-El plan `docs/PLAN_HARDENING_WIN10_11.md` introdujo módulos de detección de entorno y robustez. Todos pasan mypy `disallow_untyped_defs`.
+El plan `docs/PLAN_HARDENING_WIN10_11.md` introdujo módulos de detección de entorno y robustez.
 
 | Módulo | Fase | Responsabilidad |
 |---|---|---|
@@ -374,8 +379,27 @@ El plan `docs/PLAN_HARDENING_WIN10_11.md` introdujo módulos de detección de en
 | `outlook/version.py` | 4 | Detección de versión Outlook: `detect_outlook_version()` distingue M365 (`HKCU\Software\Microsoft\Office\ClickToRun\Configuration`) de perpetual (`HKLM\Software\Microsoft\Office\{ver}\Outlook\InstallRoot`). `is_supported()` valida ≥ Outlook 2016 |
 | `date_filter.py` | 6 (partial) | Filtro por rango de fechas para Feature C. `should_include(item, start, end)` evalúa cada email; `filter_pst_items()` recorre el store aplicando el filtro |
 | `incremental_state.py` | Feature A | Estado del backup incremental: clase `IncrementalState` que persiste último timestamp procesado por cuenta para evitar re-exportar emails ya backupeados |
+| `search_index.py` | Feature B | Índice FTS5 sobre metadatos del historial (ver tabla de módulos del backend) |
+| `vss_copy.py` | 6 | Hot-copy VSS sin cerrar Outlook (ver tabla de módulos del backend) |
 
-Cuando agregues un módulo nuevo del plan: registralo en el bloque strict de `pyproject.toml:138-173`, agregalo al `hidden` de `build/pyinstaller.spec` si se importa lazy, y bajalo a tests con su marker correspondiente.
+Cuando agregues un módulo nuevo del plan: registralo en el bloque strict de `pyproject.toml` (`[[tool.mypy.overrides]]` con `disallow_untyped_defs`), agregalo al `hidden` de `build/pyinstaller.spec` si se importa lazy, y bajalo a tests con su marker correspondiente.
+
+### Imports lazy y el `.exe` — la trampa recurrente
+
+Los módulos del plan v3.2 se importan **dentro de funciones**, no en el top-level:
+
+| Módulo | Import lazy en | Si falta en el spec |
+|---|---|---|
+| `runtime_check` | `main.py:62` | Se pierde la detección de WebView2 |
+| `outlook.version` | `main.py:61` | Se pierde la detección de versión |
+| `search_index` | `api.py:488` | Cae en el try genérico → error a la UI |
+| `vss_copy` | `cache_backup.py:306` | Tiene `except ImportError` → fallback al copy clásico |
+| `incremental_state` | `backup_engine.py:303` | **Sin guarda** → el backup incremental falla |
+| `date_filter` | `backup_engine.py:263` | (también top-level en `outlook_client.py:14`) |
+
+PyInstaller no detecta estos imports, así que **el build pasa igual y `python src\main.py` funciona** — sólo revienta en el `.exe` y sólo al ejecutar ese camino. Los siete ya están en `hidden` (2026-07-28). `outlook.fakes` queda deliberadamente afuera: es solo de tests.
+
+El bloque strict de mypy también quedó completo: `scheduler`, `search_index` y `vss_copy` faltaban y se agregaron. Verificado con `mypy src --ignore-missing-imports` → 31 archivos sin errores.
 
 ## CI — dos workflows independientes
 
@@ -444,7 +468,7 @@ Busca en `HKCU\Software\Microsoft\Office\{ver}\Outlook\Profiles` (ver=16.0, 15.0
 ## Integracion Antigravity
 
 Proyecto integrado con **Antigravity v6.1.4**.
-Instalado por Nexus el 2026-07-10.
+Instalado por Nexus el 2026-07-24.
 
 ### Persona activa: gentleman
 

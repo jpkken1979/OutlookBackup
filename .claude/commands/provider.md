@@ -89,9 +89,14 @@ LM Studio `/v1/models`). NVIDIA / OpenRouter / OpenCode sí requieren API key en
   al retransmitir a `api.anthropic.com`. No hay diferencia funcional con Claude
   nativo, salvo que el gateway es ahora la única puerta de entrada (lo cual
   permite circuit breaker, failover, shadow mode y class routing sobre Claude).
-- **Rollback total** (salir del ecosistema): `POST /v1/provider/disconnect` o el
-  botón "Desconectar proxy" de Nexus. Esto SÍ quita `ANTHROPIC_BASE_URL` y
-  siempre pide reiniciar — es el único caso donde se sale del modelo proxy-always.
+- **Rollback total** (salir del ecosistema): ⚠️ `provider_switch.py disconnect` /
+  `POST /v1/provider/disconnect` quedaron **deprecados** (2026-07-12): en proxy-always
+  sólo llaman a `reset_to_proxy_always()` y dejan el proxy conectado. El botón
+  "Desconectar proxy" también fue removido del UI de Nexus. **La única vía real** para
+  salir del proxy es **borrar `ANTHROPIC_BASE_URL` de `~/.claude/settings.json` a mano**
+  y reiniciar Claude Code una vez. Necesario para que **Remote Control del cel** (`/rc`)
+  funcione — se bloquea si el base URL ≠ `api.anthropic.com` (Claude Code ≥ v2.1.196).
+  Ver `[[decision_proxy_disconnect_for_mobile_remote_2026-07-10]]`.
 - Si un provider necesita API key (`minimax`, `zai`, `nvidia`, `openrouter`,
   `opencode`) y no está en `.env`, el endpoint devuelve error con el nombre
   de la var faltante (`MINIMAX_API_KEY`, etc.).

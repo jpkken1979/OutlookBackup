@@ -90,3 +90,35 @@ GEMINI.md
 
 # .mcp.json SI se trackea: es portable (rutas relativas) y define el runtime MCP
 !.mcp.json
+
+# === ANTIGRAVITY GUARD START === (auto-managed, no editar manual)
+# Excepciones del ecosistema Antigravity para que git versione los
+# archivos criticos (memoria, brain, MCP config, runtime).
+# Ver docs/rules-reference/memory-engine.md y .claude/rules/security.md
+!.mcp.json
+!.mcp.local.json
+!.claude/
+!.claude/settings.json
+!.claude/settings.local.json
+!.claude/memory/
+!.claude/memory/**/*.md
+!.claude/rules/
+!.claude/rules/**/*.md
+!.claude/commands/
+!.claude/commands/**/*.md
+!.agent/
+!.agent/VERSION
+!.agent/brain/
+!.agent/brain/**/*.md
+!.agent/brain/**/*.db
+!.agent/scripts/
+!.agent/scripts/**/*.py
+!.agent/scripts/**/*.ps1
+!.agent/scripts/**/*.sh
+!.agent/mcp/
+!.agent/mcp/**/*.py
+!.agent/core/
+!.agent/core/**/*.py
+!.antigravity/ai_manifest.json
+!.antigravity/rules.md
+# === ANTIGRAVITY GUARD END ===

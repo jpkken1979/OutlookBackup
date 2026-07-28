@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(python -m venv .venv)",
+      "Bash(.venv/Scripts/pip install *)",
+      "Bash(.venv/Scripts/python -c \"import webview; print\\(f'pywebview {webview.__version__}'\\)\")",
+      "Bash(.venv/Scripts/python -c \"import webview; print\\('pywebview OK'\\)\")",
+      "Bash(.venv/Scripts/python -c \"import pywin32; print\\('pywin32 OK'\\)\")",
+      "Bash(.venv/Scripts/pyinstaller build/pyinstaller.spec --clean --noconfirm)",
+      "Bash(awk '{print \"Size: \" $5/1024/1024 \" MB\"}')",
+      "Bash(git tag *)",
+      "Bash(python -c ' *)",
+      "Bash(node --check src/web/js/app-orchestrator.js)"
+    ]
+  }
+}

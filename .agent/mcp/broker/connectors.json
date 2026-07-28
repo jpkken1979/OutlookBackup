@@ -1,0 +1,669 @@
+{
+  "schema_version": 2,
+  "generated_at": "2026-07-27T00:00:00Z",
+  "connectors": [
+    {
+      "id": "context7",
+      "display_name": "Context7",
+      "owner": "Upstash",
+      "source_url": "https://github.com/upstash/context7",
+      "version": "hosted",
+      "checksum": null,
+      "verification": "verified",
+      "transport": {
+        "type": "streamable_http",
+        "url": "https://mcp.context7.com/mcp",
+        "args": []
+      },
+      "auth": {
+        "required_env": [],
+        "optional_env": ["CONTEXT7_API_KEY"],
+        "header_from_env": {
+          "Authorization": "CONTEXT7_API_KEY"
+        }
+      },
+      "scopes": {
+        "read": ["*"],
+        "write": [],
+        "destructive": []
+      },
+      "sandbox": "network",
+      "description": "Documentación actualizada de librerías y frameworks."
+    },
+    {
+      "id": "deepwiki",
+      "display_name": "DeepWiki",
+      "owner": "Cognition",
+      "source_url": "https://github.com/CognitionAI/deepwiki-open",
+      "version": "hosted",
+      "checksum": null,
+      "verification": "verified",
+      "transport": {
+        "type": "streamable_http",
+        "url": "https://mcp.deepwiki.com/mcp",
+        "args": []
+      },
+      "auth": {
+        "required_env": [],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["*"],
+        "write": [],
+        "destructive": []
+      },
+      "sandbox": "network",
+      "description": "Consulta documentación derivada de repositorios GitHub."
+    },
+    {
+      "id": "github",
+      "display_name": "GitHub",
+      "owner": "GitHub",
+      "source_url": "https://github.com/github/github-mcp-server",
+      "version": "hosted",
+      "checksum": null,
+      "verification": "verified",
+      "transport": {
+        "type": "streamable_http",
+        "url": "https://api.githubcopilot.com/mcp/",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["GITHUB_PERSONAL_ACCESS_TOKEN"],
+        "optional_env": [],
+        "header_from_env": {
+          "Authorization": "GITHUB_PERSONAL_ACCESS_TOKEN"
+        }
+      },
+      "scopes": {
+        "read": ["get*", "list*", "search*", "read*"],
+        "write": ["create*", "update*", "add*", "push*", "merge*"],
+        "destructive": ["delete*", "remove*", "close_repository*"]
+      },
+      "sandbox": "network",
+      "description": "Repositorios, issues, pull requests, Actions y seguridad."
+    },
+    {
+      "id": "notion",
+      "display_name": "Notion",
+      "owner": "Notion",
+      "source_url": "https://developers.notion.com/guides/mcp/overview",
+      "version": "hosted",
+      "checksum": null,
+      "verification": "verified",
+      "transport": {
+        "type": "streamable_http",
+        "url": "https://mcp.notion.com/mcp",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["NOTION_MCP_ACCESS_TOKEN"],
+        "optional_env": [],
+        "header_from_env": {
+          "Authorization": "NOTION_MCP_ACCESS_TOKEN"
+        }
+      },
+      "scopes": {
+        "read": ["fetch*", "get*", "list*", "search*"],
+        "write": ["create*", "update*", "move*"],
+        "destructive": ["delete*", "archive*"]
+      },
+      "sandbox": "network",
+      "description": "Páginas y bases de datos Notion mediante el endpoint oficial."
+    },
+    {
+      "id": "supabase",
+      "display_name": "Supabase",
+      "owner": "Supabase",
+      "source_url": "https://github.com/supabase-community/supabase-mcp",
+      "version": "hosted",
+      "checksum": null,
+      "verification": "verified",
+      "transport": {
+        "type": "streamable_http",
+        "url": "https://mcp.supabase.com/mcp",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["SUPABASE_ACCESS_TOKEN"],
+        "optional_env": ["SUPABASE_PROJECT_REF"],
+        "header_from_env": {
+          "Authorization": "SUPABASE_ACCESS_TOKEN"
+        }
+      },
+      "scopes": {
+        "read": ["get*", "list*", "search*", "execute_sql_read_only"],
+        "write": ["apply_migration", "create*", "update*", "execute_sql"],
+        "destructive": ["delete*", "drop*", "reset*"]
+      },
+      "sandbox": "network",
+      "description": "Gestión de proyectos Supabase; se recomienda scope por proyecto."
+    },
+    {
+      "id": "playwright",
+      "display_name": "Playwright",
+      "owner": "Microsoft",
+      "source_url": "https://github.com/microsoft/playwright-mcp",
+      "version": "0.0.41",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "stdio",
+        "command": "${ANTIGRAVITY_NODE}",
+        "args": [
+          "${ANTIGRAVITY_ROOT}/.antigravity/connectors/playwright/cli.js",
+          "--isolated"
+        ]
+      },
+      "auth": {
+        "required_env": [],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["browser_snapshot", "browser_console_messages", "browser_network_requests", "browser_tabs"],
+        "write": ["browser_click", "browser_fill_form", "browser_navigate", "browser_press_key", "browser_select_option"],
+        "destructive": ["browser_file_upload", "browser_run_code"]
+      },
+      "sandbox": "browser",
+      "description": "Automatización de navegador persistente; para tareas de código se prefiere CLI/skill."
+    },
+    {
+      "id": "semgrep",
+      "display_name": "Semgrep",
+      "owner": "Semgrep",
+      "source_url": "https://github.com/semgrep/mcp",
+      "version": "0.7.1",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "stdio",
+        "command": "${ANTIGRAVITY_PYTHON}",
+        "args": [
+          "-m",
+          "semgrep_mcp"
+        ]
+      },
+      "auth": {
+        "required_env": [],
+        "optional_env": ["SEMGREP_APP_TOKEN"],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["*"],
+        "write": [],
+        "destructive": []
+      },
+      "sandbox": "filesystem",
+      "description": "Análisis estático de seguridad y reglas Semgrep."
+    },
+    {
+      "id": "postgres",
+      "display_name": "Postgres MCP Pro",
+      "owner": "Crystal DBA",
+      "source_url": "https://github.com/crystaldba/postgres-mcp",
+      "version": "0.3.0",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "stdio",
+        "command": "${ANTIGRAVITY_PYTHON}",
+        "args": [
+          "-m",
+          "postgres_mcp",
+          "--access-mode=restricted"
+        ]
+      },
+      "auth": {
+        "required_env": ["DATABASE_URI"],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["*"],
+        "write": ["execute_sql"],
+        "destructive": ["drop*", "truncate*", "delete*"]
+      },
+      "sandbox": "restricted",
+      "description": "Diagnóstico PostgreSQL en modo restringido por defecto."
+    },
+    {
+      "id": "notebooklm",
+      "display_name": "NotebookLM",
+      "owner": "Community",
+      "source_url": "https://github.com/jacob-bd/notebooklm-mcp-cli",
+      "version": "0.3.0",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "stdio",
+        "command": "${ANTIGRAVITY_ROOT}/.antigravity/connectors/notebooklm/notebooklm-mcp.exe",
+        "args": []
+      },
+      "auth": {
+        "required_env": [],
+        "optional_env": ["NOTEBOOKLM_PROFILE"],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["*"],
+        "write": ["add*", "create*", "sync*"],
+        "destructive": ["delete*", "remove*"]
+      },
+      "sandbox": "browser",
+      "description": "Recall y gestión de fuentes NotebookLM con sesión local."
+    },
+    {
+      "id": "testsprite",
+      "display_name": "TestSprite",
+      "owner": "TestSprite",
+      "source_url": "https://github.com/TestSpriteAI/MCP-Server",
+      "version": "unresolved",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "managed",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["TESTSPRITE_API_KEY"],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["*"],
+        "write": ["generate*", "run*"],
+        "destructive": []
+      },
+      "sandbox": "network",
+      "description": "Generación y ejecución asistida de pruebas."
+    },
+    {
+      "id": "pieces",
+      "display_name": "Pieces",
+      "owner": "Pieces for Developers",
+      "source_url": "https://docs.pieces.app/products/mcp",
+      "version": "managed",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "managed",
+        "args": []
+      },
+      "auth": {
+        "required_env": [],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["*"],
+        "write": ["create*", "save*"],
+        "destructive": ["delete*"]
+      },
+      "sandbox": "filesystem",
+      "description": "Contexto y memoria local de desarrollo."
+    },
+    {
+      "id": "perplexity",
+      "display_name": "Perplexity",
+      "owner": "Perplexity",
+      "source_url": "https://docs.perplexity.ai/guides/mcp-server",
+      "version": "managed",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "managed",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["PERPLEXITY_API_KEY"],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["*"],
+        "write": [],
+        "destructive": []
+      },
+      "sandbox": "network",
+      "description": "Búsqueda web y research con Perplexity."
+    },
+    {
+      "id": "stripe",
+      "display_name": "Stripe",
+      "owner": "Stripe",
+      "source_url": "https://docs.stripe.com/mcp",
+      "version": "hosted",
+      "checksum": null,
+      "verification": "verified",
+      "transport": {
+        "type": "streamable_http",
+        "url": "https://mcp.stripe.com",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["STRIPE_MCP_TOKEN"],
+        "optional_env": [],
+        "header_from_env": {
+          "Authorization": "STRIPE_MCP_TOKEN"
+        }
+      },
+      "scopes": {
+        "read": ["get*", "list*", "search*"],
+        "write": ["create*", "update*"],
+        "destructive": ["cancel*", "delete*", "refund*"]
+      },
+      "sandbox": "payments",
+      "description": "Operaciones Stripe; toda mutación requiere aprobación."
+    },
+    {
+      "id": "paypal",
+      "display_name": "PayPal",
+      "owner": "PayPal",
+      "source_url": "https://developer.paypal.com/tools/mcp-server/",
+      "version": "managed",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "managed",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["PAYPAL_ACCESS_TOKEN"],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["get*", "list*", "search*"],
+        "write": ["create*", "update*", "capture*"],
+        "destructive": ["cancel*", "refund*", "delete*"]
+      },
+      "sandbox": "payments",
+      "description": "Operaciones PayPal; toda mutación requiere aprobación."
+    },
+    {
+      "id": "slack",
+      "display_name": "Slack",
+      "owner": "Slack",
+      "source_url": "https://api.slack.com/docs/apps/ai/mcp",
+      "version": "managed",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "managed",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["SLACK_BOT_TOKEN"],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["get*", "list*", "search*", "read*"],
+        "write": ["send*", "post*", "update*"],
+        "destructive": ["delete*"]
+      },
+      "sandbox": "network",
+      "description": "Canales, mensajes y búsqueda de Slack."
+    },
+    {
+      "id": "discord",
+      "display_name": "Discord",
+      "owner": "Community",
+      "source_url": "https://github.com/modelcontextprotocol/servers",
+      "version": "unresolved",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "managed",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["DISCORD_BOT_TOKEN"],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["get*", "list*", "search*", "read*"],
+        "write": ["send*", "post*", "update*"],
+        "destructive": ["delete*", "ban*", "kick*"]
+      },
+      "sandbox": "network",
+      "description": "Servidor comunitario; permanece UNVERIFIED hasta fijar artefacto."
+    },
+    {
+      "id": "google-drive",
+      "display_name": "Google Drive",
+      "owner": "Google",
+      "source_url": "https://developers.google.com/drive",
+      "version": "managed",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "managed",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["GOOGLE_DRIVE_OAUTH_TOKEN"],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["get*", "list*", "search*", "download*"],
+        "write": ["create*", "update*", "upload*", "move*"],
+        "destructive": ["delete*", "trash*"]
+      },
+      "sandbox": "network",
+      "description": "Archivos Google Drive con OAuth y scopes por operación."
+    },
+    {
+      "id": "linear",
+      "display_name": "Linear",
+      "owner": "Linear",
+      "source_url": "https://linear.app/docs/mcp",
+      "version": "hosted",
+      "checksum": null,
+      "verification": "verified",
+      "transport": {
+        "type": "streamable_http",
+        "url": "https://mcp.linear.app/mcp",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["LINEAR_MCP_ACCESS_TOKEN"],
+        "optional_env": [],
+        "header_from_env": {
+          "Authorization": "LINEAR_MCP_ACCESS_TOKEN"
+        }
+      },
+      "scopes": {
+        "read": ["get*", "list*", "search*"],
+        "write": ["create*", "update*", "comment*"],
+        "destructive": ["delete*", "archive*"]
+      },
+      "sandbox": "network",
+      "description": "Issues, proyectos y ciclos de Linear."
+    },
+    {
+      "id": "jira",
+      "display_name": "Jira / Atlassian",
+      "owner": "Atlassian",
+      "source_url": "https://www.atlassian.com/platform/remote-mcp-server",
+      "version": "unresolved",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "managed",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["ATLASSIAN_MCP_ACCESS_TOKEN"],
+        "optional_env": [],
+        "header_from_env": {
+          "Authorization": "ATLASSIAN_MCP_ACCESS_TOKEN"
+        }
+      },
+      "scopes": {
+        "read": ["get*", "list*", "search*"],
+        "write": ["create*", "update*", "comment*"],
+        "destructive": ["delete*", "archive*"]
+      },
+      "sandbox": "network",
+      "description": "Jira y Confluence mediante el MCP remoto de Atlassian."
+    },
+    {
+      "id": "sentry",
+      "display_name": "Sentry",
+      "owner": "Sentry",
+      "source_url": "https://github.com/getsentry/sentry-mcp",
+      "version": "hosted",
+      "checksum": null,
+      "verification": "verified",
+      "transport": {
+        "type": "streamable_http",
+        "url": "https://mcp.sentry.dev/mcp",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["SENTRY_MCP_ACCESS_TOKEN"],
+        "optional_env": [],
+        "header_from_env": {
+          "Authorization": "SENTRY_MCP_ACCESS_TOKEN"
+        }
+      },
+      "scopes": {
+        "read": ["get*", "list*", "search*", "find*", "analyze*"],
+        "write": ["create*", "update*", "resolve*"],
+        "destructive": ["delete*"]
+      },
+      "sandbox": "network",
+      "description": "Issues, traces y diagnóstico de errores Sentry."
+    },
+    {
+      "id": "filesystem",
+      "display_name": "Filesystem",
+      "owner": "OpenAntigravity",
+      "source_url": "https://github.com/modelcontextprotocol/servers",
+      "version": "bundle-v2",
+      "checksum": null,
+      "verification": "verified",
+      "transport": {
+        "type": "internal",
+        "args": []
+      },
+      "auth": {
+        "required_env": [],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["read*", "list*", "search*", "get*"],
+        "write": ["write*", "create*", "move*"],
+        "destructive": ["delete*", "remove*"]
+      },
+      "sandbox": "filesystem",
+      "description": "Acceso al proyecto limitado al workspace activo."
+    },
+    {
+      "id": "git",
+      "display_name": "Git",
+      "owner": "OpenAntigravity",
+      "source_url": "https://github.com/modelcontextprotocol/servers",
+      "version": "bundle-v2",
+      "checksum": null,
+      "verification": "verified",
+      "transport": {
+        "type": "internal",
+        "args": []
+      },
+      "auth": {
+        "required_env": [],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["status", "diff", "log", "show*", "branch_list"],
+        "write": ["add", "commit", "checkout*", "branch_create"],
+        "destructive": ["reset*", "clean*", "branch_delete"]
+      },
+      "sandbox": "filesystem",
+      "description": "Operaciones Git limitadas al proyecto."
+    },
+    {
+      "id": "sqlite",
+      "display_name": "SQLite",
+      "owner": "OpenAntigravity",
+      "source_url": "https://github.com/modelcontextprotocol/servers",
+      "version": "bundle-v2",
+      "checksum": null,
+      "verification": "verified",
+      "transport": {
+        "type": "internal",
+        "args": []
+      },
+      "auth": {
+        "required_env": [],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["read*", "list*", "query*", "schema*"],
+        "write": ["write*", "execute*"],
+        "destructive": ["drop*", "delete*", "vacuum*"]
+      },
+      "sandbox": "restricted",
+      "description": "Consulta SQLite local con clasificación de sentencias."
+    },
+    {
+      "id": "chrome-devtools",
+      "display_name": "Chrome DevTools",
+      "owner": "Google",
+      "source_url": "https://github.com/ChromeDevTools/chrome-devtools-mcp",
+      "version": "managed",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "managed",
+        "args": []
+      },
+      "auth": {
+        "required_env": [],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["*"],
+        "write": ["click*", "fill*", "navigate*", "evaluate*"],
+        "destructive": []
+      },
+      "sandbox": "browser",
+      "description": "Inspección y automatización de Chrome DevTools."
+    },
+    {
+      "id": "magic-21st",
+      "display_name": "Magic 21st",
+      "owner": "21st.dev",
+      "source_url": "https://21st.dev/magic",
+      "version": "managed",
+      "checksum": null,
+      "verification": "unverified",
+      "transport": {
+        "type": "managed",
+        "args": []
+      },
+      "auth": {
+        "required_env": ["TWENTY_FIRST_API_KEY"],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["search*"],
+        "write": ["create*", "generate*"],
+        "destructive": []
+      },
+      "sandbox": "network",
+      "description": "Generación y búsqueda de componentes UI."
+    }
+  ]
+}
