@@ -6,6 +6,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && bash \".claude/hooks/scripts/run-python.sh\" -X utf8 \".claude/hooks/SessionStop.py\"",
+            "timeout": 120
+          },
+          {
+            "type": "command",
             "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && \".claude/hooks/scripts/memory-sync.sh\"",
             "timeout": 30
           },
@@ -50,6 +55,11 @@
             "type": "command",
             "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && \".claude/hooks/scripts/setup-deps.sh\"",
             "timeout": 600
+          },
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && bash \".claude/hooks/scripts/run-python.sh\" -X utf8 \".claude/hooks/scripts/failover_guard.py\"",
+            "timeout": 10
           }
         ]
       }
@@ -103,7 +113,7 @@
           {
             "type": "command",
             "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && bash \".claude/hooks/scripts/run-python.sh\" -X utf8 \".agent/hooks/memory/user_prompt_submit.py\"",
-            "timeout": 35
+            "timeout": 45
           }
         ]
       }
