@@ -25,6 +25,7 @@ v1.0.0 - 2026-02-22
 """
 
 import json
+import re
 import logging
 import os
 import sys
@@ -36,6 +37,26 @@ SCRIPT_DIR = Path(__file__).parent
 CORE_DIR = SCRIPT_DIR.parent / "core"
 sys.path.insert(0, str(CORE_DIR))
 sys.path.insert(0, str(SCRIPT_DIR.parent))
+
+
+def _project_root() -> str:
+    """Raiz del proyecto observado.
+
+    NO usar el ``cwd`` del payload de Claude Code: ese campo es el directorio de
+    trabajo de la sesion y cambia con cada ``cd`` del usuario, asi que el
+    pipeline terminaba creando ``.agent/memory/learning`` dentro de cualquier
+    subdirectorio visitado. La raiz es estable: la declara el entorno o, en su
+    defecto, la deduce la ubicacion de este archivo
+    (``<raiz>/.agent/scripts/observation_hook.py``), que el injector copia a la
+    raiz de cada proyecto.
+    """
+    for var in ("CLAUDE_PROJECT_DIR", "ANTIGRAVITY_ROOT"):
+        value = os.environ.get(var, "").strip()
+        if value:
+            candidate = Path(value)
+            if candidate.is_dir():
+                return str(candidate.resolve())
+    return str(SCRIPT_DIR.resolve().parent.parent)
 
 logging.basicConfig(
     level=logging.WARNING,  # Silencioso para no interferir con Claude Code
@@ -71,6 +92,54 @@ def read_stdin() -> dict:
         return {}
 
 
+# Un payload JSON con "error": null es una respuesta EXITOSA. Se descartan estos
+# marcadores antes de buscar senales de fallo: buscar el substring "error" sobre
+# la respuesta cruda marcaba como error CRITICO cada llamada MCP correcta e
+# inundaba project_memory/errors.json con claves irrepetibles.
+_JSON_EMPTY_ERROR_RE = re.compile(
+    r'"(?:error|errors|error_message|stderr)"\s*:\s*(?:null|false|""|\[\]|\{\})',
+    re.IGNORECASE,
+)
+
+# Senales de fallo real, no la mera aparicion de la palabra "error".
+_FAILURE_RE = re.compile(
+    r"^\s*(?:error|failed|failure|exception|traceback|fatal)\b"
+    r'|"?(?:error|exception)"?\s*:\s*(?!\s*(?:null|none|false|0|""))\S'
+    r"|\b\d+\s+(?:\w+\s+)?(?:failed|failures)\b"
+    r"|\bcommand not found\b"
+    r"|\bpermission denied\b"
+    r"|\bno such file or directory\b"
+    r"|\bnon-zero exit\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _detect_failure(tool_response: object) -> tuple[bool, str | None]:
+    """Decide si la respuesta de un tool representa un fallo real.
+
+    Prefiere la senal estructurada de Claude Code (`is_error`) y solo cae en la
+    heuristica de texto cuando no existe.
+
+    Args:
+        tool_response: Respuesta cruda del tool (str o dict).
+
+    Returns:
+        Tupla (success, error_message); error_message es None si hubo exito.
+    """
+    if isinstance(tool_response, dict):
+        if tool_response.get("is_error") or tool_response.get("isError"):
+            return False, str(tool_response)[:200]
+        return True, None
+
+    if not isinstance(tool_response, str):
+        return True, None
+
+    probe = _JSON_EMPTY_ERROR_RE.sub("", tool_response)
+    if _FAILURE_RE.search(probe):
+        return False, tool_response[:200]
+    return True, None
+
+
 def capture_observation(data: dict) -> None:
     """Captura la observacion en el pipeline.
 
@@ -87,16 +156,10 @@ def capture_observation(data: dict) -> None:
     tool_input = data.get("tool_input", {})
     tool_response = data.get("tool_response", "")
     session_id = data.get("session_id", "unknown")
-    cwd = data.get("cwd", os.getcwd())
+    project_root = _project_root()
 
     # Detectar errores
-    success = True
-    error_message = None
-    if isinstance(tool_response, str):
-        lower_response = tool_response.lower()
-        if "error" in lower_response or "failed" in lower_response:
-            success = False
-            error_message = tool_response[:200]
+    success, error_message = _detect_failure(tool_response)
 
     # Truncar tool_response para no almacenar demasiado
     if isinstance(tool_response, str) and len(tool_response) > 500:
@@ -105,7 +168,7 @@ def capture_observation(data: dict) -> None:
     try:
         from core.observation_pipeline import get_observation_pipeline
 
-        pipeline = get_observation_pipeline(cwd)
+        pipeline = get_observation_pipeline(project_root)
 
         obs = pipeline.capture(
             tool_name=tool_name,
@@ -122,7 +185,7 @@ def capture_observation(data: dict) -> None:
             try:
                 from core.hybrid_search import get_hybrid_search
 
-                search = get_hybrid_search(cwd)
+                search = get_hybrid_search(project_root)
                 search.index_observation(
                     obs_id=obs.id,
                     content=obs.to_context_string(),
