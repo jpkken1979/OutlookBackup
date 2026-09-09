@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Normaliza IDENTITY.md de los 116 agentes del ecosistema.
+"""Normaliza los IDENTITY.md activos del ecosistema.
 
 Garantiza:
 1. Frontmatter YAML estandarizado con: name, tier (numerico 1-12), description,
    tools, model, category, capabilities
 2. Tier numerico segun el sistema de 12 tiers del ecosistema
-3. Seccion "Capacidades del Ecosistema" agregada al final con tools relevantes
-   segun categoria (Brain, Watcher, Delta Reader, Context Engine, Memory,
-   magic-21st para ui-ux, etc.)
+3. Seccion "Capacidades del Ecosistema" agregada al final con el contrato
+   MCP-first vigente y capacidades relevantes segun categoria.
 4. Preserva todo el contenido textual existente del agente
 
 Uso:
@@ -238,11 +237,12 @@ ECOSYSTEM_CAPABILITIES_UNIVERSAL = """## Capacidades del Ecosistema
 - **Memoria markdown** (`.claude/memory/*.md`): decisiones, bugfixes, patrones versionados en git
 
 ### Lectura eficiente
-- **Delta Reader** (`antigravity-delta-reader` MCP): para archivos >50 lineas que se releen
+- **Broker MCP unico** (`antigravity`): descubrir con `antigravity_search`, describir con `antigravity_describe` y ejecutar bajo demanda
+- **Delta Reader**: descubrirlo en el broker y ejecutarlo como skill; no agregar otro servidor a `.mcp.json`
 - **Context Engine** (`ANTIGRAVITY_CONTEXT_ENGINE`): brain_aware, delta_aware, composite, summarizing
 
 ### Procesos y monitoreo
-- **Watcher** (`antigravity-watcher` MCP): `watch_spawn` para procesos largos con matching reactivo
+- **Watcher**: descubrirlo en el broker y ejecutarlo bajo demanda para procesos largos; no agregar otro servidor a `.mcp.json`
 - **Gateway local** (`http://127.0.0.1:4747`): observabilidad, metricas, SSE stream
 """
 
@@ -250,20 +250,20 @@ ECOSYSTEM_CAPABILITIES_UNIVERSAL = """## Capacidades del Ecosistema
 ECOSYSTEM_CAPABILITIES_BY_CATEGORY: dict[str, str] = {
     "content": """
 ### Stack UI/UX (categoria content)
-- **magic-21st** MCP: generador de componentes UI con IA (requiere `MAGIC_21ST_API_KEY`)
+- **magic-21st**: conector bajo demanda del broker (requiere `MAGIC_21ST_API_KEY`)
 - **ui-ux-pro-max** skill: 85 styles, 161 paletas, 25 chart types data-driven
 - **shadcn-ui-components** skill + Tailwind v4 + Framer Motion
 - Slash `/ui` orquesta el stack completo
 """,
     "data": """
 ### Data & ML
-- **antigravity-excel** MCP: lectura y escritura Excel
+- **Excel**: conector bajo demanda del broker para lectura y escritura
 - **excel-engine** skills custom: openpyxl backend + edge cases
 - **SQLite WAL mode** estandar para concurrencia
 """,
     "desktop": """
 ### Desktop (Tauri 2 + React 19 + Vite 8)
-- **antigravity-ui** MCP: inspector UI del ecosistema
+- **Inspector UI**: conector bajo demanda del broker
 - Tauri commands en `nexus-app/src-tauri/src/commands/`
 - TypeScript strict + Tailwind v4 + Framer Motion
 - ESLint flat config + Vitest
@@ -282,7 +282,7 @@ ECOSYSTEM_CAPABILITIES_BY_CATEGORY: dict[str, str] = {
 """,
     "orchestration": """
 ### Orchestration
-- **Agentes y skills** via MCP: `antigravity-agents`, `antigravity-skills`
+- **Agentes y skills**: `antigravity_search` -> `antigravity_describe` -> `antigravity_run_agent` o `antigravity_run_skill`
 - **Slash commands**: `/sdd`, `/autonomous`, `/team-plan`, `/ralph`, `/ultrawork`
 - **Brain ingest automatico** en `/finalize`
 """,
@@ -294,7 +294,7 @@ ECOSYSTEM_CAPABILITIES_BY_CATEGORY: dict[str, str] = {
 """,
     "intelligence": """
 ### Intelligence
-- **antigravity-intelligence** MCP: cross-app reasoning
+- **Razonamiento entre apps**: capacidades y conectores descubiertos bajo demanda en `antigravity`
 - **Context engines** pluggables: brain_aware, delta_aware, composite
 - **User profile** y feedback adaptativo via `user-preference-learner`
 """,
@@ -312,7 +312,7 @@ ECOSYSTEM_CAPABILITIES_BY_CATEGORY: dict[str, str] = {
 """,
     "specialized": """
 ### Specialized
-- Integraciones via **MCP**: context7 (docs), playwright (browser), chrome-devtools
+- Integraciones via el broker **MCP** unico: context7 (docs), playwright (browser), chrome-devtools
 - **CLI tools**: scaffold-generator, autonomous-executor, log-analyzer
 - Skills externos via `npx skills find/add`
 """,
@@ -613,7 +613,7 @@ def normalize_agent(agent_dir: Path, dry_run: bool) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Normaliza IDENTITY.md de los 116 agentes.")
+    parser = argparse.ArgumentParser(description="Normaliza los IDENTITY.md activos.")
     parser.add_argument(
         "--apply", action="store_true", help="Aplicar cambios. Sin esto, solo dry-run."
     )

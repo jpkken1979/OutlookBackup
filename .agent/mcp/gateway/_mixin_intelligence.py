@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 
 from aiohttp import web
 from ._mixin_advanced import _daemon_unavailable_response, _get_daemon_safe
 
 log = logging.getLogger("antigravity-gateway")
+
+
+def _quality_workflow_id(graph_name: str, idempotency_key: str) -> str:
+    digest = hashlib.sha256(f"{graph_name}:{idempotency_key}".encode()).hexdigest()[:24]
+    return f"wf-{digest}"
 
 
 class _IntelligenceMixin:
@@ -158,15 +164,13 @@ class _IntelligenceMixin:
     # WorkflowEngine Endpoints (Sprint 3)
     # --------------------------------------------------------
     async def handle_workflow_list_graphs(self, request: web.Request) -> web.Response:
-        """GET /v1/workflows/graphs - Lista grafos registrados."""
+        """GET /v1/workflows/graphs - Lista el catálogo cerrado de gates."""
         from .._gateway_main import _make_response, _sanitize_error
 
         try:
-            from core.agent_daemon import get_daemon
+            from core.quality_gate_workflows import quality_catalog
 
-            daemon = await get_daemon(lite=True)
-            graphs = await daemon.list_graphs()
-            return web.json_response(_make_response(data=graphs))
+            return web.json_response(_make_response(data=quality_catalog()))
         except Exception as e:
             return web.json_response(
                 _make_response(error=_sanitize_error(e), status=500),
@@ -175,21 +179,35 @@ class _IntelligenceMixin:
 
     async def handle_workflow_execute(self, request: web.Request) -> web.Response:
         """POST /v1/workflows/execute - Ejecuta un workflow."""
-        from .._gateway_main import _make_response, _sanitize_error
+        from .._gateway_main import _make_response, _sanitize_error, _validate_name
 
         try:
             body = await request.json()
             graph_name = body.get("graph")
-            if not graph_name:
+            idempotency_key = body.get("idempotency_key")
+            if not isinstance(graph_name, str):
                 return web.json_response(
                     _make_response(error="Falta campo 'graph'", status=400),
                     status=400,
                 )
-            initial_state = body.get("state", {})
-            from core.agent_daemon import get_daemon
+            if not isinstance(idempotency_key, str) or not _validate_name(idempotency_key):
+                return web.json_response(
+                    _make_response(error="Idempotency key inválido", status=400),
+                    status=400,
+                )
+            from core.quality_gate_workflows import validate_quality_initial_state
+            from core.workflow_engine import get_workflow_engine
 
-            daemon = await get_daemon(lite=True)
-            result = await daemon.execute_workflow(graph_name, initial_state)
+            initial_state = validate_quality_initial_state(
+                graph_name,
+                body.get("state", {}),
+            )
+            engine = get_workflow_engine()
+            result = await engine.execute(
+                graph_name,
+                initial_state,
+                workflow_id=_quality_workflow_id(graph_name, idempotency_key),
+            )
             return web.json_response(_make_response(data=result))
         except ValueError as e:
             return web.json_response(
@@ -208,12 +226,22 @@ class _IntelligenceMixin:
 
         try:
             status = request.query.get("status")
-            limit = int(request.query.get("limit", "50"))
-            from core.agent_daemon import get_daemon
+            limit = max(1, min(int(request.query.get("limit", "50")), 100))
+            from core.quality_gate_workflows import QUALITY_GRAPH_IDS
+            from core.workflow_engine import get_workflow_engine
 
-            daemon = await get_daemon(lite=True)
-            workflows = await daemon.list_workflows(status, limit)
+            engine = get_workflow_engine()
+            workflows = [
+                workflow
+                for workflow in engine.list_workflows(status, limit * 2)
+                if workflow.get("graph_name") in QUALITY_GRAPH_IDS
+            ][:limit]
             return web.json_response(_make_response(data=workflows))
+        except ValueError as e:
+            return web.json_response(
+                _make_response(error=str(e), status=400),
+                status=400,
+            )
         except Exception as e:
             return web.json_response(
                 _make_response(error=_sanitize_error(e), status=500),
@@ -231,11 +259,11 @@ class _IntelligenceMixin:
                     _make_response(error="ID de workflow invalido", status=400),
                     status=400,
                 )
-            from core.agent_daemon import get_daemon
+            from core.quality_gate_workflows import QUALITY_GRAPH_IDS
+            from core.workflow_engine import get_workflow_engine
 
-            daemon = await get_daemon(lite=True)
-            wf = await daemon.get_workflow(workflow_id)
-            if wf is None:
+            wf = get_workflow_engine().get_workflow(workflow_id)
+            if wf is None or wf.get("graph_name") not in QUALITY_GRAPH_IDS:
                 return web.json_response(
                     _make_response(error="Workflow no encontrado", status=404),
                     status=404,
@@ -258,12 +286,24 @@ class _IntelligenceMixin:
                     _make_response(error="ID de workflow invalido", status=400),
                     status=400,
                 )
-            limit = int(request.query.get("limit", "50"))
-            from core.agent_daemon import get_daemon
+            limit = max(1, min(int(request.query.get("limit", "50")), 100))
+            from core.quality_gate_workflows import QUALITY_GRAPH_IDS
+            from core.workflow_engine import get_workflow_engine
 
-            daemon = await get_daemon(lite=True)
-            events = await daemon.get_workflow_events(workflow_id, limit)
+            engine = get_workflow_engine()
+            workflow = engine.get_workflow(workflow_id)
+            if workflow is None or workflow.get("graph_name") not in QUALITY_GRAPH_IDS:
+                return web.json_response(
+                    _make_response(error="Workflow no encontrado", status=404),
+                    status=404,
+                )
+            events = engine.get_workflow_events(workflow_id, limit)
             return web.json_response(_make_response(data=events))
+        except ValueError as e:
+            return web.json_response(
+                _make_response(error=str(e), status=400),
+                status=400,
+            )
         except Exception as e:
             return web.json_response(
                 _make_response(error=_sanitize_error(e), status=500),
@@ -282,11 +322,33 @@ class _IntelligenceMixin:
                     status=400,
                 )
             body = await request.json()
-            human_input = body.get("human_input", {})
-            from core.agent_daemon import get_daemon
+            idempotency_key = body.get("idempotency_key")
+            decision = body.get("decision")
+            if not isinstance(idempotency_key, str) or not _validate_name(idempotency_key):
+                return web.json_response(
+                    _make_response(error="Idempotency key inválido", status=400),
+                    status=400,
+                )
+            if decision not in ("approve", "reject"):
+                return web.json_response(
+                    _make_response(error="Decisión de workflow inválida", status=400),
+                    status=400,
+                )
+            from core.quality_gate_workflows import QUALITY_GRAPH_IDS
+            from core.workflow_engine import WorkflowStatus, get_workflow_engine
 
-            daemon = await get_daemon(lite=True)
-            result = await daemon.resume_workflow(workflow_id, human_input)
+            engine = get_workflow_engine()
+            workflow = engine.get_workflow(workflow_id)
+            if workflow is None or workflow.get("graph_name") not in QUALITY_GRAPH_IDS:
+                return web.json_response(
+                    _make_response(error="Workflow no encontrado", status=404),
+                    status=404,
+                )
+            if workflow.get("status") != WorkflowStatus.PAUSED.value:
+                replay = dict(workflow)
+                replay["replayed"] = True
+                return web.json_response(_make_response(data=replay))
+            result = await engine.resume(workflow_id, {"decision": decision})
             return web.json_response(_make_response(data=result))
         except ValueError as e:
             return web.json_response(
@@ -310,16 +372,35 @@ class _IntelligenceMixin:
                     _make_response(error="ID de workflow invalido", status=400),
                     status=400,
                 )
-            from core.agent_daemon import get_daemon
+            body = await request.json()
+            idempotency_key = body.get("idempotency_key")
+            if not isinstance(idempotency_key, str) or not _validate_name(idempotency_key):
+                return web.json_response(
+                    _make_response(error="Idempotency key inválido", status=400),
+                    status=400,
+                )
+            from core.quality_gate_workflows import QUALITY_GRAPH_IDS
+            from core.workflow_engine import get_workflow_engine
 
-            daemon = await get_daemon(lite=True)
-            ok = await daemon.cancel_workflow(workflow_id)
+            engine = get_workflow_engine()
+            workflow = engine.get_workflow(workflow_id)
+            if workflow is None or workflow.get("graph_name") not in QUALITY_GRAPH_IDS:
+                return web.json_response(
+                    _make_response(error="Workflow no encontrado", status=404),
+                    status=404,
+                )
+            ok = engine.cancel_workflow(workflow_id)
             if not ok:
                 return web.json_response(
                     _make_response(error="No se pudo cancelar", status=400),
                     status=400,
                 )
-            return web.json_response(_make_response(data={"cancelled": True}))
+            return web.json_response(_make_response(data=engine.get_workflow(workflow_id)))
+        except ValueError as e:
+            return web.json_response(
+                _make_response(error=str(e), status=400),
+                status=400,
+            )
         except Exception as e:
             return web.json_response(
                 _make_response(error=_sanitize_error(e), status=500),
@@ -331,24 +412,10 @@ class _IntelligenceMixin:
         from .._gateway_main import _make_response, _sanitize_error
 
         try:
-            daemon = await _get_daemon_safe()
-            if daemon is None:
-                return _daemon_unavailable_response()
-            stats = await asyncio.wait_for(
-                asyncio.to_thread(daemon.get_workflow_stats),
-                timeout=4.0,
-            )
+            from core.workflow_engine import get_workflow_engine
+
+            stats = get_workflow_engine().get_stats()
             return web.json_response(_make_response(data=stats))
-        except TimeoutError:
-            return web.json_response(
-                _make_response(
-                    data={
-                        "status": "not_ready",
-                        "message": "Workflow engine ocupado o inicializando",
-                    }
-                ),
-                status=200,
-            )
         except Exception as e:
             return web.json_response(
                 _make_response(error=_sanitize_error(e), status=500),

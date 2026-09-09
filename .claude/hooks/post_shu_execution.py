@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,10 @@ def run(
                 engine = ShuImprovementEngine(feedback_file=feedback_file)
                 suggestions = engine.suggest_improvements()
                 suggestions_file = feedback_dir / 'last_suggestions.json'
-                suggestions_data = {'timestamp': datetime.utcnow().isoformat() + 'Z', **suggestions}
+                suggestions_data = {
+                    'timestamp': datetime.now(UTC).isoformat().replace('+00:00', 'Z'),
+                    **suggestions,
+                }
                 suggestions_file.write_text(
                     json.dumps(suggestions_data, ensure_ascii=False, indent=2),
                     encoding='utf-8',

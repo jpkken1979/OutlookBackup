@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_VULTURE_ALLOWLIST = PROJECT_ROOT / "governance" / "dead-code" / "vulture-allowlist.txt"
 DEFAULT_TS_ALLOWLIST = PROJECT_ROOT / "governance" / "dead-code" / "ts-prune-allowlist.txt"
+_FINDING_LINE_NUMBER_RE = re.compile(
+    r"^(?P<path>(?:\.agent|src)/[^:]+):\d+(?P<separator>:| -)(?P<detail>.*)$"
+)
 
 
 def _run(cmd: list[str]) -> list[str]:
@@ -30,17 +34,31 @@ def _run(cmd: list[str]) -> list[str]:
 
 
 def _normalize(lines: list[str]) -> list[str]:
-    return [line.replace("\\", "/") for line in lines]
+    normalized: list[str] = []
+    for raw_line in lines:
+        line = raw_line.replace("\\", "/")
+        # ts-prune antepone "/" en Windows, pero no en Linux.
+        if line.startswith("/src/"):
+            line = line[1:]
+        # Los números de línea cambian al formatear o insertar código. El
+        # presupuesto debe identificar un finding por archivo + símbolo, no
+        # convertir el mismo finding desplazado en uno nuevo.
+        match = _FINDING_LINE_NUMBER_RE.match(line)
+        if match:
+            line = f"{match.group('path')}{match.group('separator')}{match.group('detail')}"
+        normalized.append(line)
+    return normalized
 
 
 def _load_allowlist(path: Path) -> set[str]:
     if not path.exists():
         return set()
-    return {
-        line.strip().replace("\\", "/")
+    entries = [
+        line.strip()
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.strip().startswith("#")
-    }
+    ]
+    return set(_normalize(entries))
 
 
 def _filter_ts_prune(lines: list[str]) -> list[str]:

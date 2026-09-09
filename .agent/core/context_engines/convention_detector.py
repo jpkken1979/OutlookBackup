@@ -167,6 +167,8 @@ def _detect_test_framework(repo_root: Path) -> str:
             if "pytest" in pyproject.read_text(encoding="utf-8", errors="ignore"):
                 test_framework = "pytest"
         except OSError:
+            # ponytail: pyproject.toml unreadable — keep whatever test_framework
+            # was already detected from the directory markers above.
             pass
     return test_framework
 

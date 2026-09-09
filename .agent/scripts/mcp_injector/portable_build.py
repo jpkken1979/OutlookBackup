@@ -214,10 +214,7 @@ def build_portable_runtime(
             ),
             data_files=(
                 (
-                    staged_gateway_root
-                    / "antigravity_gateway"
-                    / "broker"
-                    / "connectors.json",
+                    staged_gateway_root / "antigravity_gateway" / "broker" / "connectors.json",
                     "antigravity_gateway/broker",
                 ),
             ),

@@ -19,7 +19,7 @@ class OpenAIClient(BaseLLMClient):
         super().__init__(config)
         self._client = None
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         """Lazy load OpenAI client. Supports custom base_url for compatible APIs (Z.ai, etc)."""
         if self._client is None:
             try:
@@ -253,7 +253,7 @@ class OpenRouterClient(OpenAIClient):
     Uses OpenAI-compatible API at https://openrouter.ai/api/v1
     """
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         """Load OpenAI client configured for OpenRouter."""
         if self._client is None:
             try:
@@ -288,7 +288,7 @@ class KiloCodeClient(OpenAIClient):
     Uses OpenAI-compatible API at https://api.kilo.ai/api/gateway
     """
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         """Load OpenAI client configured for Kilo AI Gateway."""
         if self._client is None:
             try:
@@ -318,7 +318,7 @@ class GitHubModelsClient(OpenAIClient):
     Uses OpenAI-compatible API at https://models.inference.ai.azure.com
     """
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         """Load OpenAI client configured for GitHub Models."""
         if self._client is None:
             try:

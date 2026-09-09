@@ -12,7 +12,8 @@ determinísticamente.
 
 **Opt-in**: `ANTIGRAVITY_PROXY_AUTO_FAILOVER` (default OFF). Con OFF, el comportamiento
 histórico (rescate a Claude) queda intacto. Cascada configurable por
-`ANTIGRAVITY_PROXY_CASCADE` (lista separada por comas).
+`ANTIGRAVITY_PROXY_CASCADE` (lista separada por comas) o por el orden persistido
+desde Nexus.
 """
 
 from __future__ import annotations
@@ -31,11 +32,24 @@ _CASCADE_ENV = "ANTIGRAVITY_PROXY_CASCADE"
 # (bridge Anthropic<->OpenAI); ollama queda como último refugio local.
 _DEFAULT_CASCADE: tuple[str, ...] = (
     "claude",
+    "opencodex",
     "zai",
     "minimax",
+    "openai",
+    "gemini",
+    "deepseek",
+    "groq",
+    "mistral",
+    "xai",
+    "nvidia",
+    "cerebras",
+    "together",
+    "fireworks",
+    "huggingface",
     "opencode",
     "openrouter",
     "ollama",
+    "lmstudio",
 )
 
 # Fallback si no se puede importar provider_switch (boundary de import).
@@ -84,19 +98,36 @@ def configured_providers() -> set[str] | None:
     (``_quota_available_providers``) ya resuelve esto para su propio predicado; esta
     función cubre los otros dos call-sites (circuito y in-flight).
 
+    Los providers de loopback (``ollama``, ``lmstudio``, el bridge ``opencodex``) no
+    tienen ``api_key_env``, asi que el chequeo de credencial los daba por buenos
+    siempre. Se les suma el sondeo TCP de ``local_endpoint_available``: sin eso, el
+    panel los grisaba correctamente pero ``auto/*`` y el failover los seguian
+    eligiendo y el turno fallaba igual — que es justo lo que el flag venia a evitar.
+
     Returns:
         Set de provider ids con ``api_key_env`` vacío o con la key presente en el
-        ``.env``, o ``None`` si no se pudo determinar (boundary de import) — en ese
-        caso el caller no filtra, igual que antes de este chequeo.
+        ``.env``, y —si son locales— con el puerto escuchando. ``None`` si no se
+        pudo determinar (boundary de import) — en ese caso el caller no filtra,
+        igual que antes de este chequeo.
     """
     try:
         from core import provider_switch
+        from core.provider_access import opencodex_oauth_session_detected
 
         root = provider_switch.default_root()
+        oauth_bridge_ids = {
+            "antigravity": "google-antigravity",
+            "github-copilot": "github-copilot",
+        }
         return {
             pid
             for pid, cfg in provider_switch.PROVIDERS.items()
-            if not cfg.api_key_env or provider_switch.get_api_key_from_env(root, cfg.api_key_env)
+            if (not cfg.api_key_env or provider_switch.get_api_key_from_env(root, cfg.api_key_env))
+            and provider_switch.local_endpoint_available(cfg.base_url)
+            and (
+                pid not in oauth_bridge_ids
+                or opencodex_oauth_session_detected(oauth_bridge_ids[pid])
+            )
         }
     except Exception:  # noqa: BLE001 — boundary de import; sin filtro, no romper el failover
         return None
@@ -105,14 +136,28 @@ def configured_providers() -> set[str] | None:
 def get_cascade() -> tuple[str, ...]:
     """Devuelve el orden de cascada efectivo.
 
-    Precedencia: env ``ANTIGRAVITY_PROXY_CASCADE`` (lista por comas) → default. En ambos
-    casos se filtran entradas no proxy-routables y se deduplica preservando el orden.
+    Precedencia: env ``ANTIGRAVITY_PROXY_CASCADE`` (lista por comas) → orden
+    persistido por Nexus en ``failover.json`` → default. En todos los casos se
+    filtran entradas no proxy-routables y se deduplica preservando el orden.
 
     Returns:
         Tupla de provider ids en orden de preferencia para el failover.
     """
     raw = os.environ.get(_CASCADE_ENV, "").strip()
-    candidates = [p.strip().lower() for p in raw.split(",")] if raw else list(_DEFAULT_CASCADE)
+    if raw:
+        candidates = [p.strip().lower() for p in raw.split(",")]
+    else:
+        try:
+            from core import proxy_state
+
+            persisted = proxy_state.get_failover().get("cascade")
+        except Exception:  # noqa: BLE001 — boundary de import; degradar al default
+            persisted = None
+        candidates = (
+            [str(p).strip().lower() for p in persisted]
+            if isinstance(persisted, list) and persisted
+            else list(_DEFAULT_CASCADE)
+        )
     routable = set(_routable())
     seen: set[str] = set()
     out: list[str] = []

@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] %(message)s")
 logger = logging.getLogger("antigravity.feedback")
@@ -89,7 +90,7 @@ class FeedbackCollector:
         logger.info(f"FeedbackCollector initialized at {self.data_dir}")
 
     @property
-    def learning_pipeline(self):
+    def learning_pipeline(self) -> Any:
         """Lazy load learning pipeline."""
         if self._learning_pipeline is None:
             try:
@@ -100,7 +101,7 @@ class FeedbackCollector:
                 logger.warning("AutonomousLearningPipeline not available")
         return self._learning_pipeline
 
-    def _load_state(self):
+    def _load_state(self) -> None:
         """Load persisted state."""
         state_file = self.data_dir / "feedback_state.json"
         if state_file.exists():
@@ -119,7 +120,7 @@ class FeedbackCollector:
             except Exception as e:
                 logger.warning(f"Could not load feedback state: {e}")
 
-    def _save_state(self):
+    def _save_state(self) -> None:
         """Persist state."""
         state_file = self.data_dir / "feedback_state.json"
         try:
@@ -223,7 +224,7 @@ class FeedbackCollector:
         logger.info(f"Feedback submitted for {task_id}: rating={rating}, accepted={accepted}")
         return True
 
-    async def submit_implicit_signal(self, task_id: str, signal: str):
+    async def submit_implicit_signal(self, task_id: str, signal: str) -> None:
         """
         Submit an implicit feedback signal.
 
@@ -254,7 +255,9 @@ class FeedbackCollector:
         elif signal == "discarded_output" or signal == "asked_revision":
             execution.feedback.accepted = False
 
-    async def _process_feedback(self, execution: PendingExecution, feedback: ExecutionFeedback):
+    async def _process_feedback(
+        self, execution: PendingExecution, feedback: ExecutionFeedback
+    ) -> None:
         """Process feedback for learning."""
         if not self.learning_pipeline:
             return
@@ -315,11 +318,11 @@ class FeedbackCollector:
         except Exception as e:
             logger.error(f"Error processing feedback for learning: {e}")
 
-    def on_feedback(self, callback: Callable):
+    def on_feedback(self, callback: Callable) -> None:
         """Register a callback for feedback events."""
         self._on_feedback_callbacks.append(callback)
 
-    def _cleanup_expired(self):
+    def _cleanup_expired(self) -> None:
         """Remove expired pending executions."""
         now = datetime.now()
         expired = [
@@ -395,7 +398,7 @@ async def submit_user_feedback(
 # =============================================================================
 
 
-async def main():
+async def main() -> None:
     """CLI entry point."""
     import argparse
 

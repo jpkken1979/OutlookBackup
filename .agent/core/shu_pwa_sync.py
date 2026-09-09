@@ -11,11 +11,16 @@ import json
 import logging
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_naive_now() -> datetime:
+    """Return UTC in the legacy naive format stored by the SQLite schema."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 # =============================================================================
@@ -192,7 +197,7 @@ class ShuPWASync:
             merged_responses = {**existing_responses, **responses}
 
             # Update session
-            now = datetime.utcnow()
+            now = _utc_naive_now()
             cursor.execute(
                 """
                 UPDATE pwa_sessions
@@ -351,7 +356,7 @@ class ShuPWASync:
                 return {"status": "error", "error": "Session already exists"}
 
             # Create new session
-            now = datetime.utcnow()
+            now = _utc_naive_now()
             responses = initial_responses or {}
             cursor.execute(
                 """

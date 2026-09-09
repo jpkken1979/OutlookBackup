@@ -665,8 +665,8 @@ class IntelligentRouter:
                     },
                     from_agent="intelligent-router",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo publicar route_executed en el bus: %s", e)
 
         return execution.to_dict()
 

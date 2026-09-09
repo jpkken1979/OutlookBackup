@@ -22,8 +22,9 @@ ROOT = Path(__file__).resolve().parents[2]
 LOCAL_MCP_VENV = ROOT / ".venv-mcp" / "notebooklm"
 SKILL_DIR = ROOT / ".agent" / "skills" / "notebooklm"
 
-# Version validada localmente (2026-07-17). Override: ANTIGRAVITY_NLM_CLI_VERSION.
-NOTEBOOKLM_MCP_CLI_VERSION = "0.8.3"
+# Version publicada con soporte para los dominios de Gemini Notebook usados
+# tras el rebranding de Google. Override: ANTIGRAVITY_NLM_CLI_VERSION.
+NOTEBOOKLM_MCP_CLI_VERSION = "0.9.4"
 
 
 def configure_utf8_output() -> None:
@@ -100,6 +101,47 @@ def ensure_mcp_cli() -> Path:
     if not nlm.exists():
         raise FileNotFoundError(f"nlm was not installed at {nlm}")
     return nlm
+
+
+def update_mcp_cli() -> int:
+    """Reinstall the newest stable CLI without touching auth or project data."""
+    LOCAL_MCP_VENV.parent.mkdir(parents=True, exist_ok=True)
+    if not venv_python().exists():
+        print(f"Creating local MCP venv: {LOCAL_MCP_VENV}")
+        venv.create(LOCAL_MCP_VENV, with_pip=True)
+
+    print("Updating and repairing notebooklm-mcp-cli from PyPI...")
+    run([str(venv_python()), "-m", "pip", "install", "--upgrade", "pip"])
+    run(
+        [
+            str(venv_python()),
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "--upgrade-strategy",
+            "eager",
+            "notebooklm-mcp-cli",
+        ]
+    )
+
+    nlm = exe("nlm")
+    if not nlm.exists():
+        raise FileNotFoundError(f"nlm was not installed at {nlm}")
+
+    print()
+    print("Installed version:")
+    run([str(nlm), "--version"], check=False)
+    print()
+    print("Post-update diagnostics:")
+    doctor_result = run([str(nlm), "doctor"], check=False)
+    if doctor_result.returncode != 0:
+        print(
+            "The CLI was updated, but doctor reported items that may need attention.",
+            file=sys.stderr,
+        )
+    return 0
 
 
 def skill_status() -> int:
@@ -192,7 +234,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("status", help="Show local skill and MCP bridge state")
     subparsers.add_parser("install", help="Install notebooklm-mcp-cli in .venv-mcp/")
-    subparsers.add_parser("login", help="Run browser login for the MCP bridge")
+    subparsers.add_parser(
+        "update", help="Update/reinstall the newest stable CLI and run diagnostics"
+    )
+    login_parser = subparsers.add_parser("login", help="Run browser login for the MCP bridge")
+    login_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite credentials when the dedicated profile changed accounts",
+    )
+    login_parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Clear the dedicated Chrome profile before logging in",
+    )
     subparsers.add_parser("doctor", help="Run notebooklm-mcp-cli diagnostics")
     subparsers.add_parser("mcp-json", help="Print generic MCP JSON for Codex/OpenCode/etc.")
     subparsers.add_parser(
@@ -223,8 +278,15 @@ def main(argv: list[str] | None = None) -> int:
         print("NotebookLM MCP CLI installed.")
         print_mcp_json()
         return 0
+    if args.command == "update":
+        return update_mcp_cli()
     if args.command == "login":
-        return run_nlm(["login"])
+        login_args = ["login"]
+        if args.force:
+            login_args.append("--force")
+        if args.clear:
+            login_args.append("--clear")
+        return run_nlm(login_args)
     if args.command == "doctor":
         return run_nlm(["doctor"])
     if args.command == "mcp-json":

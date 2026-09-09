@@ -30,6 +30,49 @@ from core.portable_runtime import (
 
 logger = logging.getLogger("antigravity.gateway_executor")
 
+
+def _build_environment_overrides(
+    llm_config: dict[str, Any] | None,
+    persona: str | None,
+) -> dict[str, str]:
+    """Construye las variables de entorno para una ejecucion de agente."""
+    env_overrides: dict[str, str] = {}
+    if llm_config:
+        if "provider_id" in llm_config:
+            env_overrides["ANTIGRAVITY_LLM_PROVIDER_ID"] = str(llm_config["provider_id"])
+        if "provider" in llm_config:
+            env_overrides["ANTIGRAVITY_LLM_PROVIDER"] = str(llm_config["provider"])
+        if "model" in llm_config:
+            env_overrides["ANTIGRAVITY_LLM_MODEL"] = str(llm_config["model"])
+        if "base_url" in llm_config:
+            env_overrides["ANTIGRAVITY_LLM_BASE_URL"] = str(llm_config["base_url"])
+        if "max_tokens" in llm_config:
+            env_overrides["ANTIGRAVITY_LLM_MAX_TOKENS"] = str(llm_config["max_tokens"])
+        if "thinking_level" in llm_config:
+            env_overrides["ANTIGRAVITY_LLM_THINKING"] = str(llm_config["thinking_level"])
+    if persona:
+        env_overrides["ANTIGRAVITY_PERSONA"] = persona
+    return env_overrides
+
+
+def _apply_environment_overrides(overrides: dict[str, str]) -> dict[str, str | None]:
+    """Aplica overrides y devuelve los valores originales para restaurarlos."""
+    saved_env: dict[str, str | None] = {}
+    for key, value in overrides.items():
+        saved_env[key] = os.environ.get(key)
+        os.environ[key] = value
+    return saved_env
+
+
+def _restore_environment(saved_env: dict[str, str | None]) -> None:
+    """Restaura las variables de entorno guardadas por una ejecucion."""
+    for key, original in saved_env.items():
+        if original is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original
+
+
 # ─────────────────────────────────────────────────────────────────
 # Result types
 # ─────────────────────────────────────────────────────────────────
@@ -129,6 +172,10 @@ class GatewayExecutor:
         self._history: list[dict[str, Any]] = []
         self.execution_history = self._history  # public alias
         self.cost_tracker = CostTracker()
+        # Route overrides use process environment for compatibility with the
+        # legacy agent engines. Serialize that narrow section so concurrent MCP
+        # calls cannot observe each other's provider/model.
+        self._environment_lock = asyncio.Lock()
         if self._portable_mode:
             logger.info("GatewayExecutor initialized in portable script mode")
         elif orchestrator is None:
@@ -177,9 +224,7 @@ class GatewayExecutor:
                 continue
             metadata: dict[str, Any] = {}
             try:
-                metadata = json.loads(
-                    (agent_dir / "agent.json").read_text(encoding="utf-8")
-                )
+                metadata = json.loads((agent_dir / "agent.json").read_text(encoding="utf-8"))
             except (OSError, TypeError, ValueError):
                 pass
             agents.append(
@@ -222,40 +267,40 @@ class GatewayExecutor:
         if self._portable_mode:
             return await self._execute_portable_agent(agent_name, task, timeout)
 
-        if asyncio.iscoroutinefunction(getattr(self.orchestrator, "execute_task", None)):
-            return await self._execute_agent_async(agent_name, task, timeout)
+        from core.delegation_router import resolved_llm_config
 
-        # Sync path: run blocking code in thread-pool to not block event loop
-        loop = asyncio.get_event_loop()
-        start = time.monotonic()
-
-        # Inyectar config LLM y persona como env vars
-        saved_env: dict[str, str | None] = {}
-        env_overrides: dict[str, str] = {}
-        if llm_config:
-            if "model" in llm_config:
-                env_overrides["ANTIGRAVITY_LLM_MODEL"] = str(llm_config["model"])
-            if "max_tokens" in llm_config:
-                env_overrides["ANTIGRAVITY_LLM_MAX_TOKENS"] = str(llm_config["max_tokens"])
-            if "thinking_level" in llm_config:
-                env_overrides["ANTIGRAVITY_LLM_THINKING"] = str(llm_config["thinking_level"])
-        if persona:
-            env_overrides["ANTIGRAVITY_PERSONA"] = persona
-
-        for key, value in env_overrides.items():
-            saved_env[key] = os.environ.get(key)
-            os.environ[key] = value
-
-        try:
-            return await loop.run_in_executor(
-                None, self._execute_agent_inner, agent_name, task, timeout, start
-            )
-        finally:
-            for key, original in saved_env.items():
-                if original is None:
-                    os.environ.pop(key, None)
+        effective_llm_config, delegation_route = resolved_llm_config(llm_config)
+        async with self._environment_lock:
+            env_overrides = _build_environment_overrides(effective_llm_config, persona)
+            saved_env = _apply_environment_overrides(env_overrides)
+            try:
+                if asyncio.iscoroutinefunction(getattr(self.orchestrator, "execute_task", None)):
+                    result = await self._execute_agent_async(agent_name, task, timeout)
                 else:
-                    os.environ[key] = original
+                    # Sync path: run blocking code in a thread pool without blocking aiohttp.
+                    loop = asyncio.get_event_loop()
+                    start = time.monotonic()
+                    result = await loop.run_in_executor(
+                        None,
+                        self._execute_agent_inner,
+                        agent_name,
+                        task,
+                        timeout,
+                        start,
+                    )
+            finally:
+                _restore_environment(saved_env)
+
+        result.metadata.setdefault(
+            "delegation_route",
+            {
+                "provider": delegation_route.provider_id,
+                "model": delegation_route.model,
+                "reason": delegation_route.reason,
+                "rotated_from": delegation_route.rotated_from,
+            },
+        )
+        return result
 
     async def _execute_portable_agent(
         self,
@@ -351,29 +396,26 @@ class GatewayExecutor:
         persona: str | None = None,
     ) -> "ExecutionResult":
         """Synchronous version for callers that can't use async (e.g., thread-pool callers)."""
+        from core.delegation_router import resolved_llm_config
+
         start = time.monotonic()
-        saved_env: dict[str, str | None] = {}
-        env_overrides: dict[str, str] = {}
-        if llm_config:
-            if "model" in llm_config:
-                env_overrides["ANTIGRAVITY_LLM_MODEL"] = str(llm_config["model"])
-            if "max_tokens" in llm_config:
-                env_overrides["ANTIGRAVITY_LLM_MAX_TOKENS"] = str(llm_config["max_tokens"])
-            if "thinking_level" in llm_config:
-                env_overrides["ANTIGRAVITY_LLM_THINKING"] = str(llm_config["thinking_level"])
-        if persona:
-            env_overrides["ANTIGRAVITY_PERSONA"] = persona
-        for key, value in env_overrides.items():
-            saved_env[key] = os.environ.get(key)
-            os.environ[key] = value
+        effective_llm_config, delegation_route = resolved_llm_config(llm_config)
+        env_overrides = _build_environment_overrides(effective_llm_config, persona)
+        saved_env = _apply_environment_overrides(env_overrides)
         try:
-            return self._execute_agent_inner(agent_name, task, timeout, start)
+            result = self._execute_agent_inner(agent_name, task, timeout, start)
         finally:
-            for key, original in saved_env.items():
-                if original is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = original
+            _restore_environment(saved_env)
+        result.metadata.setdefault(
+            "delegation_route",
+            {
+                "provider": delegation_route.provider_id,
+                "model": delegation_route.model,
+                "reason": delegation_route.reason,
+                "rotated_from": delegation_route.rotated_from,
+            },
+        )
+        return result
 
     async def _execute_agent_async(
         self,

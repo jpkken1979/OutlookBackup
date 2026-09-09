@@ -148,6 +148,24 @@ def get_catalog(path: Path | None = None, *, force_refresh: bool = False) -> dic
     return stale if stale is not None else {}
 
 
+def _scan_model_provider(provider_block: object, target: str) -> dict | None:
+    """Busca un model id normalizado dentro de un bloque de provider."""
+    if not isinstance(provider_block, dict):
+        return None
+    models = provider_block.get("models")
+    if isinstance(models, dict):
+        for model_id, entry in models.items():
+            if isinstance(model_id, str) and model_id.lower() == target and isinstance(entry, dict):
+                return entry
+    elif isinstance(models, list):
+        for entry in models:
+            if isinstance(entry, dict):
+                model_id = entry.get("id")
+                if isinstance(model_id, str) and model_id.lower() == target:
+                    return entry
+    return None
+
+
 def _find_model_entry(catalog: dict, provider: str, model_id: str) -> dict | None:
     """Busca la entrada de un modelo en el catalogo de models.dev.
 
@@ -167,30 +185,14 @@ def _find_model_entry(catalog: dict, provider: str, model_id: str) -> dict | Non
         return None
     target = model_id.strip().lower()
 
-    def _scan(provider_block: object) -> dict | None:
-        if not isinstance(provider_block, dict):
-            return None
-        models = provider_block.get("models")
-        if isinstance(models, dict):
-            for mid, entry in models.items():
-                if isinstance(mid, str) and mid.lower() == target and isinstance(entry, dict):
-                    return entry
-        elif isinstance(models, list):
-            for entry in models:
-                if isinstance(entry, dict):
-                    mid = entry.get("id")
-                    if isinstance(mid, str) and mid.lower() == target:
-                        return entry
-        return None
-
     # 1) Provider homonimo (mas confiable).
-    hit = _scan(catalog.get(provider))
+    hit = _scan_model_provider(catalog.get(provider), target)
     if hit is not None:
         return hit
 
     # 2) Cualquier provider (models.dev nombra distinto que nuestros ids locales).
     for block in catalog.values():
-        hit = _scan(block)
+        hit = _scan_model_provider(block, target)
         if hit is not None:
             return hit
     return None
@@ -220,7 +222,7 @@ def model_is_free(model_id: str, entry: dict | None = None) -> bool:
     """
     mid = (model_id or "").strip().lower()
     # 1. Marca explícita en el id (convención OpenRouter ':free' / OpenCode '*-free').
-    if mid.endswith(":free") or mid.endswith("-free"):
+    if mid.endswith(":free") or mid.endswith("-free") or mid == "big-pickle":
         return True
     # 2. Costo cero declarado (tolera 'cost'|'pricing', input|prompt / output|completion).
     cost = None
@@ -235,39 +237,69 @@ def model_is_free(model_id: str, entry: dict | None = None) -> bool:
     return False
 
 
-def list_provider_models(provider: str, *, path: Path | None = None) -> list[tuple[str, bool]]:
+def _model_freshness(entry: dict | None) -> str:
+    """Devuelve una clave estable para ordenar catálogos recientes.
+
+    Las fechas ISO que publica models.dev ordenan correctamente como texto. Si
+    una entrada no trae fecha, la clave vacía permite conservar el orden de la
+    fuente gracias a que ``sort`` es estable.
+    """
+    if not isinstance(entry, dict):
+        return ""
+    for field in ("release_date", "last_updated", "updated_at", "created_at"):
+        value = entry.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, int | float):
+            return f"{value:020.6f}"
+    return ""
+
+
+def list_provider_models(
+    provider: str,
+    *,
+    path: Path | None = None,
+    force_refresh: bool = False,
+) -> list[tuple[str, bool]]:
     """Lista los modelos de un provider desde models.dev, marcando los free.
 
     Lee el bloque ``<provider>.models`` del catálogo de models.dev y devuelve
-    ``[(id, free)]`` ordenado free-primero (orden relativo estable). Degrada a ``[]``
-    sin red/cache/match, igual que el resto del módulo.
+    ``[(id, free)]`` ordenado del más reciente al más antiguo. Los modelos retirados
+    se excluyen para que el selector nunca sugiera una opción deprecada. Degrada a
+    ``[]`` sin red/cache/match, igual que el resto del módulo.
 
     Args:
         provider: Id del provider local (``openrouter``, ``opencode``).
         path: Override del path del cache de models.dev (tests).
+        force_refresh: Si ``True``, ignora la caché fresca y consulta la fuente.
 
     Returns:
-        Lista de ``(model_id, is_free)`` free-primero; ``[]`` si no hay datos.
+        Lista de ``(model_id, is_free)`` newest-first; ``[]`` si no hay datos.
     """
-    catalog = get_catalog(path=path)
+    catalog = get_catalog(path=path, force_refresh=force_refresh)
     block = catalog.get(provider.strip().lower()) if isinstance(catalog, dict) else None
     raw_models = block.get("models") if isinstance(block, dict) else None
 
     pairs: list[tuple[str, dict | None]] = []
     if isinstance(raw_models, dict):
         for mid, entry in raw_models.items():
-            if isinstance(mid, str) and mid:
+            if (
+                isinstance(mid, str)
+                and mid
+                and not (isinstance(entry, dict) and entry.get("status") == "deprecated")
+            ):
                 pairs.append((mid, entry if isinstance(entry, dict) else None))
     elif isinstance(raw_models, list):
         for entry in raw_models:
             if isinstance(entry, dict):
                 mid = entry.get("id")
-                if isinstance(mid, str) and mid:
+                if isinstance(mid, str) and mid and entry.get("status") != "deprecated":
                     pairs.append((mid, entry))
 
+    # Más reciente primero. ``sort`` es estable, de modo que las entradas sin
+    # fecha conservan el orden publicado por la fuente.
+    pairs.sort(key=lambda pair: _model_freshness(pair[1]), reverse=True)
     out = [(mid, model_is_free(mid, entry)) for mid, entry in pairs]
-    # Free primero, orden relativo estable (sort estable de Python).
-    out.sort(key=lambda t: 0 if t[1] else 1)
     return out
 
 

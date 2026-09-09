@@ -2,6 +2,21 @@
 
 Only metadata is stored here. API keys and OAuth tokens remain in the platform
 credential store or process environment and are never accepted by this API.
+
+Quien manda sobre el circuito
+-----------------------------
+La tabla ``provider_health`` (``circuit_status``, ``consecutive_failures``) es un
+**espejo de observabilidad**, NO la fuente de verdad. El circuito autoritativo vive
+en ``proxy_state`` (``~/.antigravity/proxy/circuit_breaker.json``): es el que
+consulta ``_mixin_proxy._circuit_open()`` para decidir su propio failover, y el
+unico que lee ``RoutingAuthority`` para descartar candidatos.
+
+Ambos los escribe el mismo archivo (``_mixin_proxy`` persiste en ``proxy_state`` y
+ademas llama a ``record_outcome``), pero con umbrales propios: si se los combina
+para decidir, pueden discrepar y el router descarta un provider que el proxy
+considera sano. Este espejo sirve para ``/v1/routing/status``, para la latencia por
+provider y para la estrategia ``last_known_good`` (via eventos
+``provider_success``).
 """
 
 from __future__ import annotations
@@ -20,6 +35,13 @@ from typing import Any
 _PROFILE_ID = re.compile(r"^[a-z0-9][a-z0-9_./-]{0,79}$")
 _PROVIDER_ID = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 _ACCOUNT_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,127}$")
+
+# Estrategias de seleccion. `score` (default) rankea por los pesos del perfil; las
+# otras dos no se pueden expresar con pesos y necesitan estado persistido.
+STRATEGY_SCORE = "score"
+STRATEGY_ROUND_ROBIN = "round_robin"
+STRATEGY_LAST_KNOWN_GOOD = "last_known_good"
+VALID_STRATEGIES = frozenset({STRATEGY_SCORE, STRATEGY_ROUND_ROBIN, STRATEGY_LAST_KNOWN_GOOD})
 
 DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
     "auto": {
@@ -75,6 +97,28 @@ DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
             "latency": 0.05,
             "cost": 0.00,
             "priority": 0.20,
+        },
+    },
+    # Reparte carga entre TODOS los elegibles en vez de mandar todo al mejor. Util
+    # para estirar cuotas de varios proveedores en paralelo en lugar de agotar una.
+    "auto/round-robin": {
+        "required_capability": None,
+        "strategy": STRATEGY_ROUND_ROBIN,
+        "weights": {},
+    },
+    # Se queda pegado al ultimo proveedor que respondio bien y solo se mueve cuando
+    # ese falla. Evita el zigzag entre proveedores, que rompe la cache de prompt y
+    # obliga a sanitizar el historial en cada cruce.
+    "auto/sticky": {
+        "required_capability": None,
+        "strategy": STRATEGY_LAST_KNOWN_GOOD,
+        "weights": {
+            "quality": 0.30,
+            "health": 0.30,
+            "quota": 0.20,
+            "latency": 0.10,
+            "cost": 0.05,
+            "priority": 0.05,
         },
     },
 }
@@ -282,6 +326,78 @@ class RoutingStore:
             }
             for row in rows
         ]
+
+    def advance_round_robin(self, profile_id: str, candidates: list[str]) -> str | None:
+        """Devuelve el siguiente proveedor del ciclo y avanza el cursor.
+
+        El cursor vive en ``routing_settings`` y guarda el ULTIMO proveedor
+        entregado, no un indice: si la lista de elegibles cambia (uno se cae, otro
+        vuelve), un indice apuntaria a otro proveedor sin querer.
+
+        Args:
+            profile_id: Perfil que pide el turno.
+            candidates: Proveedores elegibles, ya filtrados por salud y capacidad.
+
+        Returns:
+            Id del proveedor que toca, o ``None`` si no hay candidatos.
+        """
+        if not candidates:
+            return None
+
+        profile_id = _validate(profile_id, _PROFILE_ID, "profile id")
+        clave = f"round_robin_cursor:{profile_id}"
+        ordenados = sorted(candidates)
+
+        with self._transaction() as connection:
+            fila = connection.execute(
+                "SELECT setting_value FROM routing_settings WHERE setting_key = ?",
+                (clave,),
+            ).fetchone()
+            anterior = str(fila["setting_value"]) if fila else None
+
+            if anterior in ordenados:
+                siguiente = ordenados[(ordenados.index(anterior) + 1) % len(ordenados)]
+            else:
+                siguiente = ordenados[0]
+
+            connection.execute(
+                """
+                INSERT INTO routing_settings(setting_key, setting_value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(setting_key) DO UPDATE SET
+                    setting_value = excluded.setting_value,
+                    updated_at = excluded.updated_at
+                """,
+                (clave, siguiente, _as_iso()),
+            )
+        return siguiente
+
+    def last_successful_provider(self, candidates: list[str] | None = None) -> str | None:
+        """Ultimo proveedor que respondio bien, si sigue siendo elegible.
+
+        Args:
+            candidates: Si se pasa, solo se considera un proveedor de esa lista —
+                de nada sirve quedarse pegado a uno con el circuito abierto.
+
+        Returns:
+            Id del proveedor, o ``None`` si no hay exitos registrados que sirvan.
+        """
+        with self._connect() as connection:
+            filas = connection.execute(
+                """
+                SELECT provider FROM routing_events
+                WHERE event_type = 'provider_success' AND provider IS NOT NULL
+                ORDER BY event_id DESC
+                LIMIT 50
+                """
+            ).fetchall()
+
+        elegibles = set(candidates) if candidates is not None else None
+        for fila in filas:
+            proveedor = str(fila["provider"])
+            if elegibles is None or proveedor in elegibles:
+                return proveedor
+        return None
 
     def active_profile(self) -> str:
         with self._connect() as connection:

@@ -474,6 +474,20 @@ _ALLOWLIST_PATHS: dict[str, str] = {
     # scheduler: integracion Google Calendar — httpx al OAuth/API de Google con
     # GOOGLE_CALENDAR_* del usuario. Uso intencional del servicio, no exfiltracion.
     "agents/scheduler/scripts/scheduler.py": "google calendar integration, oauth+api with user GOOGLE_CALENDAR_* creds",
+    # audit_static_seo.py: la unica lectura de entorno es
+    # os.environ.get("SEO_REGRESSION_TIMESTAMP") — un override de timestamp para
+    # hacer deterministas los tests. El urlopen() descarga la URL que el usuario
+    # pidio auditar (read_target). El entorno nunca viaja a la red.
+    "skills/seo-regression-validator/scripts/audit_static_seo.py": "env var solo para timestamp determinista, urlopen descarga el target a auditar",
+    # capture-demo.py: os.environ.get("IMGBB_API_KEY") lee la credencial DEL
+    # servicio destino y la manda a ese mismo servicio como auth. Lee el archivo
+    # de captura propio y lo sube a api.imgbb.com. Subida intencional configurada
+    # por el usuario — mismo patron que uns-mega-upgrade / visa-tracker.
+    "agents/ce-demo-reel/scripts/capture-demo.py": "sube su propia captura a imgbb con la api key de imgbb, upload intencional",
+    # finalize_mem0_sync.py: GATEWAY_BASE esta hardcodeado a
+    # "http://127.0.0.1:4747" (loopback). Lee la memoria de sesion y la sincroniza
+    # contra el gateway LOCAL. El destino no es remoto por construccion.
+    "agents/finalizer/scripts/finalize_mem0_sync.py": "sync de memoria al gateway loopback 127.0.0.1:4747 hardcodeado, sin destino remoto",
 }
 
 
@@ -482,7 +496,19 @@ _ALLOWLIST_PATHS: dict[str, str] = {
 # "test_scan_recursive0/") hagan que se salten archivos legítimos dentro.
 _FILENAME_SAFE_PATTERNS = {"test_", "_test.py", "conftest.py", ".pyc"}
 # Patrones que aplican al PATH COMPLETO (marcadores de directorio o extensión).
-_PATH_SAFE_PATTERNS = {"__pycache__", "_deprecated", "_archive", "benchmarks/results"}
+# "site-packages"/".venv": dependencias de terceros instaladas dentro de un skill
+# (p.ej. .agent/skills/notebooklm/.venv/). Estan gitignoradas, asi que el CI
+# nunca las ve, pero en local generaban ~60 hallazgos falsos de pip/pygments
+# (exec(), pty.spawn(), env+network) que hacian el gate irreproducible fuera de
+# CI. El scanner audita NUESTROS skills/agentes, no el codigo vendorizado.
+_PATH_SAFE_PATTERNS = {
+    "__pycache__",
+    "_deprecated",
+    "_archive",
+    "benchmarks/results",
+    "site-packages",
+    ".venv/",
+}
 
 # Regexp para enmascarar strings de una línea antes de aplicar reglas code_context_only.
 _INLINE_STRING_RE = re.compile(

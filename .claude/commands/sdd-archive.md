@@ -10,7 +10,7 @@ La Fase 8 (Review) debe estar completa con veredicto APROBADO.
 ## Acciones
 
 1. **Documentar decisiones en memoria**
-   - Si `antigravity-memory` está disponible, guardar un resumen del cambio via `memory_store`
+- Si el gateway mem0 está disponible, guardar un resumen mediante `/v1/mem0/store`
    - Incluir: qué se cambió, por qué, alternativas descartadas, lecciones aprendidas
 
 2. **Actualizar ESTADO_PROYECTO.md**
@@ -69,7 +69,7 @@ Ciclo SDD completado.
 
 ## Memoria
 
-Si `antigravity-memory` está disponible, guardar:
+Si el gateway mem0 está disponible, guardar mediante `/v1/mem0/store`:
 
 ```
 memory_store({

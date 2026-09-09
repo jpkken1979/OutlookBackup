@@ -290,7 +290,7 @@ def splice_auto_block(existing: str, auto_block: str) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Rebuild MEMORY.md index")
+    parser = argparse.ArgumentParser(description="Rebuild MEMORY.md index (idempotent)")
     parser.add_argument(
         "--dir",
         default=None,
@@ -306,6 +306,11 @@ def main() -> int:
             f"{ARCHIVE_FILENAME}. 0 = sin limite (legacy). "
             f"Default: {DEFAULT_MAX_PER_GROUP}"
         ),
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write changes (default: dry-run only)",
     )
     args = parser.parse_args()
 
@@ -326,14 +331,25 @@ def main() -> int:
     else:
         new_content = render_initial_index(auto_block)
 
-    index_path.write_text(new_content, encoding="utf-8")
+    # Idempotency check: only write if content changed
+    changed = True
+    if index_path.exists():
+        existing_content = index_path.read_text(encoding="utf-8")
+        changed = existing_content != new_content
+
+    if changed and args.apply:
+        index_path.write_text(new_content, encoding="utf-8")
 
     # Escribir el archivo historico con el overflow (entradas mas viejas).
     archive_path = memory_dir / ARCHIVE_FILENAME
     archived = 0
     if args.max_per_group > 0:
         archive_content = render_archive(entries, max_per_group=args.max_per_group)
-        archive_path.write_text(archive_content.rstrip() + "\n", encoding="utf-8")
+        archive_changed = True
+        if archive_path.exists():
+            archive_changed = archive_path.read_text(encoding="utf-8") != archive_content
+        if archive_changed and args.apply:
+            archive_path.write_text(archive_content.rstrip() + "\n", encoding="utf-8")
         grouped = _group_and_sort(entries)
         archived = sum(max(0, len(g) - args.max_per_group) for g in grouped.values())
 
@@ -348,6 +364,8 @@ def main() -> int:
                     "indexed": len(entries),
                     "archived": archived,
                     "by_type": by_type,
+                    "changed": changed,
+                    "applied": changed and args.apply,
                 }
             )
         )

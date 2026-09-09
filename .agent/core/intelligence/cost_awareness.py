@@ -165,7 +165,7 @@ class CostAwareness:
             return "INFO: Moderate budget usage"
         return "OK: Budget healthy"
 
-    def record_cost(self, operation: str, actual_cost: float):
+    def record_cost(self, operation: str, actual_cost: float) -> None:
         """
         Registra costo real de una operacion.
 

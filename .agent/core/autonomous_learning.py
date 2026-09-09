@@ -196,7 +196,7 @@ class AutonomousLearningPipeline:
         # Load persisted data
         self._load_state()
 
-    def _load_state(self):
+    def _load_state(self) -> None:
         """Load persisted learning state."""
         state_file = self.data_dir / "learning_state.json"
         if state_file.exists():
@@ -210,7 +210,7 @@ class AutonomousLearningPipeline:
             except Exception as e:
                 logger.warning(f"Could not load state: {e}")
 
-    def _save_state(self):
+    def _save_state(self) -> None:
         """Persist learning state."""
         state_file = self.data_dir / "learning_state.json"
         try:
@@ -403,7 +403,7 @@ class AutonomousLearningPipeline:
 
     async def process_feedback(
         self, feedback_type: FeedbackType, context: dict, details: str | None = None
-    ):
+    ) -> None:
         """
         Process user feedback for learning.
 
@@ -436,7 +436,7 @@ class AutonomousLearningPipeline:
             0.8,
         )
 
-    async def _process_feedback_batch(self):
+    async def _process_feedback_batch(self) -> None:
         """Process accumulated feedback."""
         if not self.feedback_buffer:
             return
@@ -466,7 +466,7 @@ class AutonomousLearningPipeline:
         self.feedback_buffer.clear()
         self._save_state()
 
-    async def _learn_from_explicit_feedback(self, feedback: dict):
+    async def _learn_from_explicit_feedback(self, feedback: dict) -> None:
         """Learn immediately from explicit feedback."""
         if feedback["type"] == "explicit_positive":
             # Reinforce the approach
@@ -475,7 +475,9 @@ class AutonomousLearningPipeline:
             # Mark for improvement
             logger.info("Negative feedback received - marking for improvement")
 
-    async def _update_based_on_satisfaction(self, context_key: str, satisfaction_rate: float):
+    async def _update_based_on_satisfaction(
+        self, context_key: str, satisfaction_rate: float
+    ) -> None:
         """Update patterns/strategies based on satisfaction."""
         logger.debug(
             "Updating strategy satisfaction for context=%s rate=%.3f",
@@ -753,7 +755,7 @@ class AutonomousLearningPipeline:
 
     async def learn_preference(
         self, category: str, key: str, value: Any, observation_strength: float = 1.0
-    ):
+    ) -> None:
         """
         Learn a user preference.
 
@@ -819,7 +821,7 @@ class AutonomousLearningPipeline:
         input_data: dict,
         learned_knowledge: dict,
         confidence: float,
-    ):
+    ) -> None:
         """Log a learning event."""
         event = LearningEvent(
             event_id=self._generate_id(f"{learning_type.value}:{datetime.now().isoformat()}"),
@@ -895,7 +897,7 @@ class AutonomousLearningPipeline:
     # MAIN LEARNING LOOP
     # =========================================================================
 
-    async def run_learning_cycle(self, executions: list[dict] = None):
+    async def run_learning_cycle(self, executions: list[dict] = None) -> None:
         """
         Run a complete learning cycle.
 
@@ -941,19 +943,19 @@ def get_learning_pipeline() -> AutonomousLearningPipeline:
     return _pipeline
 
 
-async def learn_from_execution(execution: dict):
+async def learn_from_execution(execution: dict) -> None:
     """Learn from a single execution."""
     pipeline = get_learning_pipeline()
     await pipeline.extract_patterns([execution])
 
 
-async def learn_from_feedback(feedback_type: str, context: dict):
+async def learn_from_feedback(feedback_type: str, context: dict) -> None:
     """Learn from user feedback."""
     pipeline = get_learning_pipeline()
     await pipeline.process_feedback(FeedbackType(feedback_type), context)
 
 
-async def learn_from_error(error: dict):
+async def learn_from_error(error: dict) -> dict:
     """Learn from an error."""
     pipeline = get_learning_pipeline()
     return await pipeline.analyze_error(error)
@@ -964,7 +966,7 @@ async def learn_from_error(error: dict):
 # =============================================================================
 
 
-async def main():
+async def main() -> None:
     """CLI entry point."""
     import argparse
 

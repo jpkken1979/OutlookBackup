@@ -1,107 +1,51 @@
-# Antigravity Agents MCP Servers
+# Gateway y adapters MCP
 
-Servidores MCP que exponen los 40 agentes del ecosistema Antigravity como herramientas ejecutables.
+La ruta recomendada para clientes es el broker único, no los servidores stdio
+granulares históricos.
 
-## Servidores Disponibles
+## Configuración de cliente
 
-| Servidor | Archivo | Transporte | Puerto | Uso |
-|----------|---------|-----------|--------|-----|
-| **Universal Gateway** | `gateway.py` | HTTP/SSE/stdio | 4747 | **Gateway Maestro v3.0** (Recomendado) |
-| **agents-server** | `agents-server.py` | stdio | - | IDE local (Claude Code, Cursor, etc.) |
-| **remote-server** | `remote-server.py` | HTTP/SSE | 3777 | Acceso remoto legacy |
-| **intelligence-server** | `intelligence-server.py` | stdio | - | Capa de inteligencia |
-| **skills-server** | `skills-server.py` | stdio | - | Libreria de skills |
-| **ui-server** | `ui-server.py` | stdio | - | Herramientas UI/UX |
-
-## agents-server.py (stdio - Local)
-
-Servidor MCP principal. Se lanza como proceso local desde el IDE.
+Usar la entrada versionada de `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
-    "antigravity-agents": {
-      "command": "python",
-      "args": ["/ruta/a/AntigravitiSkillUSN/.agent/mcp/agents-server.py"]
-    }
-  }
-}
-```
-
-## remote-server.py (HTTP/SSE - Remoto)
-
-Servidor MCP con transporte HTTP para acceso desde cualquier ordenador via red.
-
-### Arranque
-
-```bash
-# Basico (puerto 3777, sin auth)
-python .agent/mcp/remote-server.py
-
-# Con autenticacion (recomendado)
-ANTIGRAVITY_API_TOKEN=mi-token-secreto python .agent/mcp/remote-server.py
-
-# Puerto y host custom
-python .agent/mcp/remote-server.py --port 8777 --host 127.0.0.1
-
-# Con Docker
-docker-compose up mcp-remote
-```
-
-### Endpoints
-
-| Metodo | Ruta | Descripcion |
-|--------|------|-------------|
-| POST | `/mcp` | JSON-RPC sobre HTTP (Streamable HTTP transport) |
-| GET | `/sse` | Server-Sent Events (notificaciones en tiempo real) |
-| POST | `/sse` | MCP sobre SSE (bidireccional) |
-| GET | `/health` | Health check (publico, sin auth) |
-| GET | `/agents` | Lista de agentes (REST) |
-
-### Configuracion en IDE Remoto
-
-```json
-{
-  "mcpServers": {
-    "antigravity-remote": {
-      "url": "http://tu-servidor:3777/mcp",
-      "headers": {
-        "Authorization": "Bearer mi-token-secreto"
+    "antigravity": {
+      "command": "<python-del-entorno>",
+      "args": ["-m", "core.mcp_stdio_proxy"],
+      "env": {
+        "ANTIGRAVITY_ROOT": ".",
+        "ANTIGRAVITY_MCP_URL": "http://localhost:4747/mcp",
+        "PYTHONPATH": ".agent"
       }
     }
   }
 }
 ```
 
-### Con Docker Compose
+En Windows el path del intérprete puede ser absoluto por limitaciones del PATH
+del cliente; los args y root siguen siendo portables.
 
-```bash
-# Arrancar solo el servidor remoto
-ANTIGRAVITY_API_TOKEN=mi-token docker-compose up mcp-remote
+## Gateway
 
-# Verificar health
-curl http://localhost:3777/health
+```powershell
+.\.venv\Scripts\python.exe start_gateway.py
 ```
 
-### Autenticacion
+El gateway concentra MCP, memoria, providers y observabilidad en `:4747`. El
+servidor remoto `:3777` es opcional y separado.
 
-- Define `ANTIGRAVITY_API_TOKEN` como variable de entorno
-- Los clientes envian `Authorization: Bearer <token>` en cada request
-- Si no se define token, el servidor acepta todas las conexiones (solo para desarrollo)
-- La comparacion de tokens usa `secrets.compare_digest` (timing-safe)
+Los archivos `agents-server.py`, `skills-server.py`, `brain-server.py` y otros
+adapters siguen en el árbol para implementación/compatibilidad. No deben
+copiarse como múltiples entradas nuevas.
 
-## Herramientas Disponibles (todos los servidores)
+## Verificación
 
-- `list_agents` - Lista todos los agentes (con filtro de ejecutables)
-- `execute_agent` - Ejecuta un agente con una tarea especifica
-- `run_autonomous_agent` - Ejecuta un agente en modo autonomo (ReAct loop)
-- `find_best_agent` - Sugiere agentes adecuados segun descripcion de tarea
-- `get_agent_info` - Metadata detallada y contenido de IDENTITY.md
-- `get_costs` - Reporte de uso y costos
-- `get_history` - Historial de ejecuciones
-- `spawn_team` - Crea un equipo colaborativo de agentes
-- `send_team_message` - Envia mensajes entre miembros de un equipo
+```powershell
+make test-mcp-contract
+make test-mcp
+```
 
----
----
-*Antigravity Agents v3.0.0 (Optimized) - 40 agentes | 940 skills | 6 MCP servers*
+Ver [`AGENTS.md`](AGENTS.md) para reglas de cambios y
+[`../../docs/guides/IDE_AI_UNIFICACION_RAPIDA.md`](../../docs/guides/IDE_AI_UNIFICACION_RAPIDA.md)
+para conectar clientes.

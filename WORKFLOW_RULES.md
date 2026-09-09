@@ -1,225 +1,118 @@
-# Workflow Rules para IAs - Antigravity Ecosystem
+# Método de trabajo para cambios complejos
 
-> Referencia de metodología de trabajo. NO se inyecta automáticamente.
-> Las IAs deben consultar este archivo cuando trabajen en tareas complejas (3+ pasos).
-> Para reglas del ecosistema (agentes, skills): ver `RULES.md`
-> Para estándares de código: ver `.antigravity/rules.md`
+Este documento complementa `RULES.md`. Describe un flujo reproducible, sin
+depender de una herramienta o proveedor de IA concreto.
 
----
+## 1. Entender el resultado
 
-## 1. Planificación Obligatoria
+Antes de editar, convertir el pedido en criterios observables:
 
-Entrar en **plan mode** para cualquier tarea no-trivial:
+- qué debe cambiar para el usuario;
+- qué superficies están dentro del alcance;
+- qué contratos no deben romperse;
+- cómo se demostrará que terminó.
 
-1. Escribir lista numerada de pasos ANTES de codificar
-2. Incluir pasos de verificación (tests, checks, review), no solo "build"
-3. Si algo se desvía, PARAR, actualizar el plan, indicar en qué paso falló
+Si falta un dato que puede descubrirse de forma segura en el repo, investigarlo.
+Preguntar solo cuando una elección no comprobable cambie materialmente el
+resultado o requiera autoridad nueva.
 
-```
-tasks/todo.md  → Plan con checkboxes [ ] y links a archivos
-tasks/lessons.md → Lecciones aprendidas
-```
+## 2. Preflight
 
----
+1. Leer `AGENTS.md`, `ESTADO_PROYECTO.md`, este workflow y la guía del dominio.
+2. Consultar MCP/Brain/skills cuando estén disponibles.
+3. Ejecutar NotebookLM auto-recall en los casos definidos por `AGENTS.md`.
+4. Comprobar rama, HEAD, worktree y archivos no rastreados.
+5. Identificar fuente de verdad, consumidores, tests y generadores.
+6. Tomar un baseline estrecho antes de un refactor o limpieza masiva.
 
-## 2. Estrategia de Subagentes
+No considerar un error “preexistente” solo porque aparecía antes: registrar el
+baseline y comparar el mismo comando contra el cambio.
 
-- Un subagente por responsabilidad: planificación, investigación, código, testing, documentación
-- Cada handoff define: input, output esperado, límites (qué NO hacer), constraints de tiempo/contexto
-- Evitar overlap: no permitir que múltiples agentes modifiquen el mismo archivo sin reconciliación
+## 3. Plan
 
-**Consulta primero:** `.agent/agents/` tiene agentes especializados para cada responsabilidad.
+Para tareas de varios pasos, mantener un plan visible con:
 
----
+- un único paso en progreso;
+- resultados verificables, no actividades vagas;
+- riesgos y límites explícitos;
+- actualización del estado al terminar cada bloque.
 
-## 3. Loop de Auto-Mejora
+La delegación es opcional. Solo usar subagentes si el entorno lo admite, el
+usuario o las reglas aplicables lo permiten y las tareas son independientes.
+Cada tarea delegada necesita alcance, archivos, restricciones y gates propios.
+La persona o agente principal revisa siempre el diff integrado.
 
-Después de cada corrección, agregar a `tasks/lessons.md`:
+## 4. Investigar antes de cambiar
 
-```
-## [Fecha] - [Título del error]
-- **Error**: Qué pasó
-- **Root cause**: Por qué pasó
-- **Regla nueva**: Qué hacer diferente
-- **Ejemplo malo**: ❌ Código que causó el error
-- **Ejemplo bueno**: ✅ Código correcto
-```
+Para cada hallazgo:
 
-Antes de tareas similares, revisar lecciones relevantes y declarar cuáles se aplicarán.
+1. localizar definición y referencias;
+2. seguir consumidores estáticos y dinámicos;
+3. revisar tests, configuración, empaquetado y generación;
+4. clasificarlo como activo, histórico, generado, contractual o candidato;
+5. elegir la modificación mínima que resuelva la causa.
 
----
+Una búsqueda sin referencias no autoriza borrar. En Python, MCP, Tauri, hooks,
+skills y plugins existen registros y cargas dinámicas que una búsqueda simple no
+ve.
 
-## 4. Verificación Antes de "Done"
+## 5. Implementar en bloques verificables
 
-NUNCA marcar una tarea como completada sin al menos UNA verificación concreta:
+- Hacer un cambio coherente por bloque.
+- Corregir la fuente antes de sus proyecciones o artefactos.
+- Agregar o adaptar tests cuando cambie comportamiento.
+- Tras un refactor masivo, ejecutar también tipos, lint y formato: los tests no
+  detectan todas las regresiones de anotaciones o imports.
+- Preservar deliberadamente ramas de compatibilidad hasta demostrar que el
+  contrato ya no existe.
 
-- **Código**: Correr tests, linters, type-checkers. Si no existen, proponer test mínimo
-- **Comparar antes vs después**: Declarar qué cambió y qué se garantiza sin cambios
-- **Para este ecosistema**: `pytest tests/ -v` y `ruff check .`
+## 6. Verificar
 
----
+Orden recomendado:
 
-## 5. Elegancia Balanceada
+1. test específico del comportamiento;
+2. suite de la superficie;
+3. lint, tipos, formato y checks contractuales;
+4. suite amplia si el riesgo es transversal;
+5. build o smoke real si cambia UI, IPC, instalación o release.
 
-- Para cambios no-triviales: intentar una segunda solución más simple
-- Si un fix se siente hacky, preferir reescribir con insights del debugging
-- NO over-engineer fixes pequeños; proponer refactors grandes como tareas separadas
+Para Nexus, seguir `nexus-app/CLAUDE.md` y
+`.github/instructions/verification-nexus.instructions.md`. Para Python y bot,
+usar las instrucciones correspondientes en `.github/instructions/`.
 
----
+La cobertura canónica y sus umbrales se leen del workflow, no de documentos
+copiados. No reemplazar una falla con un umbral menor sin justificarlo como piso
+de regresión explícito.
 
-## 6. Bug Fixing Autónomo
+## 7. Revisar como integración
 
-```
-1. REPRODUCIR → con el input más simple posible
-2. ROOT CAUSE → usar logs/traces/lectura dirigida (NO ediciones random)
-3. FIX MÍNIMO → cambio más pequeño que resuelva el problema
-4. TEST        → que falle antes y pase después del fix
-5. RIESGO      → describir riesgo residual
-```
+Antes de declarar éxito:
 
-No depender del usuario para guiar cada paso. Generar hipótesis, experimentos y conclusiones por cuenta propia.
+- leer `git diff --stat` y `git diff` completos;
+- buscar cambios accidentales, archivos generados y datos sensibles;
+- confirmar que nombres, comandos, versiones y enlaces coinciden con fuentes
+  ejecutables;
+- comprobar que no quedaron dos caminos para la misma función;
+- verificar que una UI nueva está montada desde su entry point y que cada IPC
+  usado está registrado.
 
----
+Si hubo trabajo paralelo, integrar primero y volver a ejecutar los gates sobre
+el conjunto; los resultados aislados no prueban la combinación.
 
-## 7. Gestión de Tareas
+## 8. Cerrar y documentar
 
-1. **Planificar** → `tasks/todo.md` con checkboxes
-2. **Verificar plan** → Para tareas grandes, esperar OK del usuario
-3. **Trackear progreso** → Marcar items al completar
-4. **Explicar cambios** → Resumen ejecutivo de máx 5 bullets
-5. **Documentar resultados** → Actualizar `tasks/todo.md` con outcomes
-6. **Capturar lecciones** → Actualizar `tasks/lessons.md`
+La entrega debe decir:
 
----
+- resultado y beneficio práctico;
+- archivos o superficies cambiados;
+- pruebas ejecutadas con PASS/FAIL/SKIP;
+- riesgos o pendientes reales;
+- estado de Git solicitado por el usuario.
 
-## 8. Principios Core
+Actualizar `ESTADO_PROYECTO.md` para cambios operativos importantes. Mantener
+`.claude/rules/PENDING_TASKS.md` corto: solo acciones abiertas y verificadas. El
+detalle cerrado pertenece a memoria o historial, no a una regla auto-inyectada.
 
-| Principio | Regla |
-|-----------|-------|
-| **Simplicidad** | Solución más simple que cumpla requisitos. No agregar dependencias sin justificación |
-| **No pereza** | No "TODO" sin nota de riesgo y plan de resolución |
-| **Impacto mínimo** | Tocar solo lo necesario. Si cambias más, justificar |
-| **Seguridad** | Nunca inventar o exponer datos sensibles |
-| **Sin duplicación** | Buscar funciones/patrones existentes en el repo ANTES de crear nuevos |
-
----
-
-## 9. Reglas de Prompts Estructurados
-
-Para tareas que involucren LLMs o prompt engineering:
-
-- Usar secciones explícitas: `<context>`, `<task>`, `<rules>`, `<output format>`
-- Dar ejemplos pequeños de input/output cuando el formato importa
-- Pedir razonamiento paso a paso para tareas complejas
-- Para problemas grandes: dividir en subtareas encadenadas (prompt chaining)
-
----
-
-## 10. Indice Rapido (ver seccion 15 para tabla completa)
-
----
-
-## 11. SDD — Spec-Driven Development (tareas complejas)
-
-Para tareas complejas (3+ archivos, nueva feature, refactor grande), usar el workflow SDD de 9 fases:
-
-### Fases
-
-| Fase | Nombre | Qué hacer |
-|------|--------|-----------|
-| 1 | **Explore** | Investigar el codebase, entender estado actual, identificar dependencias |
-| 2 | **Propose** | Escribir propuesta con alcance, archivos afectados, riesgos |
-| 3 | **Spec** | Definir especificación técnica: interfaces, contratos, tipos |
-| 4 | **Plan** | Dividir en tareas atómicas con orden de ejecución y dependencias |
-| 5 | **Implement** | Ejecutar el plan, un paso a la vez, verificando cada paso |
-| 6 | **Test** | Escribir y ejecutar tests que validen la implementación |
-| 7 | **Review** | Code review automatizado (lint, types, security) |
-| 8 | **Document** | Actualizar docs si la feature lo requiere |
-| 9 | **Finalize** | Commit, push, actualizar memoria y estado del proyecto |
-
-### Cuándo usar SDD completo vs parcial
-
-- **SDD completo (9 fases)**: Nueva feature, refactor arquitectónico, integración nueva
-- **SDD parcial (fases 1,5,6,7)**: Bug fix, mejora menor, cambio de configuración
-- **Sin SDD**: Cambios triviales (typos, docs, config simple)
-
-### Slash commands SDD disponibles
-
-- `/sdd` — Orquestador completo
-- `/sdd-explore` — Solo fase 1 (exploración)
-- `/sdd-propose` — Solo fase 2 (propuesta)
-
----
-
-## 12. Jerarquía de Carga de Skills
-
-Antes de implementar cualquier capacidad, seguir este orden:
-
-1. **Tier 1 — Rules inyectadas**: `.claude/rules/` (auto-inyectadas, máxima prioridad)
-2. **Tier 2 — Ecosistema Antigravity**: `.agent/skills/`, `.agent/skills-custom/`, `antigravity-remote` via MCP
-3. **Tier 3 — skills.sh**: `npx skills find "descripción"` (registry externo)
-4. **Tier 4 — Crear nuevo**: Solo si los 3 anteriores no cubren el caso
-
-Ver `.claude/rules/skill-loading.md` para detalles.
-
----
-
-## 13. Protocolo de Sub-Agentes
-
-Reglas para delegar trabajo a sub-agentes:
-
-### Test de inflación de contexto (antes de delegar)
-- Tarea < 3 archivos y < 50 líneas: hacerla directamente
-- Investigación amplia o cambios multi-archivo: delegar
-- Tareas independientes: lanzar agentes en paralelo
-
-### Cada sub-agente recibe
-- Descripción clara (3-5 palabras)
-- Prompt con TODO el contexto necesario (rutas absolutas)
-- Restricciones explícitas (qué NO hacer)
-
-### Cada sub-agente devuelve
-- Resumen ejecutivo (1-3 líneas)
-- Hallazgos con archivos y líneas
-- Recomendaciones concretas
-- Lista de cambios si modificó archivos
-
-Ver `.claude/rules/subagent-protocol.md` para detalles.
-
----
-
-## 14. Auto-Save Triggers para Memoria
-
-Guardar automáticamente en `.claude/memory/` después de:
-
-| Trigger | Qué guardar | Archivo |
-|---------|-------------|---------|
-| Decisión de arquitectura | Qué, por qué, alternativas descartadas | `decision_{topic}.md` |
-| Bug resuelto con root cause | Síntoma, causa, fix, prevención | `bugfix_{topic}.md` |
-| Descubrimiento del codebase | Qué, dónde, implicaciones | `discovery_{topic}.md` |
-| Patrón nuevo establecido | Patrón, cuándo usarlo, ejemplo | `pattern_{topic}.md` |
-| Config crítica modificada | Valor anterior vs nuevo, razón | `config_{topic}.md` |
-| Cierre de sesión (3+ cambios) | Resumen, archivos, decisiones, pendientes | `session_{date}.md` |
-
-Ver `.claude/rules/auto-save-triggers.md` para formato y detalles.
-
----
-
-## 15. Cuándo Consultar Este Archivo (actualizado)
-
-| Situación | Secciones |
-|-----------|-----------|
-| Tarea con 3+ pasos | 1, 7, 11 (SDD) |
-| Bug fixing | 6 |
-| Refactoring | 5, 11 |
-| Después de un error | 3 |
-| Antes de marcar "done" | 4 |
-| Trabajo con subagentes | 2, 13 |
-| Necesito una capacidad | 12 (skill loading) |
-| Tarea compleja nueva | 11 (SDD completo) |
-| Fin de sesión | 14 (auto-save) |
-
----
-
-*Referencia de workflow para el ecosistema Antigravity v3.0.0*
-*Consultar bajo demanda — no inyectar automáticamente para ahorrar tokens.*
+No declarar “todo listo” si falta un gate obligatorio, una credencial externa,
+una validación instalada o una decisión del propietario. Nombrar exactamente qué
+falta y qué evidencia existe.

@@ -11,8 +11,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import sys
+import threading
+import time
+import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -26,6 +31,7 @@ from .constants import (
     VALID_STATUSES,
     VALID_TYPES,
     _SLUG_PATTERN,
+    normalize_related_slugs,
 )
 from .dates import _date_sort_key, _parse_date_value
 from .models import BrainNode, LintIssue, LintReport
@@ -35,12 +41,60 @@ from .text import (
     _extract_keywords,
     _smart_score,
     _type_to_section,
+    derive_topic_key,
+    semantic_content_hash,
     scrub_surrogates,
 )
 
 logger = logging.getLogger(__name__)
 
 _embeddings_unavailable_warned = False  # Guard modulo: avisa una sola vez, no en cada query()
+_brain_locks_guard = threading.Lock()
+_brain_locks: dict[str, threading.RLock] = {}
+
+
+def _brain_write_lock(brain_dir: Path) -> threading.RLock:
+    """Comparte un lock por directorio entre instancias del mismo proceso."""
+    key = str(brain_dir.resolve())
+    with _brain_locks_guard:
+        return _brain_locks.setdefault(key, threading.RLock())
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Escribe UTF-8 en el mismo volumen y reemplaza el destino atómicamente."""
+    temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temp_path.write_text(scrub_surrogates(content), encoding="utf-8")
+        os.replace(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+@contextmanager
+def _content_hash_claim(brain_dir: Path, content_hash: str) -> Any:
+    """Serializa ingestas del mismo hash también entre procesos."""
+    claim_path = brain_dir / f".ingest-{content_hash}.lock"
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            descriptor = os.open(claim_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as claim:
+                claim.write(f"{os.getpid()} {datetime.now(UTC).isoformat()}\n")
+            break
+        except FileExistsError:
+            try:
+                if time.time() - claim_path.stat().st_mtime > 300:
+                    claim_path.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Timeout esperando ingest lock para {content_hash[:12]}")
+            time.sleep(0.02)
+    try:
+        yield
+    finally:
+        claim_path.unlink(missing_ok=True)
 
 
 class Brain:
@@ -98,6 +152,9 @@ class Brain:
         # Detecta cambios EXTERNOS (otra instancia/proceso ingestó) para no servir
         # un meta_index stale cross-instancia. Ver _node_meta_index().
         self._meta_index_signature: tuple[int, float] | None = None
+        self._quality_index_cache: dict[str, str] | None = None
+        self._quality_index_signature: tuple[int, float] | None = None
+        self._write_lock = _brain_write_lock(self.brain_dir)
 
     def _ensure_structure(self) -> None:
         """Crea la estructura de directorios y archivos base."""
@@ -118,7 +175,7 @@ class Brain:
             self.log_path.write_text(
                 f"# Brain Log — {self.app_id}\n\n"
                 f"## [{now}] init | brain-created\n"
-                f"Brain inicializado para {self.app_id}\n\n",
+                f"Brain inicializado para {self.app_id}\n",
                 encoding="utf-8",
             )
 
@@ -173,57 +230,80 @@ class Brain:
         if node_type not in VALID_TYPES:
             raise ValueError(f"node_type invalido: {node_type!r}. Validos: {sorted(VALID_TYPES)}")
 
-        tags = (tags or [])[:MAX_TAGS]
-        sources = sources or []
+        tags = list(dict.fromkeys(tags or []))[:MAX_TAGS]
+        sources = list(dict.fromkeys(sources or []))[:50]
         today = datetime.now(UTC).strftime("%Y-%m-%d")
 
-        # Generar slug
-        slug = self._generate_slug(title, today, hint=slug_hint)
+        with self._write_lock:
+            slug = self._generate_slug(title, today, hint=slug_hint)
+            related = self._detect_related(tags, area, slug)
+            node = BrainNode(
+                slug=slug,
+                type=node_type,
+                area=area,
+                date=today,
+                title=title,
+                tags=tags,
+                status="active",
+                related=related,
+                sources=sources,
+                app_origin=self.app_id,
+                importance=importance
+                if importance in ("critical", "high", "normal", "low")
+                else "normal",
+                context=context,
+                decisions=decisions,
+                output=output,
+                pending=pending,
+                source_notes=source_notes,
+                topic_key=derive_topic_key(area, title),
+            )
+            node.content_hash = semantic_content_hash(node.to_frontmatter())
 
-        # Detectar nodos relacionados
-        related = self._detect_related(tags, area, slug)
+            with _content_hash_claim(self.brain_dir, node.content_hash):
+                existing_slug = self._content_hash_index().get(node.content_hash)
+                if existing_slug:
+                    existing_path = self._find_node_file(existing_slug)
+                    existing_raw = existing_path.read_text(encoding="utf-8")
+                    existing = BrainNode.from_frontmatter(existing_raw, existing_path)
+                    merged_tags = list(dict.fromkeys([*existing.tags, *tags]))[:MAX_TAGS]
+                    merged_sources = list(dict.fromkeys([*existing.sources, *sources]))[:50]
+                    metadata_changed = (
+                        merged_tags != existing.tags or merged_sources != existing.sources
+                    )
+                    if metadata_changed:
+                        updated = _merge_quality_metadata(
+                            existing_raw,
+                            tags=merged_tags,
+                            sources=merged_sources,
+                            version=existing.version + 1,
+                            content_hash=existing.content_hash,
+                            topic_key=existing.topic_key,
+                        )
+                        _atomic_write_text(existing_path, updated)
+                        existing = BrainNode.from_frontmatter(updated, existing_path)
+                        self._append_log("deduplicate", existing.slug, "Merged tags/sources")
+                        self._invalidate_node_caches()
+                    existing.deduplicated = True
+                    logger.info(
+                        "Brain[%s] deduplico ingest %s -> %s",
+                        self.app_id,
+                        slug,
+                        existing.slug,
+                    )
+                    return existing
 
-        node = BrainNode(
-            slug=slug,
-            type=node_type,
-            area=area,
-            date=today,
-            title=title,
-            tags=tags,
-            status="active",
-            related=related,
-            sources=sources,
-            app_origin=self.app_id,
-            importance=importance
-            if importance in ("critical", "high", "normal", "low")
-            else "normal",
-            context=context,
-            decisions=decisions,
-            output=output,
-            pending=pending,
-            source_notes=source_notes,
-        )
+                target_dir = self.concepts_dir if node_type == "concept" else self.sessions_dir
+                node_path = target_dir / f"{slug}.md"
+                _atomic_write_text(node_path, node.to_frontmatter())
 
-        # Persistir nodo
-        target_dir = self.concepts_dir if node_type == "concept" else self.sessions_dir
-        node_path = target_dir / f"{slug}.md"
-        node_path.write_text(node.to_frontmatter(), encoding="utf-8")
+                self._ensure_bidirectional_refs(node)
+                self._update_index(node)
+                self._append_log("ingest", slug, f"Tipo: {node_type}, Area: {area}")
+                self._invalidate_node_caches()
 
-        # Bidireccionalidad: actualizar nodos related
-        self._ensure_bidirectional_refs(node)
-
-        # Actualizar indice
-        self._update_index(node)
-
-        # Append al log
-        self._append_log("ingest", slug, f"Tipo: {node_type}, Area: {area}")
-
-        # Invalidar caches
-        self._index_cache = None
-        self._meta_index_cache = None
-
-        logger.info("Brain[%s] ingesto nodo: %s", self.app_id, slug)
-        return node
+                logger.info("Brain[%s] ingesto nodo: %s", self.app_id, slug)
+                return node
 
     def update_node(
         self,
@@ -270,23 +350,57 @@ class Brain:
         if status is not None and status in VALID_STATUSES:
             node.status = status
         if related is not None:
-            node.related = related[:MAX_RELATED]
+            node.related = normalize_related_slugs(related)
 
         # Incremental version for each update (dedup tracking)
         node.version += 1
+        node.content_hash = semantic_content_hash(node.to_frontmatter())
 
         # Persistir
         node_path = self._find_node_file(slug)
-        node_path.write_text(node.to_frontmatter(), encoding="utf-8")
+        _atomic_write_text(node_path, node.to_frontmatter())
 
         # Bidireccionalidad si cambio related
         if related is not None:
             self._ensure_bidirectional_refs(node)
 
         self._append_log("update", slug)
-        self._index_cache = None
-        self._meta_index_cache = None
+        self._invalidate_node_caches()
         return node
+
+    def sanitize_node_relations(self, slug: str) -> BrainNode:
+        """Elimina relaciones inválidas o duplicadas sin crear backlinks.
+
+        Esta operación está pensada para reparar datos heredados. A diferencia
+        de :meth:`update_node`, no interpreta la limpieza como una edición del
+        grafo y, por tanto, no modifica los nodos relacionados.
+
+        Args:
+            slug: Slug del nodo que se desea sanear.
+
+        Returns:
+            El nodo saneado, o el nodo original si ya estaba normalizado.
+
+        Raises:
+            FileNotFoundError: Si el nodo no existe.
+            ValueError: Si el slug del nodo es inválido.
+        """
+        with self._write_lock:
+            node_path = self._find_node_file(slug)
+            content = node_path.read_text(encoding="utf-8")
+            node = BrainNode.from_frontmatter(content, node_path)
+            updated, removed_count = _sanitize_related_in_frontmatter(content)
+            if updated is None:
+                return node
+
+            _atomic_write_text(node_path, updated)
+            self._append_log(
+                "sanitize-related",
+                slug,
+                f"Entradas invalidas o duplicadas eliminadas: {removed_count}",
+            )
+            self._invalidate_node_caches()
+            return BrainNode.from_frontmatter(updated, node_path)
 
     # ----- QUERY -----
 
@@ -549,7 +663,10 @@ class Brain:
         # Paso 4: Detectar conceptos emergentes
         self._lint_detect_emerging_concepts(all_nodes, all_slugs, tag_counts, report)
 
-        # Paso 5: Contar nodos sanos
+        # Paso 5: Reportar similitud local; nunca fusiona ni modifica nodos.
+        self._lint_detect_duplicate_candidates(all_nodes, report)
+
+        # Paso 6: Contar nodos sanos
         problematic_slugs = {
             issue.node_slug
             for issue in report.issues
@@ -558,6 +675,85 @@ class Brain:
         report.healthy_nodes = len([n for n in all_nodes if n.slug not in problematic_slugs])
 
         return report
+
+    def _lint_detect_duplicate_candidates(
+        self,
+        all_nodes: list[BrainNode],
+        report: LintReport,
+    ) -> None:
+        """Reporta revisiones del mismo tema con contenido diferente."""
+        by_topic: dict[str, list[BrainNode]] = {}
+        for node in all_nodes:
+            if node.topic_key:
+                by_topic.setdefault(node.topic_key, []).append(node)
+
+        for topic_nodes in by_topic.values():
+            ordered = sorted(topic_nodes, key=lambda item: item.slug)
+            for index, left in enumerate(ordered):
+                for right in ordered[index + 1 :]:
+                    if left.content_hash == right.content_hash:
+                        continue
+                    left_words = set(_extract_keywords(left.title))
+                    right_words = set(_extract_keywords(right.title))
+                    title_overlap = bool(left_words & right_words)
+                    tag_overlap = bool(set(left.tags) & set(right.tags))
+                    if not title_overlap and not tag_overlap:
+                        continue
+                    report.issues.append(
+                        LintIssue(
+                            severity="warning",
+                            category="duplicate_candidate",
+                            message=(
+                                f"Posibles revisiones del tema '{left.topic_key}': "
+                                f"{left.slug} y {right.slug}"
+                            ),
+                            node_slug=right.slug,
+                            suggestion=(
+                                "Revisar ambos nodos; si uno reemplaza al otro, usar "
+                                "superseded_by manualmente"
+                            ),
+                        )
+                    )
+
+    def timeline(
+        self,
+        *,
+        slug: str | None = None,
+        topic_key: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Lista revisiones resumidas de un tema sin cargar cuerpos en la respuesta."""
+        if not slug and not topic_key:
+            raise ValueError("slug o topic_key es requerido")
+        if not 1 <= limit <= 100:
+            raise ValueError("limit debe estar entre 1 y 100")
+
+        selected_slug = slug or ""
+        resolved_topic = derive_topic_key("", "", explicit=topic_key or "")
+        if slug:
+            selected = self.get_node(slug, track_access=False)
+            resolved_topic = selected.topic_key
+
+        items: list[dict[str, Any]] = []
+        for node_slug, metadata in self._node_meta_index().items():
+            if metadata["topic_key"] != resolved_topic:
+                continue
+            items.append(
+                {
+                    "slug": node_slug,
+                    "title": metadata["title"],
+                    "date": metadata["date"],
+                    "status": metadata["status"],
+                    "version": metadata["version"],
+                    "superseded_by": metadata["superseded_by"],
+                    "relevance": 1.0 if node_slug == selected_slug else 0.9,
+                    "topic_key": metadata["topic_key"],
+                }
+            )
+
+        items.sort(key=lambda item: item["slug"])
+        items.sort(key=lambda item: (item["date"], item["version"]), reverse=True)
+        return items[:limit]
 
     def _lint_load_nodes(self, report: LintReport) -> tuple[list[BrainNode], set[str]]:
         """Carga todos los nodos del brain y registra frontmatter invalido.
@@ -835,6 +1031,8 @@ class Brain:
                             visited.add(related_slug)
                             queue.append((related_slug, depth + 1))
                 except (FileNotFoundError, ValueError):
+                    # ponytail: dangling reference in node.related (node deleted or
+                    # malformed slug) — just skip it, the BFS continues with the rest.
                     pass
 
         return sorted(results, key=lambda x: x[1])
@@ -1025,7 +1223,12 @@ class Brain:
         if words:
             slug_words = "-".join(words[:SLUG_MAX_WORDS])
         else:
-            slug_words = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
+            # usedforsecurity=False: el hash solo deriva un identificador estable
+            # cuando el titulo no aporta palabras ASCII (ej. titulos en japones).
+            # No hay uso criptografico; declararlo evita el falso positivo B324.
+            slug_words = hashlib.sha1(  # noqa: S324
+                title.encode("utf-8"), usedforsecurity=False
+            ).hexdigest()[:8]
         base_slug = f"{date}-{slug_words}"
 
         # Garantizar unicidad
@@ -1046,6 +1249,7 @@ class Brain:
     ) -> list[str]:
         """Detecta nodos relacionados por tags solapados y area."""
         candidates: list[tuple[str, int]] = []
+        seen_slugs: set[str] = set()
 
         for md_file in self._all_node_files():
             try:
@@ -1054,7 +1258,12 @@ class Brain:
             except (ValueError, yaml.YAMLError):
                 continue
 
-            if node.slug == exclude_slug or node.status != "active":
+            if (
+                node.slug == exclude_slug
+                or node.status != "active"
+                or not _SLUG_PATTERN.fullmatch(node.slug)
+                or node.slug in seen_slugs
+            ):
                 continue
 
             score = 0
@@ -1066,6 +1275,7 @@ class Brain:
                 score += 1
 
             if score > 0:
+                seen_slugs.add(node.slug)
                 candidates.append((node.slug, score))
 
         candidates.sort(key=lambda x: x[1], reverse=True)
@@ -1123,10 +1333,10 @@ class Brain:
     def _append_log(self, operation: str, slug: str, extra: str = "") -> None:
         """Agrega una entrada al log append-only."""
         now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M")
-        entry = f"## [{now}] {operation} | {slug}"
+        entry = f"\n## [{now}] {operation} | {slug}"
         if extra:
             entry += f"\n{extra}"
-        entry += "\n\n"
+        entry += "\n"
 
         with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(entry)
@@ -1212,12 +1422,45 @@ class Brain:
                 "area": node.area,
                 "status": node.status,
                 "tags": node.tags,
+                "title": node.title,
+                "date": node.date,
+                "version": node.version,
+                "superseded_by": node.superseded_by,
+                "content_hash": node.content_hash,
+                "topic_key": node.topic_key,
                 "file": md_file,
             }
         self._meta_index_cache = index
         self._meta_index_signature = signature
         logger.debug("Brain[%s] meta_index construido: %d nodos", self.app_id, len(index))
         return index
+
+    def _content_hash_index(self) -> dict[str, str]:
+        """Índice cacheado ``content_hash -> slug`` para deduplicación exacta."""
+        files = self._all_node_files()
+        signature = (len(files), max((file.stat().st_mtime for file in files), default=0.0))
+        if self._quality_index_cache is not None and self._quality_index_signature == signature:
+            return self._quality_index_cache
+
+        index: dict[str, str] = {}
+        for node_path in sorted(files):
+            try:
+                node = BrainNode.from_frontmatter(
+                    node_path.read_text(encoding="utf-8"),
+                    node_path,
+                )
+            except (ValueError, yaml.YAMLError):
+                continue
+            index.setdefault(node.content_hash, node.slug)
+        self._quality_index_cache = index
+        self._quality_index_signature = signature
+        return index
+
+    def _invalidate_node_caches(self) -> None:
+        """Invalida todos los índices derivados después de una escritura."""
+        self._index_cache = None
+        self._meta_index_cache = None
+        self._quality_index_cache = None
 
     def _all_node_files(self) -> list[Path]:
         """Lista todos los archivos de nodos."""
@@ -1226,6 +1469,36 @@ class Brain:
             if directory.exists():
                 files.extend(directory.glob("*.md"))
         return files
+
+
+def _merge_quality_metadata(
+    content: str,
+    *,
+    tags: list[str],
+    sources: list[str],
+    version: int,
+    content_hash: str,
+    topic_key: str,
+) -> str:
+    """Actualiza metadata de calidad conservando el body Markdown byte a byte."""
+    fm_match = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n?(.*)", content, re.DOTALL)
+    if not fm_match:
+        raise ValueError("Nodo sin frontmatter YAML")
+    fm_text, body = fm_match.group(1), fm_match.group(2)
+    fm = yaml.safe_load(fm_text) or {}
+    if not isinstance(fm, dict):
+        raise ValueError("Frontmatter YAML invalido")
+    fm.update(
+        {
+            "tags": tags,
+            "sources": sources,
+            "version": version,
+            "content_hash": content_hash,
+            "topic_key": topic_key,
+        }
+    )
+    new_fm = yaml.dump(fm, default_flow_style=False, allow_unicode=True).strip()
+    return f"---\n{new_fm}\n---\n{body}"
 
 
 def _add_related_in_frontmatter(content: str, new_ref: str) -> str | None:
@@ -1255,10 +1528,34 @@ def _add_related_in_frontmatter(content: str, new_ref: str) -> str | None:
     if not isinstance(fm, dict):
         return None
     related = fm.get("related")
-    if not isinstance(related, list):
-        related = []
-    if new_ref in related:
-        return None  # ya enlazado: sin cambios
-    fm["related"] = (related + [new_ref])[:MAX_RELATED]
+    normalized = normalize_related_slugs(related)
+    updated = normalize_related_slugs([*normalized, new_ref])
+    if related == updated:
+        return None  # ya enlazado y normalizado: sin cambios
+    fm["related"] = updated
     new_fm = yaml.dump(fm, default_flow_style=False, allow_unicode=True).strip()
     return f"---\n{new_fm}\n---\n{body}"
+
+
+def _sanitize_related_in_frontmatter(content: str) -> tuple[str | None, int]:
+    """Normaliza ``related`` y preserva el body Markdown byte por byte."""
+    fm_match = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n?(.*)", content, re.DOTALL)
+    if not fm_match:
+        raise ValueError("Nodo sin frontmatter YAML")
+    fm_text, body = fm_match.group(1), fm_match.group(2)
+    fm = yaml.safe_load(fm_text) or {}
+    if not isinstance(fm, dict):
+        raise ValueError("Frontmatter YAML invalido")
+
+    related = fm.get("related")
+    normalized = normalize_related_slugs(related)
+    if related == normalized:
+        return None, 0
+
+    original_count = len(related) if isinstance(related, list) else 0
+    removed_count = max(original_count - len(normalized), 0)
+    version = fm.get("version", 1)
+    fm["version"] = version + 1 if isinstance(version, int) else 2
+    fm["related"] = normalized
+    new_fm = yaml.dump(fm, default_flow_style=False, allow_unicode=True).strip()
+    return f"---\n{new_fm}\n---\n{body}", removed_count

@@ -30,7 +30,7 @@ def check_test_file(filepath: Path) -> tuple[int, list[str]]:
     if filepath.suffix != ".py" or not filepath.name.startswith("test_"):
         return 0, []
 
-    content = filepath.read_text()
+    content = filepath.read_text(encoding="utf-8")
     lines = content.split("\n")
 
     for i, line in enumerate(lines, 1):
@@ -68,7 +68,7 @@ def check_all_tests() -> int:
     tests_dir = Path(".") / "tests"
 
     if not tests_dir.exists():
-        print("❌ tests/ directory not found")
+        print("ERROR: tests/ directory not found")
         return 1
 
     total_errors = 0
@@ -81,13 +81,13 @@ def check_all_tests() -> int:
 
     # Print results
     if all_errors:
-        print("❌ Found @pytest.mark.flaky without justification:\n")
+        print("ERROR: Found @pytest.mark.flaky without justification:\n")
         for error in all_errors:
             print(f"  {error}")
-        print(f"\n⚠️  Total: {total_errors} flaky tests without justification")
+        print(f"\nWARNING: {total_errors} flaky tests without justification")
         return 1
     else:
-        print("✅ All @pytest.mark.flaky markers have proper justification")
+        print("OK: All @pytest.mark.flaky markers have proper justification")
         return 0
 
 

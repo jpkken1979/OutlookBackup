@@ -616,6 +616,31 @@
       "description": "Consulta SQLite local con clasificación de sentencias."
     },
     {
+      "id": "nexus-memory",
+      "display_name": "Nexus Memory",
+      "owner": "OpenAntigravity",
+      "source_url": "https://github.com/jpkken1979/OpenAntigravity26.3.30",
+      "version": "bundle-v1",
+      "checksum": null,
+      "verification": "verified",
+      "transport": {
+        "type": "internal",
+        "args": []
+      },
+      "auth": {
+        "required_env": [],
+        "optional_env": [],
+        "header_from_env": {}
+      },
+      "scopes": {
+        "read": ["recall", "search", "stats", "suggest", "brain_query", "brain_stats"],
+        "write": ["store", "brain_ingest"],
+        "destructive": ["delete", "clear_user"]
+      },
+      "sandbox": "restricted",
+      "description": "Memoria semántica compartida y Brain Network de Nexus; las escrituras requieren aprobación."
+    },
+    {
       "id": "chrome-devtools",
       "display_name": "Chrome DevTools",
       "owner": "Google",

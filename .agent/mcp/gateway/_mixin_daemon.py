@@ -418,13 +418,6 @@ class _DaemonMixin:
                 }
             )
         )
-        try:
-            pass  # Dead code — imports pesados removidos
-        except Exception as e:
-            return web.json_response(
-                _make_response(error=_sanitize_error(e), status=503),
-                status=503,
-            )
 
     # --------------------------------------------------------
     # A2A Request-Reply Endpoints

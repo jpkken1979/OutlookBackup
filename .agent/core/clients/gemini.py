@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator
+from types import ModuleType
 from typing import Any
 
 from ..llm import BaseLLMClient, LLMConfig, LLMResponse, UsageStats
@@ -168,7 +169,7 @@ class GeminiClient(BaseLLMClient):
             raw_response=data,
         )
 
-    async def _post_with_retry(self, httpx, url: str, request_body: dict) -> dict:
+    async def _post_with_retry(self, httpx: ModuleType, url: str, request_body: dict) -> dict:
         """Realiza el POST a Gemini con reintentos y backoff lineal.
 
         Args:

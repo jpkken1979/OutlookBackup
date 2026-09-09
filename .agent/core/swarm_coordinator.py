@@ -769,8 +769,8 @@ class SwarmCoordinator:
                 {"swarm_id": swarm_id, "event": event_name, **data},
                 from_agent="swarm-coordinator",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("No se pudo publicar evento %s en el bus: %s", event_name, e)
 
     # --------------------------------------------------------
     # Finalize & History

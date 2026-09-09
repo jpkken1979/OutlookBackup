@@ -556,8 +556,8 @@ class ErrorRecovery:
             try:
                 with open(history_file, encoding="utf-8") as f:
                     self.error_history = json.load(f).get("history", [])
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo cargar error_history.json: %s", e)
 
     def _save_history(self) -> None:
         """Save error history."""

@@ -6,10 +6,13 @@ Es mi "segunda revisión" que previene errores tontos.
 """
 
 import ast
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class CheckType(Enum):
@@ -327,8 +330,8 @@ class AutoVerificationPipeline:
                                 )
                             )
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("No se pudo parsear el código para chequear type hints: %s", e)
 
         return issues
 

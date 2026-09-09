@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from excel_engine.types import CellFormat
+from ..types import CellFormat
 
 logger = logging.getLogger(__name__)
 

@@ -7,7 +7,7 @@ error rates, unclear questions, and performance metrics.
 import json
 import logging
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -73,7 +73,7 @@ class ShuFeedbackCollector:
         session_id = os.environ.get("ANTIGRAVITY_SESSION_ID", "")
 
         record = ShuFeedbackRecord(
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(UTC).replace(tzinfo=None).isoformat(),
             goal=goal,
             category=category,
             responses=responses,

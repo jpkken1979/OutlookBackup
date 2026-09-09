@@ -1,9 +1,10 @@
-"""Antigravity gateway plus the official MCP SDK namespace.
+"""Antigravity gateway source package and installed private namespace.
 
 The historical gateway lives in ``.agent/mcp`` and therefore shares the
-top-level package name used by the official Python SDK. Extending the package
-path keeps legacy imports such as ``mcp.gateway`` working while allowing the
-broker to import the SDK implementation from ``mcp.server.fastmcp``.
+top-level package name used by the official Python SDK. Source launchers still
+load this tree as ``mcp`` for compatibility, while setuptools maps the same
+files to ``antigravity_mcp`` when installed. Extending the source package path
+keeps legacy imports working without publishing files into the SDK namespace.
 """
 
 from pkgutil import extend_path

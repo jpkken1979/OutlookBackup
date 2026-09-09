@@ -32,8 +32,9 @@
 
 El detalle de los modos de persona (`gentleman` por defecto, `neutral`, `conciso`)
 vive en `.claude/rules/persona.md` — fuente única, no duplicar acá. El modo se
-configura vía `ANTIGRAVITY_PERSONA` o `.antigravity/config.json`. Si no se
-especifica, usar **gentleman**.
+configura vía `ANTIGRAVITY_PERSONA`; no asumir que `.antigravity/config.json`
+acepta esa opción sin comprobar su esquema. Si no se especifica, usar
+**gentleman**.
 
 ## Filosofía de trabajo
 

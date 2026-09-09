@@ -161,7 +161,7 @@ class AgentMesh:
         self._lock = asyncio.Lock()
         self._shared_memory: Any | None = None
 
-    def set_persistence(self, shared_memory) -> None:
+    def set_persistence(self, shared_memory: Any) -> None:
         """Enable persistence of request/response history."""
         self._shared_memory = shared_memory
 
@@ -171,7 +171,7 @@ class AgentMesh:
         capabilities: list[str],
         handler: Callable | None = None,
         metadata: dict | None = None,
-    ):
+    ) -> None:
         """Register an agent with its capabilities."""
         self.registered_agents[agent_name] = {
             "name": agent_name,
@@ -186,7 +186,7 @@ class AgentMesh:
             self.request_handlers[agent_name] = handler
         logger.info(f"Agent '{agent_name}' registered with capabilities: {capabilities}")
 
-    def unregister_agent(self, agent_name: str):
+    def unregister_agent(self, agent_name: str) -> None:
         """Unregister an agent."""
         if agent_name in self.registered_agents:
             self.registered_agents.pop(agent_name, None)
@@ -546,7 +546,7 @@ def get_agent_mesh() -> AgentMesh:
 # Example usage
 if __name__ == "__main__":
 
-    async def demo():
+    async def demo() -> None:
         mesh = get_agent_mesh()
 
         # Register agents

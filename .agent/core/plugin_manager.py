@@ -216,8 +216,8 @@ class PluginManager:
                 if name in self._plugins:
                     try:
                         self._plugins[name].state = PluginState(state_str)
-                    except ValueError:
-                        pass
+                    except ValueError as e:
+                        logger.debug("Estado persistido inválido para plugin '%s': %s", name, e)
             self._loaded = True
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning("Failed to load plugin state: %s", e)

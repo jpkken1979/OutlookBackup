@@ -21,6 +21,10 @@ import contextlib
 import json
 import logging
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .intelligence_hub import IntelligenceHub
 
 # Re-exportaciones de modelos y enums desde el sub-paquete (Plan 018 — paso 1).
 # Los consumidores externos siguen importando desde este modulo sin cambios.
@@ -82,7 +86,7 @@ class IntelligentOrchestrator(ExecutionStrategiesMixin, ModuleBackedMixin):
             "strategies_used": {},
         }
 
-    def _get_intelligence_hub(self):
+    def _get_intelligence_hub(self) -> "IntelligenceHub | None":
         """Lazy-load Intelligence Hub para enriquecer decisiones con datos reales."""
         if self._intelligence_hub is None:
             try:
@@ -112,7 +116,7 @@ class IntelligentOrchestrator(ExecutionStrategiesMixin, ModuleBackedMixin):
             "memory_persistence": True,
         }
 
-    async def _load_modules(self):
+    async def _load_modules(self) -> None:
         """Lazy load intelligence modules."""
         if self._modules_loaded:
             return
@@ -473,7 +477,7 @@ class IntelligentOrchestrator(ExecutionStrategiesMixin, ModuleBackedMixin):
                 metadata={"error": str(e), "recovery_attempted": recovery_result is not None},
             )
 
-    async def _learn_from_execution(self, result: ExecutionResult):
+    async def _learn_from_execution(self, result: ExecutionResult) -> None:
         """Learn from execution for future improvements."""
         if "time_memory" in self._modules and self._modules["time_memory"]:
             with contextlib.suppress(Exception):
@@ -505,7 +509,7 @@ class IntelligentOrchestrator(ExecutionStrategiesMixin, ModuleBackedMixin):
             except Exception as e:
                 logger.debug("Error alimentando Intelligence Hub: %s", e)
 
-    def _update_stats(self, result: ExecutionResult):
+    def _update_stats(self, result: ExecutionResult) -> None:
         """Update orchestrator statistics."""
         self.stats["total_executions"] += 1
         if result.success:
@@ -599,7 +603,7 @@ async def analyze_task(task: str, context: dict | None = None) -> TaskAnalysis:
 # =============================================================================
 
 
-async def main():
+async def main() -> None:
     """Main CLI entry point."""
     import argparse
 

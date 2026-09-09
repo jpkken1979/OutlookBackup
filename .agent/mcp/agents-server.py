@@ -12,6 +12,7 @@ Tools:
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -21,7 +22,13 @@ except ImportError:
     from security_utils import is_within_root
 
 # Configuration
-BASE_DIR = Path(__file__).parent.parent.parent
+_ANTIGRAVITY_HOME = os.environ.get("ANTIGRAVITY_HOME") or os.environ.get("ANTIGRAVITY_ROOT")
+if _ANTIGRAVITY_HOME:
+    BASE_DIR = Path(_ANTIGRAVITY_HOME)
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
+    if not (BASE_DIR / ".agent").exists():
+        BASE_DIR = Path.cwd()
 SKILLS_DIR = BASE_DIR / ".agent" / "skills"
 
 

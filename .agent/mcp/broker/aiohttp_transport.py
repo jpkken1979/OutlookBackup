@@ -12,6 +12,96 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 AsgiReceive = Callable[[], Awaitable[dict[str, Any]]]
 AsgiSend = Callable[[dict[str, Any]], Awaitable[None]]
 
+_HOP_BY_HOP_HEADERS = frozenset({"connection", "content-length", "transfer-encoding"})
+
+
+class _AsgiExchange:
+    """Encapsula el estado mutable de un ciclo ASGI puenteado sobre una request aiohttp.
+
+    Reemplaza el patron de closures + ``nonlocal`` por atributos de instancia,
+    para que la logica de ``receive``/``send`` no cuente hacia la complejidad
+    ciclomatica del metodo que orquesta el request.
+    """
+
+    def __init__(self, request: web.Request, body: bytes):
+        self._request = request
+        self._body = body
+        self._body_sent = False
+        self.response_started = False
+        self.response_complete = False
+        self.status = 200
+        self.headers: list[tuple[str, str]] = []
+        self._buffered_body = bytearray()
+        self.stream_response: web.StreamResponse | None = None
+
+    @property
+    def buffered_body(self) -> bytes:
+        return bytes(self._buffered_body)
+
+    async def receive(self) -> dict[str, Any]:
+        if not self._body_sent:
+            self._body_sent = True
+            return {"type": "http.request", "body": self._body, "more_body": False}
+        while self._request.transport is not None and not self._request.transport.is_closing():
+            await asyncio.sleep(0.1)
+        return {"type": "http.disconnect"}
+
+    async def _prepare_stream(self) -> web.StreamResponse:
+        if self.stream_response is not None:
+            return self.stream_response
+        self.stream_response = web.StreamResponse(status=self.status)
+        for name, value in self.headers:
+            if name.lower() not in _HOP_BY_HOP_HEADERS:
+                self.stream_response.headers.add(name, value)
+        await self.stream_response.prepare(self._request)
+        if self._buffered_body:
+            await self.stream_response.write(bytes(self._buffered_body))
+            self._buffered_body.clear()
+        return self.stream_response
+
+    async def send(self, message: dict[str, Any]) -> None:
+        message_type = message["type"]
+        if message_type == "http.response.start":
+            await self._handle_response_start(message)
+            return
+        if message_type != "http.response.body":
+            return
+        await self._handle_response_body(message)
+
+    async def _handle_response_start(self, message: dict[str, Any]) -> None:
+        self.response_started = True
+        self.status = int(message["status"])
+        self.headers = [
+            (name.decode("latin-1"), value.decode("latin-1"))
+            for name, value in message.get("headers", [])
+        ]
+        content_type = next(
+            (value for name, value in self.headers if name.lower() == "content-type"), ""
+        )
+        if content_type.startswith("text/event-stream"):
+            await self._prepare_stream()
+
+    async def _handle_response_body(self, message: dict[str, Any]) -> None:
+        chunk = message.get("body", b"")
+        more_body = bool(message.get("more_body", False))
+        if self.stream_response is None and not more_body:
+            self._buffered_body.extend(chunk)
+            self.response_complete = True
+            return
+        response = await self._prepare_stream()
+        if chunk:
+            try:
+                await response.write(chunk)
+            except (ClientConnectionResetError, ConnectionResetError):
+                self.response_complete = True
+                return
+        if not more_body:
+            self.response_complete = True
+            try:
+                await response.write_eof()
+            except (ClientConnectionResetError, ConnectionResetError):
+                return
+
 
 class AiohttpMcpTransport:
     """Bridge aiohttp requests to ``StreamableHTTPSessionManager``."""
@@ -55,85 +145,10 @@ class AiohttpMcpTransport:
         self._stop_event = None
         await task
 
-    async def handle(self, request: web.Request) -> web.StreamResponse:
-        body = await request.read()
-        body_sent = False
-        response_started = False
-        response_complete = False
-        status = 200
-        headers: list[tuple[str, str]] = []
-        buffered_body = bytearray()
-        stream_response: web.StreamResponse | None = None
-
-        async def receive() -> dict[str, Any]:
-            nonlocal body_sent
-            if not body_sent:
-                body_sent = True
-                return {
-                    "type": "http.request",
-                    "body": body,
-                    "more_body": False,
-                }
-            while request.transport is not None and not request.transport.is_closing():
-                await asyncio.sleep(0.1)
-            return {"type": "http.disconnect"}
-
-        async def prepare_stream() -> web.StreamResponse:
-            nonlocal stream_response
-            if stream_response is not None:
-                return stream_response
-            stream_response = web.StreamResponse(status=status)
-            for name, value in headers:
-                lowered = name.lower()
-                if lowered not in {"connection", "content-length", "transfer-encoding"}:
-                    stream_response.headers.add(name, value)
-            await stream_response.prepare(request)
-            if buffered_body:
-                await stream_response.write(bytes(buffered_body))
-                buffered_body.clear()
-            return stream_response
-
-        async def send(message: dict[str, Any]) -> None:
-            nonlocal response_started, response_complete, status, headers
-            message_type = message["type"]
-            if message_type == "http.response.start":
-                response_started = True
-                status = int(message["status"])
-                headers = [
-                    (name.decode("latin-1"), value.decode("latin-1"))
-                    for name, value in message.get("headers", [])
-                ]
-                content_type = next(
-                    (value for name, value in headers if name.lower() == "content-type"),
-                    "",
-                )
-                if content_type.startswith("text/event-stream"):
-                    await prepare_stream()
-                return
-
-            if message_type != "http.response.body":
-                return
-            chunk = message.get("body", b"")
-            more_body = bool(message.get("more_body", False))
-            if stream_response is None and not more_body:
-                buffered_body.extend(chunk)
-                response_complete = True
-                return
-            response = await prepare_stream()
-            if chunk:
-                try:
-                    await response.write(chunk)
-                except (ClientConnectionResetError, ConnectionResetError):
-                    response_complete = True
-                    return
-            if not more_body:
-                response_complete = True
-                try:
-                    await response.write_eof()
-                except (ClientConnectionResetError, ConnectionResetError):
-                    return
-
-        scope = {
+    @staticmethod
+    def _build_scope(request: web.Request) -> dict[str, Any]:
+        """Construye el scope ASGI a partir de una request aiohttp."""
+        return {
             "type": "http",
             "asgi": {"version": "3.0", "spec_version": "2.3"},
             "http_version": f"{request.version.major}.{request.version.minor}",
@@ -152,23 +167,33 @@ class AiohttpMcpTransport:
             "state": {},
         }
 
-        await self._session_manager.handle_request(scope, receive, send)
-        if stream_response is not None:
-            if not response_complete and stream_response.prepared:
+    @staticmethod
+    async def _finalize_response(exchange: _AsgiExchange) -> web.StreamResponse:
+        """Traduce el estado final del intercambio ASGI a una respuesta aiohttp."""
+        if exchange.stream_response is not None:
+            if not exchange.response_complete and exchange.stream_response.prepared:
                 try:
-                    await stream_response.write_eof()
+                    await exchange.stream_response.write_eof()
                 except (ClientConnectionResetError, ConnectionResetError):
                     pass
-            return stream_response
-        if not response_started:
+            return exchange.stream_response
+        if not exchange.response_started:
             raise RuntimeError("MCP SDK returned no ASGI response")
 
-        response_headers: dict[str, str] = {}
-        for name, value in headers:
-            if name.lower() not in {"connection", "content-length", "transfer-encoding"}:
-                response_headers[name] = value
+        response_headers: dict[str, str] = {
+            name: value
+            for name, value in exchange.headers
+            if name.lower() not in _HOP_BY_HOP_HEADERS
+        }
         return web.Response(
-            status=status,
-            body=bytes(buffered_body),
+            status=exchange.status,
+            body=exchange.buffered_body,
             headers=response_headers,
         )
+
+    async def handle(self, request: web.Request) -> web.StreamResponse:
+        body = await request.read()
+        exchange = _AsgiExchange(request, body)
+        scope = self._build_scope(request)
+        await self._session_manager.handle_request(scope, exchange.receive, exchange.send)
+        return await self._finalize_response(exchange)

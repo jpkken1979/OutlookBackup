@@ -205,6 +205,8 @@ class SecurityWatcher:
                     if alert is not None:
                         alerts.append(alert)
         except PermissionError:
+            # ponytail: subdirectorio raíz sin permisos de lectura — se
+            # conserva lo escaneado hasta el momento del corte.
             pass
 
         logger.info(
@@ -426,6 +428,8 @@ class PatternWatcher:
                     if alert is not None:
                         alerts.append(alert)
         except PermissionError:
+            # ponytail: subdirectorio raíz sin permisos de lectura — se
+            # conserva lo escaneado hasta el momento del corte.
             pass
 
         return alerts

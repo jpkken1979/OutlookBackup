@@ -481,7 +481,8 @@ class AnomalyDetector:
                 )
             )
         except RuntimeError:
-            # No hay event loop (tests síncronos o shutdown)
+            # ponytail: no hay event loop (tests síncronos o shutdown) — el alert
+            # ya fue registrado localmente; publicarlo en el bus es best-effort.
             pass
 
     # --------------------------------------------------------

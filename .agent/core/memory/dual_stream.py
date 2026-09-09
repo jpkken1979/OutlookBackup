@@ -88,7 +88,7 @@ class MemoryStream:
         self._word_index: dict[str, set[str]] = {}  # word -> entry_ids
         self._load()
 
-    def _load(self):
+    def _load(self) -> None:
         """Load stream from disk."""
         if self.storage_path.exists():
             try:
@@ -103,7 +103,7 @@ class MemoryStream:
             except Exception as e:
                 logger.error(f"Failed to load stream: {e}")
 
-    def _save(self):
+    def _save(self) -> None:
         """Save stream to disk."""
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         data = {
@@ -114,7 +114,7 @@ class MemoryStream:
         }
         self.storage_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-    def _index_entry(self, entry: MemoryEntry):
+    def _index_entry(self, entry: MemoryEntry) -> None:
         """Index entry for search."""
         words = self._tokenize(entry.content)
         for word in words:
@@ -209,7 +209,7 @@ class MemoryStream:
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:limit]
 
-    async def invalidate(self, entry_id: str, reason: str = ""):
+    async def invalidate(self, entry_id: str, reason: str = "") -> None:
         """Mark entry as no longer valid."""
         if entry_id in self.entries:
             self.entries[entry_id].valid_to = datetime.now().isoformat()
@@ -386,7 +386,7 @@ class DualStreamMemory:
         """Recall only from reasoning stream."""
         return await self.reasoning.recall(query, limit, **kwargs)
 
-    async def link_reasoning_to_observation(self, reasoning_id: str, observation_id: str):
+    async def link_reasoning_to_observation(self, reasoning_id: str, observation_id: str) -> None:
         """Link a reasoning entry to its supporting observation."""
         if reasoning_id in self.reasoning.entries:
             entry = self.reasoning.entries[reasoning_id]
@@ -414,7 +414,7 @@ class DualStreamMemory:
             "total_entries": obs_stats["total_entries"] + reason_stats["total_entries"],
         }
 
-    async def clear_task_memory(self, task_id: str):
+    async def clear_task_memory(self, task_id: str) -> None:
         """Clear all memory related to a specific task."""
         for stream in [self.observations, self.reasoning]:
             to_remove = [eid for eid, e in stream.entries.items() if e.task_id == task_id]
@@ -440,7 +440,7 @@ def get_dual_stream_memory(storage_path: Path | None = None) -> DualStreamMemory
 # =============================================================================
 
 
-async def demo():
+async def demo() -> None:
     """Demonstrate dual-stream memory."""
     import tempfile
 

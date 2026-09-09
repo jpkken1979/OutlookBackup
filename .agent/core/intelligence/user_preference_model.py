@@ -5,6 +5,7 @@ Aprende y aplica preferencias para personalizar la experiencia.
 """
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -12,6 +13,8 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class PreferenceSource(Enum):
@@ -142,8 +145,8 @@ class UserPreferenceModel:
                     preferences=prefs,
                     interaction_count=data.get("interaction_count", 0),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo cargar el perfil de usuario persistido: %s", e)
 
         # Crear con defaults
         prefs = {}
@@ -154,7 +157,7 @@ class UserPreferenceModel:
 
         return UserProfile(user_id="default", preferences=prefs)
 
-    def _save_profile(self):
+    def _save_profile(self) -> None:
         """Guarda perfil a disco."""
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -199,7 +202,7 @@ class UserPreferenceModel:
         value: Any,
         source: PreferenceSource = PreferenceSource.EXPLICIT,
         evidence: str | None = None,
-    ):
+    ) -> None:
         """
         Establece preferencia.
 
@@ -241,7 +244,7 @@ class UserPreferenceModel:
 
         self._save_profile()
 
-    def observe(self, observation_type: str, data: dict):
+    def observe(self, observation_type: str, data: dict) -> None:
         """
         Registra observacion para inferencia.
 
@@ -259,7 +262,7 @@ class UserPreferenceModel:
         if len(self.observation_buffer) >= 5:
             self._process_observations()
 
-    def _process_observations(self):
+    def _process_observations(self) -> None:
         """Procesa buffer de observaciones para inferir preferencias."""
         for obs in self.observation_buffer:
             obs_type = obs["type"]
@@ -275,7 +278,7 @@ class UserPreferenceModel:
         self.observation_buffer.clear()
         self._save_profile()
 
-    def _infer_from_code(self, data: dict):
+    def _infer_from_code(self, data: dict) -> None:
         """Infiere preferencias del codigo escrito."""
         code = data.get("code", "")
         data.get("file_path", "")
@@ -317,7 +320,7 @@ class UserPreferenceModel:
                 f"Code uses {tabs} tab indents",
             )
 
-    def _infer_from_feedback(self, data: dict):
+    def _infer_from_feedback(self, data: dict) -> None:
         """Infiere preferencias del feedback."""
         text = data.get("text", "").lower()
 
@@ -359,7 +362,7 @@ class UserPreferenceModel:
                 "Detected English in feedback",
             )
 
-    def _infer_from_commit(self, data: dict):
+    def _infer_from_commit(self, data: dict) -> None:
         """Infiere preferencias del commit."""
         message = data.get("message", "")
 
@@ -438,7 +441,7 @@ class UserPreferenceModel:
 
         return applicable
 
-    def decay_confidence(self, decay_factor: float = 0.99):
+    def decay_confidence(self, decay_factor: float = 0.99) -> None:
         """
         Aplica decay temporal a confianzas.
 

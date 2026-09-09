@@ -6,7 +6,6 @@ This module provides the core infrastructure for the Antigravity ecosystem:
 - ChromaDB vector memory
 - A2A Protocol for agent discovery
 - OpenTelemetry observability
-- WebSocket Gateway control plane
 - Multi-channel message routing
 
 IMPROVED in v4.3.1: Lazy imports with clear error messages instead of silent fallbacks.
@@ -186,12 +185,8 @@ _get_learning_type = _lazy_import(".autonomous_learning", "LearningType", option
 _get_feedback_type = _lazy_import(".autonomous_learning", "FeedbackType", optional=True)
 
 # =============================================================================
-# GATEWAY & ROUTING (OpenClaw-inspired)
+# ROUTING (OpenClaw-inspired)
 # =============================================================================
-
-_get_gateway = _lazy_import(".gateway", "AntigravityGateway", optional=True)
-_get_gateway_config = _lazy_import(".gateway", "GatewayConfig", optional=True)
-_get_create_gateway = _lazy_import(".gateway", "create_gateway", optional=True)
 
 _get_channel_router = _lazy_import(".channel_router", "ChannelRouter", optional=True)
 _get_platform = _lazy_import(".channel_router", "Platform", optional=True)
@@ -286,150 +281,142 @@ class _LazyModule:
 
     # Core
     @property
-    def AntigravityOrchestrator(self):
+    def AntigravityOrchestrator(self) -> Any:
         return _get_orchestrator()
 
     @property
-    def SharedMemory(self):
+    def SharedMemory(self) -> Any:
         return _get_shared_memory()
 
     @property
-    def VectorMemory(self):
+    def VectorMemory(self) -> Any:
         return _get_vector_memory()
 
     @property
-    def MemoryBus(self):
+    def MemoryBus(self) -> Any:
         return _get_memory_bus_class()
 
     @property
-    def get_memory_bus(self):
+    def get_memory_bus(self) -> Any:
         return _get_memory_bus_fn()
 
     @property
-    def AntigravityAgent(self):
+    def AntigravityAgent(self) -> Any:
         return _get_agent_base()
 
     # A2A
     @property
-    def A2AProtocol(self):
+    def A2AProtocol(self) -> Any:
         return _get_a2a_protocol()
 
     @property
-    def AgentCard(self):
+    def AgentCard(self) -> Any:
         return _get_agent_card()
 
     @property
-    def AgentMessageBus(self):
+    def AgentMessageBus(self) -> Any:
         return _get_agent_message_bus()
 
     @property
-    def get_message_bus(self):
+    def get_message_bus(self) -> Any:
         return _get_message_bus_fn()
 
     # Telemetry
     @property
-    def setup_telemetry(self):
+    def setup_telemetry(self) -> Any:
         return _get_setup_telemetry()
 
     # Execution
     @property
-    def ExecutionEngine(self):
+    def ExecutionEngine(self) -> Any:
         return _get_execution_engine()
 
     @property
-    def run_task(self):
+    def run_task(self) -> Any:
         return _get_run_task()
 
     @property
-    def run_task_sync(self):
+    def run_task_sync(self) -> Any:
         return _get_run_task_sync()
 
     @property
-    def get_engine(self):
+    def get_engine(self) -> Any:
         return _get_engine_fn()
 
     # Intelligence
     @property
-    def ChainOfThought(self):
+    def ChainOfThought(self) -> Any:
         return _get_chain_of_thought()
 
     @property
-    def Metacognition(self):
+    def Metacognition(self) -> Any:
         return _get_metacognition()
 
     @property
-    def MultiAgentDebate(self):
+    def MultiAgentDebate(self) -> Any:
         return _get_multi_agent_debate()
 
     @property
-    def KnowledgeGraph(self):
+    def KnowledgeGraph(self) -> Any:
         return _get_knowledge_graph()
 
     @property
-    def QualityScorer(self):
+    def QualityScorer(self) -> Any:
         return _get_quality_scorer()
 
     @property
-    def IntelligentAgent(self):
+    def IntelligentAgent(self) -> Any:
         return _get_intelligent_agent()
 
     # Advanced
     @property
-    def AgentMesh(self):
+    def AgentMesh(self) -> Any:
         return _get_agent_mesh()
 
     @property
-    def get_agent_mesh(self):
+    def get_agent_mesh(self) -> Any:
         return _get_agent_mesh_fn()
 
     @property
-    def KnowledgeHub(self):
+    def KnowledgeHub(self) -> Any:
         return _get_knowledge_hub()
 
     @property
-    def get_knowledge_hub(self):
+    def get_knowledge_hub(self) -> Any:
         return _get_knowledge_hub_fn()
 
     @property
-    def DebateProtocol(self):
+    def DebateProtocol(self) -> Any:
         return _get_debate_protocol()
 
     @property
-    def get_debate_protocol(self):
+    def get_debate_protocol(self) -> Any:
         return _get_debate_protocol_fn()
 
     @property
-    def AutoHealer(self):
+    def AutoHealer(self) -> Any:
         return _get_auto_healer()
 
     @property
-    def get_healer(self):
+    def get_healer(self) -> Any:
         return _get_healer_fn()
 
     @property
-    def CircuitBreaker(self):
+    def CircuitBreaker(self) -> Any:
         return _get_circuit_breaker()
 
     # Cost Tracking
     @property
-    def CostTracker(self):
+    def CostTracker(self) -> Any:
         return _get_cost_tracker()
 
     @property
-    def get_tracker(self):
+    def get_tracker(self) -> Any:
         return _get_tracker_fn()
 
-    # Gateway
+    # Routing
     @property
-    def AntigravityGateway(self):
-        return _get_gateway()
-
-    @property
-    def create_gateway(self):
-        return _get_create_gateway()
-
-    @property
-    def ChannelRouter(self):
+    def ChannelRouter(self) -> Any:
         return _get_channel_router()
 
 
@@ -484,6 +471,8 @@ def check_health(verbose: bool = False) -> HealthCheckResult:
             try:
                 fn()
             except Exception:
+                # ponytail: probe-only call; success/failure is already recorded
+                # in _module_registry by the lazy import itself, nothing else to do here.
                 pass
 
     loaded = sum(1 for m in _module_registry.values() if m.status == ModuleStatus.LOADED)
@@ -567,10 +556,7 @@ def __getattr__(name: str) -> Any:
         "get_learning_pipeline": _get_learning_pipeline_fn,
         "LearningType": _get_learning_type,
         "FeedbackType": _get_feedback_type,
-        # Gateway
-        "AntigravityGateway": _get_gateway,
-        "GatewayConfig": _get_gateway_config,
-        "create_gateway": _get_create_gateway,
+        # Routing
         "ChannelRouter": _get_channel_router,
         "Platform": _get_platform,
         "UnifiedMessage": _get_unified_message,
@@ -697,10 +683,7 @@ __all__ = [
     "get_learning_pipeline",
     "LearningType",
     "FeedbackType",
-    # Gateway
-    "AntigravityGateway",
-    "GatewayConfig",
-    "create_gateway",
+    # Routing
     "ChannelRouter",
     "Platform",
     "UnifiedMessage",

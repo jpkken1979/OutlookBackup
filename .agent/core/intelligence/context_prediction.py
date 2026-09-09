@@ -90,7 +90,7 @@ class ContextPrediction:
         self.message_count = 0
         self.segments: list[dict] = []
 
-    def record_usage(self, tokens: int):
+    def record_usage(self, tokens: int) -> None:
         """
         Registra uso de tokens.
 
@@ -251,7 +251,7 @@ class ContextPrediction:
 
     def add_segment(
         self, segment_id: str, content: str, priority: int = 3, category: str = "general"
-    ):
+    ) -> None:
         """
         Agrega segmento para tracking.
 

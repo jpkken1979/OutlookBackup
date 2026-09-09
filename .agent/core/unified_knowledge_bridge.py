@@ -23,6 +23,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from .gateway_client import resolve_gateway_token
+
 logger = logging.getLogger(__name__)
 
 
@@ -157,37 +159,13 @@ class Mem0Adapter:
     ) -> None:
         self.gateway_url = gateway_url.rstrip("/")
         self._available: bool | None = None
-        # api_key explícita > variable de entorno > session key del disco
-        self._api_key: str | None = (
-            api_key or os.getenv("ANTIGRAVITY_API_KEY") or self._load_session_key()
-        )
-
-    @staticmethod
-    def _load_session_key() -> str | None:
-        """Intenta leer la session key cifrada del disco (sin crash si falla)."""
-        try:
-            from mcp.session_key import read_session_key  # type: ignore[import]
-
-            return read_session_key()
-        except Exception:
-            pass
-        try:
-            # Fallback: importar desde path relativo cuando se ejecuta fuera del gateway
-            import sys
-
-            agent_mcp = Path(__file__).resolve().parents[1] / "mcp"
-            if str(agent_mcp.parent) not in sys.path:
-                sys.path.insert(0, str(agent_mcp.parent))
-            from mcp.session_key import read_session_key as _rsk  # type: ignore[import]
-
-            return _rsk()
-        except Exception:
-            return None
+        self._explicit_api_key = api_key
 
     def _auth_headers(self) -> dict[str, str]:
         """Devuelve headers de autenticación para el gateway."""
-        if self._api_key:
-            return {"X-API-Key": self._api_key}
+        token = self._explicit_api_key or resolve_gateway_token(self.gateway_url)
+        if token:
+            return {"X-API-Key": token}
         return {}
 
     async def is_available(self) -> bool:
@@ -429,6 +407,8 @@ class ObsidianAdapter:
                         self._use_git_fallback = False
                         return True
         except Exception:
+            # ponytail: Obsidian REST no disponible — cae al fallback de
+            # filesystem de abajo, que es el comportamiento intencional.
             pass
 
         # Fallback to direct filesystem access

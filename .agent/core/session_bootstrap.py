@@ -421,7 +421,7 @@ class SessionBootstrap:
 
         return SessionMemory()
 
-    def save_preferences(self, preferences: UserPreferences):
+    def save_preferences(self, preferences: UserPreferences) -> None:
         """Guarda preferencias del usuario."""
         pref_file = self.project_root / self.PREFERENCES_PATH
         pref_file.parent.mkdir(parents=True, exist_ok=True)
@@ -445,7 +445,7 @@ class SessionBootstrap:
         user_correction: dict | None = None,
         important_note: str | None = None,
         learned_pattern: dict | None = None,
-    ):
+    ) -> None:
         """Guarda algo en la memoria de sesión."""
         memory = self._load_session_memory()
 

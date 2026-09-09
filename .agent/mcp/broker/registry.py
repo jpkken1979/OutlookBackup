@@ -6,6 +6,7 @@ import fnmatch
 import json
 import os
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,33 @@ class ConnectorRegistry:
                 return ConnectorStatus.OFFLINE
         return ConnectorStatus.CONFIGURED
 
+    @staticmethod
+    def _classify_sqlite_operation(arguments: dict[str, Any] | None) -> OperationClass | None:
+        """Clasifica una operacion SQLite inspeccionando el SQL crudo si vino en los argumentos.
+
+        Returns:
+            La clase de operacion si se pudo inferir del SQL, o ``None`` si no aplica
+            (no es SQLite, faltan argumentos o no hay sentencia SQL reconocible).
+        """
+        if not isinstance(arguments, dict):
+            return None
+        raw_sql = arguments.get("sql")
+        if not isinstance(raw_sql, str) or not raw_sql.strip():
+            return None
+        sql_class = sql_operation_class(raw_sql)
+        if sql_class == "read":
+            return OperationClass.READ
+        if sql_class == "destructive":
+            return OperationClass.DESTRUCTIVE
+        return OperationClass.WRITE
+
+    @staticmethod
+    def _match_scope(normalized: str, patterns: Sequence[str]) -> bool:
+        # Sequence y no list: esta clase define un metodo `list`, que sombrea al
+        # builtin dentro del scope de la clase — mypy resuelve la anotacion al
+        # metodo. Ademas Sequence es lo correcto para un parametro que solo se itera.
+        return any(fnmatch.fnmatchcase(normalized, pattern.lower()) for pattern in patterns)
+
     def classify_operation(
         self,
         connector: ConnectorManifest,
@@ -85,24 +113,16 @@ class ConnectorRegistry:
         arguments: dict[str, Any] | None = None,
     ) -> OperationClass:
         normalized = operation.strip().lower()
-        if connector.id == "sqlite" and isinstance(arguments, dict):
-            raw_sql = arguments.get("sql")
-            if isinstance(raw_sql, str) and raw_sql.strip():
-                sql_class = sql_operation_class(raw_sql)
-                if sql_class == "read":
-                    return OperationClass.READ
-                if sql_class == "destructive":
-                    return OperationClass.DESTRUCTIVE
-                return OperationClass.WRITE
-        for pattern in connector.scopes.destructive:
-            if fnmatch.fnmatchcase(normalized, pattern.lower()):
-                return OperationClass.DESTRUCTIVE
-        for pattern in connector.scopes.write:
-            if fnmatch.fnmatchcase(normalized, pattern.lower()):
-                return OperationClass.WRITE
-        for pattern in connector.scopes.read:
-            if fnmatch.fnmatchcase(normalized, pattern.lower()):
-                return OperationClass.READ
+        if connector.id == "sqlite":
+            sqlite_class = self._classify_sqlite_operation(arguments)
+            if sqlite_class is not None:
+                return sqlite_class
+        if self._match_scope(normalized, connector.scopes.destructive):
+            return OperationClass.DESTRUCTIVE
+        if self._match_scope(normalized, connector.scopes.write):
+            return OperationClass.WRITE
+        if self._match_scope(normalized, connector.scopes.read):
+            return OperationClass.READ
         # Unknown operations are not assumed safe.
         return OperationClass.WRITE
 

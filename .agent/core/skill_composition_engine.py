@@ -249,6 +249,8 @@ class SkillCompositionEngine:
                                 desc = line.strip()[:200]
                                 break
                     except (OSError, UnicodeDecodeError):
+                        # ponytail: SKILL.md ilegible — desc queda vacío y el
+                        # caller usa skill_dir.name como fallback (línea de abajo).
                         pass
                 index[skill_dir.name] = {
                     "script": str(scripts[0]),

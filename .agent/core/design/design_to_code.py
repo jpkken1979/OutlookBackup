@@ -133,7 +133,7 @@ class DesignToCodeEngine:
         self.styling = styling
         self.tokens: dict[str, DesignToken] = {}
 
-    def load_tokens(self, tokens: dict[str, Any]):
+    def load_tokens(self, tokens: dict[str, Any]) -> None:
         """Load design tokens."""
         for category, values in tokens.items():
             if isinstance(values, dict):
@@ -915,7 +915,7 @@ def generate_from_design_system(
 # =============================================================================
 
 
-def main():
+def main() -> None:
     """CLI entry point."""
     import argparse
 

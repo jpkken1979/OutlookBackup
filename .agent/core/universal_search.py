@@ -17,6 +17,7 @@ v1.0.0 — 2026-05-09
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -24,6 +25,20 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_CODE_EXCLUDED_DIRS = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "target",
+        "dist",
+        "build",
+        "__pycache__",
+        ".venv",
+        "venv",
+    }
+)
+_FALLBACK_MAX_FILE_BYTES = 5 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # Data Models
@@ -268,7 +283,7 @@ class UniversalSearch:
             return None
 
     def search_code(self, query: str, limit: int = 5) -> list[SearchResult]:
-        """Busca en código fuente del proyecto con ripgrep.
+        """Busca en código fuente con ripgrep o un fallback local seguro.
 
         Args:
             query: Término de búsqueda.
@@ -277,32 +292,28 @@ class UniversalSearch:
         Returns:
             Lista de SearchResult de código.
         """
-        if not self.project_root.exists():
+        if not self.project_root.exists() or not query or limit <= 0:
             return []
 
-        EXCLUDE_DIRS = [
-            ".git",
-            "node_modules",
-            "target",
-            "dist",
-            "build",
-            "__pycache__",
-            ".venv",
-            "venv",
+        exclude_args = [
+            argument
+            for directory in sorted(_CODE_EXCLUDED_DIRS)
+            for argument in ("--glob", f"!**/{directory}/**")
         ]
-        EXCLUDE_ARGS = [f"--exclude-dir={d}" for d in EXCLUDE_DIRS]
 
         try:
             cmd = [
                 "rg",
                 "--json",
+                "--hidden",
+                "--fixed-strings",
                 "--max-count",
                 str(limit * 3),
                 "-i",  # case insensitive
                 "-e",
                 query,
                 str(self.project_root),
-                *EXCLUDE_ARGS,
+                *exclude_args,
             ]
             result = subprocess.run(
                 cmd,
@@ -327,14 +338,83 @@ class UniversalSearch:
             return [r for _, r in results[:limit]]
 
         except FileNotFoundError:
-            logger.debug("ripgrep no disponible — skipping code search")
-            return []
+            logger.debug("ripgrep no disponible — usando fallback de búsqueda")
+            return self._search_code_fallback(query, limit)
         except subprocess.TimeoutExpired:
             logger.warning("ripgrep timeout para query='%s'", query)
             return []
         except Exception as e:
             logger.warning("Error en search_code('%s'): %s", query, e)
             return []
+
+    def _search_code_fallback(self, query: str, limit: int) -> list[SearchResult]:
+        """Busca texto literal sin herramientas externas.
+
+        El fallback evita enlaces simbólicos, directorios generados, archivos
+        binarios y archivos demasiado grandes. Devuelve como máximo el primer
+        match de cada archivo, igual que la ruta rápida deduplicada de ripgrep.
+
+        Args:
+            query: Texto literal a buscar sin distinguir mayúsculas.
+            limit: Máximo de archivos devueltos.
+
+        Returns:
+            Resultados de código en orden estable por ruta.
+        """
+        needle = query.casefold()
+        results: list[SearchResult] = []
+
+        for directory, directory_names, file_names in os.walk(
+            self.project_root,
+            topdown=True,
+            followlinks=False,
+        ):
+            current_dir = Path(directory)
+            directory_names[:] = sorted(
+                name
+                for name in directory_names
+                if name.casefold() not in _CODE_EXCLUDED_DIRS
+                and not (current_dir / name).is_symlink()
+            )
+
+            for file_name in sorted(file_names):
+                file_path = current_dir / file_name
+                try:
+                    if file_path.is_symlink() or not file_path.is_file():
+                        continue
+                    if file_path.stat().st_size > _FALLBACK_MAX_FILE_BYTES:
+                        continue
+                    raw_content = file_path.read_bytes()
+                except OSError:
+                    continue
+
+                if b"\x00" in raw_content:
+                    continue
+
+                content = raw_content.decode("utf-8", errors="replace")
+                for line_number, line in enumerate(content.splitlines(), start=1):
+                    if needle not in line.casefold():
+                        continue
+
+                    relative_path = str(file_path.relative_to(self.project_root))
+                    results.append(
+                        SearchResult(
+                            title=f"{relative_path}:{line_number}",
+                            content=line,
+                            source="code",
+                            source_label="Código",
+                            score=10.0,
+                            path=relative_path,
+                            tags=[],
+                            metadata={"line": line_number},
+                        )
+                    )
+                    break
+
+                if len(results) >= limit:
+                    return results
+
+        return results
 
     # ── Agentes y Skills ───────────────────────────────────────────────────────
 
@@ -364,6 +444,8 @@ class UniversalSearch:
                 content = identity_file.read_text(encoding="utf-8", errors="replace")
                 title = _extract_title_from_markdown(content, name)
             except OSError:
+                # ponytail: IDENTITY.md ilegible — el resultado se devuelve
+                # igual con title=name y content vacío.
                 pass
 
         return (
@@ -403,6 +485,8 @@ class UniversalSearch:
             try:
                 content = skill_file.read_text(encoding="utf-8", errors="replace")
             except OSError:
+                # ponytail: SKILL.md ilegible — el resultado se devuelve
+                # igual con content vacío.
                 pass
 
         return (

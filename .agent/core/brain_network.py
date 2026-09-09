@@ -734,6 +734,8 @@ class BrainNetwork:
             elif days_apart <= 30:
                 score += 0.05
         except ValueError:
+            # ponytail: node date malformed/unparseable — just skip the temporal
+            # proximity bonus, the rest of the score still gets computed.
             pass
 
         # Titulo solapado (keywords compartidos)

@@ -736,8 +736,10 @@ class ExecutionEngine:
                         },
                         priority=1,
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger("antigravity.execution_engine").debug(
+                    "No se pudo publicar error en el MessageBus: %s", e
+                )
 
         return result
 

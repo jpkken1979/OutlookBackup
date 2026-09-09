@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Protocol, runtime_checkable
 
-from excel_engine.types import CellFormat
+from ..types import CellFormat
 
 
 @runtime_checkable

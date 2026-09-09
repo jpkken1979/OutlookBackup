@@ -22,7 +22,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .dual_stream import DualStreamMemory
+    from .temporal_graph import TemporalKnowledgeGraph
 
 logger = logging.getLogger("antigravity.unified_memory")
 
@@ -97,7 +101,7 @@ class UnifiedMemory:
         logger.info(f"UnifiedMemory initialized at {self.storage_path}")
 
     @property
-    def dual_stream(self):
+    def dual_stream(self) -> "DualStreamMemory | None":
         """Lazy load DualStreamMemory."""
         if self._dual_stream is None:
             try:
@@ -126,7 +130,7 @@ class UnifiedMemory:
         return self._dual_stream
 
     @property
-    def temporal_graph(self):
+    def temporal_graph(self) -> "TemporalKnowledgeGraph | None":
         """Lazy load TemporalKnowledgeGraph."""
         if self._temporal_graph is None:
             try:
@@ -155,7 +159,7 @@ class UnifiedMemory:
         return self._temporal_graph
 
     @property
-    def shared_memory(self):
+    def shared_memory(self) -> "SimpleSharedMemory":
         """Backend key-value para CONTEXT/fallback de ``store()``.
 
         Usa ``SimpleSharedMemory`` (API ``.set()``/``.get()`` + persistencia a
@@ -557,12 +561,12 @@ class UnifiedMemory:
     # Lifecycle
     # =========================================================================
 
-    def clear_ephemeral(self):
+    def clear_ephemeral(self) -> None:
         """Clear all ephemeral memory."""
         self._ephemeral.clear()
         logger.info("Ephemeral memory cleared")
 
-    async def clear_task_memory(self, task_id: str):
+    async def clear_task_memory(self, task_id: str) -> None:
         """Clear all memory related to a task."""
         if self.dual_stream:
             await self.dual_stream.clear_task_memory(task_id)
@@ -599,21 +603,21 @@ class SimpleSharedMemory:
         self._data: dict = {}
         self._load()
 
-    def _load(self):
+    def _load(self) -> None:
         if self.data_file.exists():
             import json
 
             self._data = json.loads(self.data_file.read_text(encoding="utf-8"))
 
-    def _save(self):
+    def _save(self) -> None:
         import json
 
         self.data_file.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
 
-    def get(self, key: str, default=None):
+    def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, default)
 
-    def set(self, key: str, value: Any):
+    def set(self, key: str, value: Any) -> None:
         self._data[key] = value
         self._save()
 
@@ -642,7 +646,7 @@ class SimpleSharedMemory:
             preferences[data.get("key", "default")] = data.get("value")
             self.set("preferences", preferences)
 
-    def delete(self, key: str):
+    def delete(self, key: str) -> None:
         if key in self._data:
             del self._data[key]
             self._save()
@@ -677,7 +681,7 @@ def get_unified_memory(storage_path: Path | None = None) -> UnifiedMemory:
 # =============================================================================
 
 
-async def demo():
+async def demo() -> None:
     """Demonstrate unified memory."""
     import tempfile
 

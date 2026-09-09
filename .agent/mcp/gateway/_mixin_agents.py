@@ -44,7 +44,9 @@ class _AgentsMixin:
 
         filter_type = request.query.get("filter", "all")
         offset = max(0, int(request.query.get("offset", "0")))
-        limit = min(100, max(1, int(request.query.get("limit", "50"))))
+        # Techo 500: cubre el inventario completo (142 agentes) — el clamp
+        # anterior de 100 recortaba en silencio el catalogo de Nexus (bug 2026-08-10)
+        limit = min(500, max(1, int(request.query.get("limit", "50"))))
 
         cache_key = f"agents_{filter_type}"
         agents = self.cache.get(cache_key)

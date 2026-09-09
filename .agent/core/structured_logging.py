@@ -27,7 +27,7 @@ import json
 import logging
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
@@ -39,6 +39,7 @@ except ImportError:  # Python < 3.11
 
     UTC = UTC
 from functools import wraps
+from types import TracebackType
 from typing import Any, TypeVar
 from uuid import uuid4
 
@@ -86,7 +87,7 @@ def set_agent_name(name: str) -> None:
 @contextmanager
 def with_context(
     trace_id: str | None = None, span_id: str | None = None, agent: str | None = None, **extra
-):
+) -> Iterator[None]:
     """
     Context manager for adding context to all logs within scope.
 
@@ -258,6 +259,11 @@ class HumanReadableFormatter(logging.Formatter):
 # =============================================================================
 
 
+_ExcInfo = (
+    bool | BaseException | tuple[type[BaseException], BaseException, TracebackType | None] | None
+)
+
+
 class StructuredLogger(logging.Logger):
     """
     Logger with structured logging support.
@@ -268,11 +274,11 @@ class StructuredLogger(logging.Logger):
         level: int,
         msg: str,
         args: tuple,
-        exc_info=None,
+        exc_info: _ExcInfo = None,
         stack_info: bool = False,
         stacklevel: int = 2,
         **kwargs,
-    ):
+    ) -> None:
         """Log with extra fields."""
         # Create a LogRecord with extra fields
         if kwargs:
@@ -290,23 +296,23 @@ class StructuredLogger(logging.Logger):
             stacklevel=stacklevel,
         )
 
-    def debug(self, msg: str, *args, **kwargs):
+    def debug(self, msg: str, *args, **kwargs) -> None:
         if self.isEnabledFor(logging.DEBUG):
             self._log_with_extra(logging.DEBUG, msg, args, **kwargs)
 
-    def info(self, msg: str, *args, **kwargs):
+    def info(self, msg: str, *args, **kwargs) -> None:
         if self.isEnabledFor(logging.INFO):
             self._log_with_extra(logging.INFO, msg, args, **kwargs)
 
-    def warning(self, msg: str, *args, **kwargs):
+    def warning(self, msg: str, *args, **kwargs) -> None:
         if self.isEnabledFor(logging.WARNING):
             self._log_with_extra(logging.WARNING, msg, args, **kwargs)
 
-    def error(self, msg: str, *args, exc_info=True, **kwargs):
+    def error(self, msg: str, *args, exc_info: _ExcInfo = True, **kwargs) -> None:
         if self.isEnabledFor(logging.ERROR):
             self._log_with_extra(logging.ERROR, msg, args, exc_info=exc_info, **kwargs)
 
-    def critical(self, msg: str, *args, exc_info=True, **kwargs):
+    def critical(self, msg: str, *args, exc_info: _ExcInfo = True, **kwargs) -> None:
         if self.isEnabledFor(logging.CRITICAL):
             self._log_with_extra(logging.CRITICAL, msg, args, exc_info=exc_info, **kwargs)
 
@@ -375,7 +381,7 @@ def setup_logging(level: str = "INFO", format: str = "json", include_stack: bool
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def log_execution(logger: logging.Logger | None = None):
+def log_execution(logger: logging.Logger | None = None) -> Callable[[F], F]:
     """
     Decorator to log function execution with timing.
 
@@ -391,7 +397,7 @@ def log_execution(logger: logging.Logger | None = None):
             logger = get_logger(func.__module__)
 
         @wraps(func)
-        async def async_wrapper(*args, **kwargs):
+        async def async_wrapper(*args, **kwargs) -> Any:
             func_name = func.__qualname__
             logger.info(f"Starting {func_name}")
             start = time.time()
@@ -407,7 +413,7 @@ def log_execution(logger: logging.Logger | None = None):
                 raise
 
         @wraps(func)
-        def sync_wrapper(*args, **kwargs):
+        def sync_wrapper(*args, **kwargs) -> Any:
             func_name = func.__qualname__
             logger.info(f"Starting {func_name}")
             start = time.time()
@@ -440,13 +446,13 @@ def with_trace(func: F) -> F:
     """
 
     @wraps(func)
-    async def async_wrapper(*args, **kwargs):
+    async def async_wrapper(*args, **kwargs) -> Any:
         trace_id = str(uuid4())[:8]
         with with_context(trace_id=trace_id):
             return await func(*args, **kwargs)
 
     @wraps(func)
-    def sync_wrapper(*args, **kwargs):
+    def sync_wrapper(*args, **kwargs) -> Any:
         trace_id = str(uuid4())[:8]
         with with_context(trace_id=trace_id):
             return func(*args, **kwargs)

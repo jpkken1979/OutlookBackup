@@ -5,7 +5,8 @@ curl). Reusa exactamente la misma logica que el CLI y el MCP tool.
 
     GET  /v1/provider/status        — provider activo + lista de disponibles
     POST /v1/provider/switch        — body {provider, model?}
-    POST /v1/provider/disable       — volver a Claude nativo
+    POST /v1/provider/disable       — hot-swap a Claude conservando el proxy
+    POST /v1/provider/native        — Claude OAuth directo, sin proxy
     POST /v1/proxy/circuit/reset    — body {provider?}: cerrar circuit breaker
     GET  /v1/proxy/quota            — cuota restante por provider (auto-rotate)
 
@@ -32,18 +33,118 @@ _agent_dir = Path(__file__).resolve().parents[2]
 if str(_agent_dir) not in sys.path:
     sys.path.insert(0, str(_agent_dir))
 
-from core import model_resolver, models_dev, provider_catalog, provider_switch  # noqa: E402
+from core import (  # noqa: E402
+    model_resolver,
+    models_dev,
+    provider_catalog,
+    provider_switch,
+    turn_checkpoint,
+)
 from core.routing_authority import get_routing_authority  # noqa: E402
+from core.routing_fault_lab import run_routing_fault_lab  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-# Providers proxy-ruteables con fetch dinamico de modelos via /v1/models. El refresh
-# de cache solo tiene sentido para estos (los locales OpenAI no se cachean asi).
+# Providers cuya lista de modelos y protocolo ya se validaron contra el adaptador
+# actual de Nexus. Los demás conservan sus modelos compatibles declarados hasta
+# que se valide su endpoint uno a uno; así no se exhibe como seleccionable un
+# modelo de audio, embedding o Responses en un camino Chat.
 _DYNAMIC_FETCH_PROVIDERS: tuple[str, ...] = ("minimax", "zai")
 
-# Providers OpenAI remotos SIN endpoint /v1/models propio (OpenCode no lo expone; OpenRouter
-# sí pero unificamos): su lista de modelos + pricing se descubre vía models.dev.
-_MODELS_DEV_PROVIDERS: tuple[str, ...] = ("openrouter", "opencode")
+# Catálogos con una fuente oficial/propia. OpenRouter incluye pricing y orden
+# newest-first; OpenCode Go se consulta contra la URL del plan configurado.
+# OpenCodex lista sólo los modelos que su bridge local ya puede servir, por lo
+# que se consulta sin API key y sin exponer credenciales de Codex.
+_OFFICIAL_CATALOG_PROVIDERS: tuple[str, ...] = ("openrouter", "opencode", "opencodex")
+
+
+def _model_fetch_disabled() -> bool:
+    """True cuando el usuario pidió no consultar catálogos remotos."""
+    return os.environ.get("ANTIGRAVITY_DISABLE_MODEL_FETCH", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+async def _overview_async() -> dict:
+    """Corre `get_overview()` fuera del event loop.
+
+    El overview sondea los endpoints de loopback con sockets sincronicos (150 ms
+    de timeout cada uno). Llamarlo directo desde un handler async congelaba el
+    gateway entero —y con el, todos los clientes MCP— mientras la UI de Nexus
+    polleaba cada 15-20s.
+
+    Returns:
+        El dict del overview, identico al del CLI.
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, provider_switch.get_overview)
+
+
+def _delegation_aware_overview(overview: dict, manual_override: str | None) -> dict:
+    """Overlay the gateway's manual delegation route onto a native Claude overview.
+
+    ``provider_switch.get_overview`` intentionally reports the effective Claude
+    settings. Nexus delegation is separate: it changes the gateway routing
+    authority without injecting ``ANTHROPIC_BASE_URL``. The HTTP status needs to
+    expose both facts so a refresh does not make the delegated provider disappear.
+    """
+    if overview.get("proxy_connected") or not manual_override:
+        return overview
+
+    provider_id, separator, model = manual_override.partition("/")
+    provider_id = provider_id.strip().lower()
+    model = model.strip()
+    providers = overview.get("providers")
+    if not separator or not provider_id or not model or not isinstance(providers, list):
+        logger.warning("Ignoring malformed routing manual override in provider status")
+        return overview
+
+    selected = next(
+        (
+            provider
+            for provider in providers
+            if isinstance(provider, dict)
+            and str(provider.get("id") or "").lower() == provider_id
+            and bool(provider.get("routable", True))
+        ),
+        None,
+    )
+    if selected is None:
+        logger.warning("Ignoring unknown routing manual override provider: %s", provider_id)
+        return overview
+
+    result = dict(overview)
+    result["providers"] = [
+        {
+            **provider,
+            "active": str(provider.get("id") or "").lower() == provider_id,
+            "active_model": (
+                model if str(provider.get("id") or "").lower() == provider_id else None
+            ),
+        }
+        if isinstance(provider, dict)
+        else provider
+        for provider in providers
+    ]
+    provider_name = str(selected.get("name") or provider_id)
+    result.update(
+        {
+            "active_provider": provider_id,
+            "active_provider_name": provider_name,
+            "active_model": model,
+            "has_api_key": bool(selected.get("has_api_key")),
+            "proxy_scope": "delegation",
+            "needs_restart": False,
+            "diagnosis": (
+                f"Delegacion Nexus activa: {provider_name} ({model}). "
+                "Claude permanece nativo y Remote Control no se modifica."
+            ),
+        }
+    )
+    return result
 
 
 class _ProviderMixin:
@@ -52,7 +153,13 @@ class _ProviderMixin:
     async def handle_provider_status(self, _request: web.Request) -> web.Response:
         """GET /v1/provider/status — estado unificado de providers."""
         try:
-            data = provider_switch.get_overview()
+            data = await _overview_async()
+            try:
+                manual_override = get_routing_authority().store.manual_override()
+            except Exception as exc:  # noqa: BLE001 — routing is auxiliary to status
+                logger.warning("Could not read routing manual override: %s", exc)
+                manual_override = None
+            data = _delegation_aware_overview(data, manual_override)
             return web.json_response(ok(data=data, source="provider"))
         except Exception as exc:  # noqa: BLE001 — boundary HTTP
             return web.json_response(
@@ -65,7 +172,9 @@ class _ProviderMixin:
         try:
             authority = get_routing_authority()
             data = authority.store.status()
-            data["provider_overview"] = provider_switch.get_overview()
+            data["provider_overview"] = _delegation_aware_overview(
+                await _overview_async(), data.get("manual_override")
+            )
             return web.json_response(ok(data=data, source="routing"))
         except Exception as exc:  # noqa: BLE001 — HTTP boundary
             logger.exception("routing status failed")
@@ -112,9 +221,7 @@ class _ProviderMixin:
             profile_id = authority.store.set_active_profile(
                 str(body.get("profile_id") if isinstance(body, dict) else "")
             )
-            return web.json_response(
-                ok(data={"profile_id": profile_id}, source="routing")
-            )
+            return web.json_response(ok(data={"profile_id": profile_id}, source="routing"))
         except (ValueError, TypeError, web.HTTPBadRequest) as exc:
             return web.json_response(
                 err(ErrorCode.CONFIG_INVALID, str(exc), source="routing"),
@@ -160,7 +267,9 @@ class _ProviderMixin:
                 status=400,
             )
         except Exception as exc:  # noqa: BLE001 — probe boundary
-            provider = str(body.get("provider") or "unknown") if isinstance(body, dict) else "unknown"
+            provider = (
+                str(body.get("provider") or "unknown") if isinstance(body, dict) else "unknown"
+            )
             try:
                 authority.store.record_outcome(
                     provider,
@@ -186,6 +295,22 @@ class _ProviderMixin:
             limit = 100
         events = get_routing_authority().store.list_events(limit)
         return web.json_response(ok(data={"events": events}, source="routing"))
+
+    async def handle_routing_turns(self, request: web.Request) -> web.Response:
+        """GET /v1/routing/turns — redacted checkpoint and continuity history."""
+
+        try:
+            limit = int(request.query.get("limit", "100"))
+        except ValueError:
+            limit = 100
+        turns = turn_checkpoint.get_turn_checkpoint_store().recent(limit)
+        return web.json_response(ok(data={"turns": turns}, source="routing"))
+
+    async def handle_routing_fault_lab(self, _request: web.Request) -> web.Response:
+        """GET /v1/routing/fault-lab — deterministic dry-run resilience drills."""
+
+        report = run_routing_fault_lab(get_routing_authority())
+        return web.json_response(ok(data=report.model_dump(mode="json"), source="routing"))
 
     async def handle_routing_models(self, request: web.Request) -> web.Response:
         """GET /v1/routing/models/{provider} — canonical model catalog."""
@@ -253,6 +378,22 @@ class _ProviderMixin:
             get_routing_authority().store.clear_manual_override()
             return web.json_response(ok(data=data, source="provider"))
         except Exception as exc:  # noqa: BLE001
+            return web.json_response(
+                err(ErrorCode.PROVIDER_UNAVAILABLE, str(exc), source="provider"),
+                status=500,
+            )
+
+    async def handle_provider_native(self, _request: web.Request) -> web.Response:
+        """POST /v1/provider/native — Claude OAuth directo y Remote Control.
+
+        Limpia los overrides de provider en los scopes global y de proyecto. No
+        expone ni modifica la credencial OAuth guardada por Claude Code.
+        """
+        try:
+            data = provider_switch.activate_claude_native()
+            get_routing_authority().store.clear_manual_override()
+            return web.json_response(ok(data=data, source="provider"))
+        except Exception as exc:  # noqa: BLE001 — boundary HTTP
             return web.json_response(
                 err(ErrorCode.PROVIDER_UNAVAILABLE, str(exc), source="provider"),
                 status=500,
@@ -409,7 +550,9 @@ class _ProviderMixin:
             return parsed or None
         return None
 
-    async def _refresh_one_provider(self, pid: str, cfg: object) -> tuple[str, str | None]:
+    async def _refresh_one_provider(
+        self, pid: str, cfg: provider_catalog.ProviderConfig
+    ) -> tuple[str, str | None]:
         """Refresca el cache de modelos de UN provider en un thread (I/O no bloqueante).
 
         ``model_resolver.resolve_models`` hace I/O de red SINCRONO (urllib bloqueante);
@@ -441,6 +584,7 @@ class _ProviderMixin:
                     api_key=api_key,
                     family=cfg.family,
                     allow_fetch=True,
+                    force_refresh=True,
                 ),
             )
         except Exception as exc:  # noqa: BLE001 — un provider no debe tumbar al resto
@@ -450,52 +594,80 @@ class _ProviderMixin:
         logger.info("refresh-models: %s regenerado (%d modelos)", pid, len(models))
         return pid, best
 
-    async def _refresh_one_provider_via_models_dev(
-        self, pid: str, cfg: object
+    async def _refresh_one_provider_via_official_catalog(
+        self, pid: str, cfg: provider_catalog.ProviderConfig
     ) -> tuple[str, str | None]:
-        """Refresca el cache de UN provider OpenAI remoto vía models.dev.
+        """Refresca catálogos propios de OpenRouter, OpenCode Go y OpenCodex.
 
-        OpenRouter/OpenCode no se descubren con ``/v1/models`` (OpenCode no lo expone).
-        Su lista + pricing viene de ``models.dev`` (``models_dev.list_provider_models``), que
-        se persiste enriquecida (``[{id,free}]``) con ``model_resolver.write_provider_models_cache``.
-        El fetch de models.dev es I/O de red síncrono → va a un thread como ``_refresh_one_provider``.
-        Tolerante: cualquier fallo se traduce a un skip (``None``).
-
-        Args:
-            pid: Id del provider (``openrouter`` / ``opencode``).
-            cfg: Config del provider del catálogo (para el ``default_model`` de fallback).
-
-        Returns:
-            ``(pid, best_model)`` si descubrió modelos; ``(pid, None)`` si no hubo ninguno.
+        OpenRouter entrega precio y orden newest-first en su API de modelos. Para
+        OpenCode Go se consulta exactamente ``cfg.base_url`` y se cruza con el
+        manifiesto Chat verificado. OpenCodex se consulta únicamente en loopback;
+        sus IDs ya son la lista servible por el bridge y no requiere API key.
+        Los resultados se guardan sin modificar el modelo activo.
         """
+        api_key = self._resolve_api_key(cfg.api_key_env) or ""
         loop = asyncio.get_running_loop()
         try:
-            entries = await loop.run_in_executor(
-                None, functools.partial(models_dev.list_provider_models, pid)
-            )
+            if pid == "openrouter":
+                entries = await loop.run_in_executor(
+                    None,
+                    functools.partial(model_resolver.fetch_openrouter_models, api_key),
+                )
+            else:
+                remote = await loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        model_resolver.fetch_remote_models,
+                        pid,
+                        cfg.base_url,
+                        api_key,
+                    ),
+                )
+                advertised_entries = [
+                    (model_id, models_dev.model_is_free(model_id)) for model_id, _created in remote
+                ]
+                if pid == "opencode":
+                    allowed_models = set(cfg.models)
+                    entries = [entry for entry in advertised_entries if entry[0] in allowed_models]
+                    ignored = len(advertised_entries) - len(entries)
+                    if ignored:
+                        logger.info(
+                            "refresh-models: %s omitió %d modelo(s) sin ruta Chat verificada",
+                            pid,
+                            ignored,
+                        )
+                else:
+                    # OpenCodex expone desde su propio bridge sólo los IDs que
+                    # acepta su endpoint Chat. No usa API key: la sesión OAuth
+                    # permanece dentro de OpenCodex.
+                    entries = advertised_entries
         except Exception as exc:  # noqa: BLE001 — un provider no debe tumbar al resto
-            logger.warning("refresh-models: models.dev de %s falló: %s", pid, exc)
+            logger.warning("refresh-models: catálogo oficial de %s falló: %s", pid, exc)
             return pid, None
         if not entries:
-            logger.info("refresh-models: %s sin modelos en models.dev, omitido", pid)
+            logger.info("refresh-models: %s no devolvió modelos oficiales, omitido", pid)
             return pid, None
         ids = model_resolver.write_provider_models_cache(pid, entries)
-        best = next((mid for mid, free in entries if free), ids[0] if ids else cfg.default_model)
-        logger.info("refresh-models: %s regenerado vía models.dev (%d modelos)", pid, len(ids))
+        best = ids[0] if ids else cfg.default_model
+        logger.info(
+            "refresh-models: %s actualizado desde catálogo oficial (%d modelos)", pid, len(ids)
+        )
         return pid, best
 
     async def handle_provider_refresh_models(self, _request: web.Request) -> web.Response:
         """POST /v1/provider/refresh-models — regenera el cache de modelos via fetch remoto.
 
-        Para cada provider proxy-ruteable con fetch dinamico (``minimax``, ``zai``) lee su
-        config del catalogo, resuelve su API key (env o .env del repo) y fuerza un fetch
-        remoto via ``model_resolver.resolve_models(..., allow_fetch=True)``, que reescribe
-        ``~/.antigravity/providers/models_cache.json`` con un timestamp fresco. Tolerante:
-        un provider sin key se omite (``skipped``) y un fallo de fetch no aborta el resto.
+        Para cada provider proxy-ruteable con fetch dinámico ya validado
+        (``minimax``, ``zai``) lee su config y fuerza un fetch remoto. Además refresca
+        OpenRouter, OpenCode Go y OpenCodex: el bridge se consulta sólo en loopback,
+        sin API key, y devuelve sus propios modelos Chat disponibles. Todo se persiste en
+        ``~/.antigravity/providers/models_cache.json`` sin tocar el modelo activo.
+        Es tolerante: un provider sin key cuando la necesita se omite (``skipped``) y
+        un fallo de fetch no aborta el resto.
 
-        El fetch de cada provider corre en un thread (``run_in_executor``) para no bloquear
-        el event loop del gateway, y ambos providers se paralelizan con ``asyncio.gather``
-        (recorta el peor caso de ~20s secuenciales a ~10s).
+        Cada consulta corre en un thread (``run_in_executor``) para no bloquear el
+        event loop del gateway, pero se espera de forma serial: todas actualizan el
+        mismo cache y así no pueden perderse entradas por una carrera read-modify-write.
 
         Returns:
             ``web.Response`` con envelope ``ok``: ``data.refreshed`` mapea ``{provider: best}``
@@ -507,33 +679,38 @@ class _ProviderMixin:
             refreshed: dict[str, str] = {}
             skipped: list[str] = []
 
-            tasks = []
+            provider_ids = (*_DYNAMIC_FETCH_PROVIDERS, *_OFFICIAL_CATALOG_PROVIDERS)
+            if _model_fetch_disabled():
+                logger.info("refresh-models omitido por ANTIGRAVITY_DISABLE_MODEL_FETCH")
+                return web.json_response(
+                    ok(
+                        data={"refreshed": refreshed, "skipped": list(dict.fromkeys(provider_ids))},
+                        source="provider",
+                    )
+                )
+
             for pid in _DYNAMIC_FETCH_PROVIDERS:
                 cfg = providers.get(pid)
                 if cfg is None:
                     skipped.append(pid)
                     continue
-                tasks.append(self._refresh_one_provider(pid, cfg))
+                result = await self._refresh_one_provider(pid, cfg)
+                provider_id, best = result
+                if best is None:
+                    skipped.append(provider_id)
+                else:
+                    refreshed[provider_id] = best
 
-            for pid in _MODELS_DEV_PROVIDERS:
+            for pid in _OFFICIAL_CATALOG_PROVIDERS:
                 cfg = providers.get(pid)
                 if cfg is None:
                     skipped.append(pid)
                     continue
-                tasks.append(self._refresh_one_provider_via_models_dev(pid, cfg))
-
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for result in results:
-                if isinstance(result, BaseException):
-                    # Defensa extra: la coroutine ya captura sus errores, pero un fallo
-                    # inesperado (p. ej. cancelacion) no debe tumbar al resto.
-                    logger.warning("refresh-models: tarea de provider fallo: %s", result)
-                    continue
-                pid, best = result
+                provider_id, best = await self._refresh_one_provider_via_official_catalog(pid, cfg)
                 if best is None:
-                    skipped.append(pid)
+                    skipped.append(provider_id)
                 else:
-                    refreshed[pid] = best
+                    refreshed[provider_id] = best
 
             return web.json_response(
                 ok(data={"refreshed": refreshed, "skipped": skipped}, source="provider")

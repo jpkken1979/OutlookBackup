@@ -23,44 +23,53 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_is_within_root: Any
 try:
-    from .security_utils import is_within_root
+    from .security_utils import is_within_root as _package_is_within_root
+
+    _is_within_root = _package_is_within_root
 except ImportError:
-    from security_utils import is_within_root
+    from security_utils import is_within_root as _standalone_is_within_root
+
+    _is_within_root = _standalone_is_within_root
 
 # Configuration
 BASE_DIR = Path(__file__).parent.parent.parent
-SKILLS_DIRS = [
+SKILLS_DIRS: list[Path] = [
     BASE_DIR / ".agent" / "skills",
     BASE_DIR / ".agent" / "skills-custom",
 ]
 
 # Import SkillRegistry (centralized skills discovery)
+_skill_registry_module: Any = None
 try:
     sys.path.insert(0, str(BASE_DIR / ".agent"))
-    from core.skill_registry import SkillRegistry, SkillRegistryError  # noqa: F401
+    from core import skill_registry as _loaded_skill_registry_module
 
+    _skill_registry_module = _loaded_skill_registry_module
     REGISTRY_ENABLED = True
 except ImportError:
     REGISTRY_ENABLED = False
-    SkillRegistry = None
 
 # Singleton registry instance
-_registry_instance: SkillRegistry | None = None
+_registry_instance: Any | None = None
 
 
-def _get_registry() -> SkillRegistry | None:
+def _get_registry() -> Any | None:
     """Obtener instancia singleton de SkillRegistry con fallback graceful."""
     global _registry_instance
-    if not REGISTRY_ENABLED:
+    if not REGISTRY_ENABLED or _skill_registry_module is None:
         return None
 
     if _registry_instance is None:
         try:
-            _registry_instance = SkillRegistry.instance(SKILLS_DIRS)
+            # Keep this server's registry isolated from process-global callers
+            # that may have initialized SkillRegistry with different roots.
+            _registry_instance = _skill_registry_module.SkillRegistry(SKILLS_DIRS)
         except Exception:
             return None
 
@@ -72,13 +81,15 @@ def _coerce_limit(
 ) -> int:
     """Normaliza límites recibidos por MCP sin confiar en el cliente."""
     try:
+        if not isinstance(raw_value, str | bytes | bytearray | int | float):
+            raise TypeError
         limit = int(raw_value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         limit = default
     return max(minimum, min(limit, maximum))
 
 
-def _handle_list_skills(request_id: int, args: dict) -> dict:
+def _handle_list_skills(request_id: Any, args: dict) -> dict:
     """
     Listar skills usando SkillRegistry (centralizado).
 
@@ -149,7 +160,7 @@ def _handle_list_skills(request_id: int, args: dict) -> dict:
         }
 
 
-def _skill_text_response(request_id: int, text: str, *, is_error: bool = False) -> dict:
+def _skill_text_response(request_id: Any, text: str, *, is_error: bool = False) -> dict:
     """Construye una respuesta JSON-RPC con un único bloque de texto.
 
     Args:
@@ -166,7 +177,7 @@ def _skill_text_response(request_id: int, text: str, *, is_error: bool = False) 
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def _read_skill_via_registry(request_id: int, registry: Any, skill_name: str) -> dict:
+def _read_skill_via_registry(request_id: Any, registry: Any, skill_name: str) -> dict:
     """Lee el SKILL.md de un skill registrado usando el registry centralizado.
 
     Args:
@@ -184,11 +195,11 @@ def _read_skill_via_registry(request_id: int, registry: Any, skill_name: str) ->
                 request_id, f"Skill '{skill_name}' not found in registry", is_error=True
             )
 
-        skill_path = SKILLS_DIRS[0] / skill_name / "SKILL.md"
+        skill_path = Path(skill.path) / "SKILL.md"
 
         # Prevenir path traversal: verificar que la ruta resuelta está dentro de cada SKILLS_DIR
         try:
-            within = any(is_within_root(sd, skill_path) for sd in SKILLS_DIRS)
+            within = any(_is_within_root(sd, skill_path) for sd in SKILLS_DIRS)
         except Exception:
             within = False
         if not within or not skill_path.exists():
@@ -202,7 +213,7 @@ def _read_skill_via_registry(request_id: int, registry: Any, skill_name: str) ->
         return _skill_text_response(request_id, f"Error reading skill: {e}", is_error=True)
 
 
-def _read_skill_via_scan(request_id: int, skill_name: str) -> dict:
+def _read_skill_via_scan(request_id: Any, skill_name: str) -> dict:
     """Lee el SKILL.md de un skill escaneando directamente los directorios.
 
     Fallback usado cuando no hay registry disponible. Busca el `SKILL.md`
@@ -220,7 +231,7 @@ def _read_skill_via_scan(request_id: int, skill_name: str) -> dict:
         candidate = sd / skill_name / "SKILL.md"
         # Prevenir path traversal
         try:
-            if not is_within_root(sd, candidate):
+            if not _is_within_root(sd, candidate):
                 continue
         except Exception:
             continue
@@ -237,7 +248,7 @@ def _read_skill_via_scan(request_id: int, skill_name: str) -> dict:
     return _skill_text_response(request_id, content)
 
 
-def _handle_read_skill(request_id: int, args: dict) -> dict:
+def _handle_read_skill(request_id: Any, args: dict) -> dict:
     """
     Leer SKILL.md de un skill (usa registry si disponible).
     """
@@ -304,7 +315,7 @@ def _search_skills_via_scan(query: str, limit: int) -> str:
     return result_text
 
 
-def _handle_search_skills(request_id: int, args: dict) -> dict:
+def _handle_search_skills(request_id: Any, args: dict) -> dict:
     """
     Buscar skills por keyword usando SkillRegistry (centralizado).
 
@@ -344,7 +355,7 @@ def _handle_search_skills(request_id: int, args: dict) -> dict:
     }
 
 
-def handle_request(request):
+def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
     method = request.get("method")
     params = request.get("params", {})
     request_id = request.get("id")

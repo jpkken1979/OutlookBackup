@@ -1,21 +1,20 @@
 ---
-description: Capturar ventana de WinCodexBar como imagen
-argument-hint: [ruta-de-salida-opcional]
+description: Capturar la ventana de WinCodexBar como imagen
+argument-hint: [--no-restore|--out <ruta>]
 allowed-tools: Bash, Read
 ---
 
-Capturar la ventana visible de WinCodexBar (la app de barra de cuotas) como PNG
-y mostrarla al usuario. Usa el script de PowerShell dedicado que:
+Captura una imagen de la ventana de WinCodexBar (barra lateral de cuotas de IA).
+Busca el proceso activo, lo mueve al monitor principal, captura y restaura la
+posicion original. Si WinCodexBar no esta corriendo, intenta iniciarlo.
 
-1. Busca el proceso WinCodexBar activo
-2. Mueve la ventana al monitor principal temporalmente
-3. Captura solo esa ventana con CopyFromScreen
-4. Restaura la posición original
-5. Devuelve la ruta del PNG para que Claude la lea y muestre
+Argumentos opcionales:
+- `--no-restore` — deja la ventana donde se movio tras capturar
+- `--out <ruta>` — guarda el PNG en una ruta personalizada
 
-Resultado:
-!`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .agent/scripts/codexbar_screenshot.ps1 $ARGUMENTS`
+Ejecuta el script de captura y luego lee el PNG para mostrarlo:
 
-Después de ejecutar el script, lee la imagen devuelta con la herramienta Read
-para que el usuario la vea en el chat. Si el script falla, explica el error y
-sugiere verificar que WinCodexBar esté corriendo.
+!`powershell -NoProfile -ExecutionPolicy Bypass -File .agent/scripts/codexbar_screenshot.ps1 $ARGUMENTS`
+
+Despues de ejecutar el script, lee la ruta PNG que imprimio al stdout y muestrala con Read.
+Si el script falla, explica el error y sugiere abrir WinCodexBar manualmente.

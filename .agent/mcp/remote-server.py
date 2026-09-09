@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections import deque
+import hashlib
 import ipaddress
 import json
 import logging
@@ -26,17 +27,29 @@ import re
 import secrets
 import sys
 import time
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from aiohttp import web
 
+_AGENT_DIR = Path(__file__).resolve().parent.parent
+if str(_AGENT_DIR) not in sys.path:
+    sys.path.insert(0, str(_AGENT_DIR))
+
+from core.remote_control_http import (  # noqa: E402
+    RemoteControlHttp,
+    gateway_action as _gateway_action,
+    gateway_data as _gateway_data,
+)
+from core.remote_pairing import RemotePairingStore  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Configuracion
 # ---------------------------------------------------------------------------
+_configured_log_level = os.environ.get("ANTIGRAVITY_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, _configured_log_level, logging.INFO),
     format="[%(asctime)s] [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("antigravity.remote")
@@ -47,6 +60,9 @@ CORE_DIR = BASE_DIR / ".agent" / "core"
 
 # API token from env (optional)
 API_TOKEN = os.environ.get("ANTIGRAVITY_API_TOKEN") or os.environ.get("MCP_API_TOKEN") or ""
+_TOKEN_CREATED_AT = datetime.now(UTC).isoformat()
+_TOKEN_LAST_USED_AT: str | None = None
+_TOKEN_GENERATION = 1
 
 # CORS allowlist opcional. Con ANTIGRAVITY_REMOTE_CORS_ORIGINS seteada (lista
 # separada por comas), solo esos origins reciben Access-Control-Allow-Origin con su
@@ -97,6 +113,9 @@ MAX_BODY_BYTES = _env_positive_int("ANTIGRAVITY_REMOTE_MAX_BODY_BYTES", 1024 * 1
 # limita a N requests por ventana RATE_LIMIT_WINDOW segundos por IP cliente.
 RATE_LIMIT_MAX = _env_positive_int("ANTIGRAVITY_REMOTE_RATE_LIMIT", 0)
 RATE_LIMIT_WINDOW = _env_positive_int("ANTIGRAVITY_REMOTE_RATE_WINDOW", 60)
+# Una sesion MCP expira por inactividad. El inventario remoto publica el plazo
+# exacto para que Nexus pueda mostrarlo y revocarlo de forma explicita.
+SESSION_IDLE_TIMEOUT = _env_positive_int("ANTIGRAVITY_REMOTE_SESSION_IDLE_TIMEOUT", 1800)
 
 # Formato seguro para nombres de agente (anti path-traversal / injection):
 # alfanumerico + guion/underscore, sin puntos ni separadores de path.
@@ -128,6 +147,20 @@ CLEANUP_TASK_KEY: web.AppKey[asyncio.Task[None]] = web.AppKey("cleanup_task")
 
 # Activity ring buffer (in-RAM, cleared on restart). Single-user observability.
 _activity_log: deque[dict[str, Any]] = deque(maxlen=100)
+_pairing_store: RemotePairingStore | None = None
+
+
+def _get_pairing_store() -> RemotePairingStore:
+    global _pairing_store
+    if _pairing_store is None:
+        configured = os.environ.get("ANTIGRAVITY_REMOTE_CONTROL_DB", "").strip()
+        path = (
+            Path(configured).expanduser()
+            if configured
+            else Path.home() / ".antigravity" / "state" / "remote-control.db"
+        )
+        _pairing_store = RemotePairingStore(path)
+    return _pairing_store
 
 
 def _record_activity(method: str, tool: str | None, status: int, session: str | None) -> None:
@@ -153,15 +186,40 @@ def _record_activity(method: str, tool: str | None, status: int, session: str | 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _token_fingerprint(token: str) -> str | None:
+    """Return a non-reversible identifier suitable for UI and logs."""
+    if not token:
+        return None
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+
+
+def _token_status() -> dict[str, Any]:
+    """Return remote-token metadata without ever returning the credential."""
+    return {
+        "configured": bool(API_TOKEN),
+        "fingerprint": _token_fingerprint(API_TOKEN),
+        "scope": "remote_mcp",
+        "created_at": _TOKEN_CREATED_AT,
+        "last_used_at": _TOKEN_LAST_USED_AT,
+        "expires_at": None,
+        "generation": _TOKEN_GENERATION,
+        "auth_scheme": "bearer",
+    }
+
+
 def _check_auth(headers: dict[str, str]) -> bool:
     """Verifica autenticacion Bearer token si esta configurado."""
+    global _TOKEN_LAST_USED_AT
     if not API_TOKEN:
         return True
 
     auth = headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         token = auth[7:]
-        return secrets.compare_digest(token, API_TOKEN)
+        accepted = secrets.compare_digest(token, API_TOKEN)
+        if accepted:
+            _TOKEN_LAST_USED_AT = datetime.now(UTC).isoformat()
+        return accepted
 
     return False
 
@@ -300,17 +358,18 @@ def _get_session(session_id: str) -> dict[str, Any] | None:
     """Obtiene una sesion MCP por ID y actualiza timestamp."""
     session = _mcp_sessions.get(session_id)
     if session:
-        session["last_active"] = datetime.now().isoformat()
+        session["last_active"] = datetime.now(UTC).isoformat()
     return session
 
 
 def _create_session() -> tuple[str, dict[str, Any]]:
     """Crea nueva sesion MCP con ID seguro."""
     session_id = secrets.token_urlsafe(24)
+    now = datetime.now(UTC).isoformat()
     session_data = {
         "id": session_id,
-        "created_at": datetime.now().isoformat(),
-        "last_active": datetime.now().isoformat(),
+        "created_at": now,
+        "last_active": now,
         "sse_queue": asyncio.Queue(maxsize=200),
     }
     _mcp_sessions[session_id] = session_data
@@ -672,6 +731,7 @@ async def handle_root(request: web.Request) -> web.Response:
                 "health": "/health",
                 "agents": "/agents",
                 "metrics": "/metrics",
+                "control": "/control",
                 "sse_legacy": "/sse",
             },
             "auth_enabled": bool(API_TOKEN),
@@ -734,11 +794,69 @@ async def handle_sessions(request: web.Request) -> web.Response:
             "id": s["id"],
             "created_at": s["created_at"],
             "last_active": s["last_active"],
+            "expires_at": (
+                datetime.fromisoformat(s["last_active"]) + timedelta(seconds=SESSION_IDLE_TIMEOUT)
+            ).isoformat(),
+            "scope": "mcp_session",
             "transport": "mcp",
         }
         for s in _mcp_sessions.values()
     ]
     return web.json_response({"sessions": sessions, "count": len(sessions)})
+
+
+async def handle_revoke_session(request: web.Request) -> web.Response:
+    """DELETE /sessions/{session_id} - Revoke one live MCP session."""
+    if not _check_auth(dict(request.headers)):
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    session_id = request.match_info["session_id"]
+    if not _destroy_session(session_id):
+        return web.json_response({"error": "Session not found"}, status=404)
+    return web.json_response({"revoked": True, "session_id": session_id})
+
+
+async def handle_token_status(request: web.Request) -> web.Response:
+    """GET /admin/token - Token inventory without the secret value."""
+    if not _check_auth(dict(request.headers)):
+        return web.json_response({"error": "Unauthorized"}, status=401)
+    return web.json_response(_token_status())
+
+
+async def handle_rotate_token(request: web.Request) -> web.Response:
+    """POST /admin/token/rotate - Replace the token and revoke live sessions.
+
+    The caller supplies the freshly generated token over loopback. The response
+    contains metadata only, so normal status polling can never reveal it.
+    """
+    global API_TOKEN, _TOKEN_CREATED_AT, _TOKEN_GENERATION, _TOKEN_LAST_USED_AT
+    if not _check_auth(dict(request.headers)):
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    new_token = body.get("token") if isinstance(body, dict) else None
+    if (
+        not isinstance(new_token, str)
+        or not 32 <= len(new_token) <= 256
+        or any(character.isspace() for character in new_token)
+    ):
+        return web.json_response({"error": "Invalid token"}, status=400)
+
+    invalidated_sessions = len(_mcp_sessions)
+    _mcp_sessions.clear()
+    API_TOKEN = new_token
+    _TOKEN_CREATED_AT = datetime.now(UTC).isoformat()
+    _TOKEN_LAST_USED_AT = None
+    _TOKEN_GENERATION += 1
+    return web.json_response(
+        {
+            **_token_status(),
+            "invalidated_sessions": invalidated_sessions,
+        }
+    )
 
 
 async def handle_agents_list(request: web.Request) -> web.Response:
@@ -1069,7 +1187,9 @@ async def cors_middleware(request: web.Request, handler: Any) -> web.Response:
     if request.method == "OPTIONS":
         headers = {
             "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": ("Content-Type, Authorization, Mcp-Session-Id, Accept"),
+            "Access-Control-Allow-Headers": (
+                "Content-Type, Authorization, X-Pairing-Secret, Mcp-Session-Id, Accept"
+            ),
             "Access-Control-Expose-Headers": "Mcp-Session-Id",
             "Access-Control-Max-Age": "86400",
         }
@@ -1087,7 +1207,7 @@ async def cors_middleware(request: web.Request, handler: Any) -> web.Response:
         response.headers["Vary"] = "Origin"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = (
-        "Content-Type, Authorization, Mcp-Session-Id, Accept"
+        "Content-Type, Authorization, X-Pairing-Secret, Mcp-Session-Id, Accept"
     )
     response.headers["Access-Control-Expose-Headers"] = "Mcp-Session-Id"
 
@@ -1186,11 +1306,11 @@ async def _cleanup_sessions(app: web.Application) -> None:
     """Limpia sesiones inactivas cada 60 segundos."""
     while True:
         await asyncio.sleep(60)  # Verificar cada minuto (antes era 5min)
-        now = datetime.now()
+        now = datetime.now(UTC)
         expired = []
         for sid, session in _mcp_sessions.items():
             last = datetime.fromisoformat(session["last_active"])
-            if (now - last).total_seconds() > 1800:  # 30 minutos de inactividad
+            if (now - last).total_seconds() > SESSION_IDLE_TIMEOUT:
                 expired.append(sid)
         for sid in expired:
             _destroy_session(sid)
@@ -1239,9 +1359,22 @@ def create_app() -> web.Application:
     app.router.add_get("/", handle_root)
     app.router.add_get("/health", handle_health)
     app.router.add_get("/metrics", handle_metrics)
+    RemoteControlHttp(
+        base_dir=BASE_DIR,
+        admin_enabled=lambda: bool(API_TOKEN),
+        admin_auth=_check_auth,
+        store=_get_pairing_store,
+        sessions=_mcp_sessions,
+        activity=_activity_log,
+        gateway_reader=_gateway_data,
+        gateway_writer=_gateway_action,
+    ).register(app)
     app.router.add_get("/agents", handle_agents_list)
     app.router.add_get("/activity", handle_activity)
     app.router.add_get("/sessions", handle_sessions)
+    app.router.add_delete("/sessions/{session_id}", handle_revoke_session)
+    app.router.add_get("/admin/token", handle_token_status)
+    app.router.add_post("/admin/token/rotate", handle_rotate_token)
     app.router.add_post("/mcp", handle_mcp_http)
     app.router.add_get("/mcp", handle_mcp_get)
     app.router.add_delete("/mcp", handle_mcp_delete)

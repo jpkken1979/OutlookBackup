@@ -390,11 +390,15 @@ class MCPClient:
                 try:
                     self.process.kill()
                 except Exception:
+                    # ponytail: last-resort kill after a graceful terminate
+                    # timed out; process may already be dead — nothing to do.
                     pass
             except Exception:
                 try:
                     self.process.kill()
                 except Exception:
+                    # ponytail: last-resort kill during cleanup of an already
+                    # failed disconnect; process may already be dead.
                     pass
             self.process = None
 

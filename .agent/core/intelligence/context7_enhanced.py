@@ -242,7 +242,7 @@ class Context7Enhancer:
         content = f"{library_id}:{query.lower().strip()}"
         return hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()
 
-    def _load_cache(self):
+    def _load_cache(self) -> None:
         """Load cache from disk."""
         cache_file = self.storage_path / "cache.json"
         if cache_file.exists():
@@ -256,7 +256,7 @@ class Context7Enhancer:
             except Exception as e:
                 logger.error(f"Failed to load cache: {e}")
 
-    def _save_cache(self):
+    def _save_cache(self) -> None:
         """Save cache to disk."""
         cache_file = self.storage_path / "cache.json"
         data = {key: doc.to_dict() for key, doc in self._cache.items() if not doc.is_expired()}
@@ -697,7 +697,7 @@ Query: {query}
             "known_libraries": len(EXTENDED_LIBRARY_MAP),
         }
 
-    def clear_cache(self, expired_only: bool = True):
+    def clear_cache(self, expired_only: bool = True) -> None:
         """Clear cache."""
         if expired_only:
             self._cache = {k: v for k, v in self._cache.items() if not v.is_expired()}
@@ -723,7 +723,7 @@ def get_context7_enhancer(storage_path: Path | None = None) -> Context7Enhancer:
 # =============================================================================
 
 
-async def demo():
+async def demo() -> None:
     """Demonstrate enhanced Context7 integration."""
     enhancer = Context7Enhancer()
 

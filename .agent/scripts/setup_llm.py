@@ -31,7 +31,7 @@ PROVIDERS = {
         "signup_url": "https://console.anthropic.com/",
         "auth_type": "api_key",
         "description": "Claude Opus, Sonnet, Haiku. Requiere API key pagada.",
-        "default_model": "claude-sonnet-4-20250514",
+        "default_model": "claude-sonnet-4-6",
     },
     "openai": {
         "name": "OpenAI (ChatGPT)",

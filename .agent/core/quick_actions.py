@@ -7,12 +7,31 @@ No quiero pensar "¿qué agente invoco?" - quiero hacer la acción directamente.
 # mypy: ignore-errors
 
 import json
+import logging
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def find_git_executable() -> str | None:
+    """Locate Git from PATH or its standard Windows installation directories."""
+    discovered = shutil.which("git")
+    if discovered:
+        return discovered
+    if os.name != "nt":
+        return None
+
+    candidates = [
+        Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Git" / "cmd" / "git.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Git" / "cmd" / "git.exe",
+    ]
+    return next((str(candidate) for candidate in candidates if candidate.is_file()), None)
 
 
 @dataclass
@@ -41,6 +60,7 @@ class QuickActions:
 
     def __init__(self, project_root: str = "."):
         self.project_root = Path(project_root).resolve()
+        self.git_executable = find_git_executable()
 
     # ==================== EXPLORACIÓN ====================
 
@@ -160,11 +180,13 @@ class QuickActions:
     def _get_git_info(self) -> dict:
         """Obtiene información de git."""
         info = {"is_repo": False}
+        if self.git_executable is None:
+            return info
 
         try:
             # Branch
             result = subprocess.run(
-                ["git", "branch", "--show-current"],
+                [self.git_executable, "branch", "--show-current"],
                 capture_output=True,
                 text=True,
                 cwd=self.project_root,
@@ -176,7 +198,7 @@ class QuickActions:
 
             # Status
             result = subprocess.run(
-                ["git", "status", "--short"],
+                [self.git_executable, "status", "--short"],
                 capture_output=True,
                 text=True,
                 cwd=self.project_root,
@@ -189,7 +211,7 @@ class QuickActions:
 
             # Remote
             result = subprocess.run(
-                ["git", "remote", "get-url", "origin"],
+                [self.git_executable, "remote", "get-url", "origin"],
                 capture_output=True,
                 text=True,
                 cwd=self.project_root,
@@ -198,8 +220,8 @@ class QuickActions:
             if result.returncode == 0:
                 info["remote"] = result.stdout.strip()
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("No se pudo completar la info de git status: %s", e)
 
         return info
 
@@ -358,8 +380,8 @@ class QuickActions:
         if memory_path.exists():
             try:
                 memory = json.loads(memory_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError, ValueError):
-                pass
+            except (OSError, json.JSONDecodeError, ValueError) as e:
+                logger.debug("No se pudo cargar quick_memory.json: %s", e)
 
         # Agregar nuevo
         if category not in memory:
@@ -420,9 +442,11 @@ class QuickActions:
 
     def git_status(self) -> ActionResult:
         """Estado rápido de git."""
+        if self.git_executable is None:
+            return ActionResult(success=False, data=None, message="Git executable not found")
         try:
             result = subprocess.run(
-                ["git", "status", "--short"],
+                [self.git_executable, "status", "--short"],
                 capture_output=True,
                 text=True,
                 cwd=self.project_root,
@@ -455,13 +479,19 @@ class QuickActions:
 
     def git_quick_commit(self, message: str) -> ActionResult:
         """Commit rápido."""
+        if self.git_executable is None:
+            return ActionResult(success=False, data=None, message="Git executable not found")
         try:
             # Add all
-            subprocess.run(["git", "add", "-A"], cwd=self.project_root, timeout=10)
+            subprocess.run(
+                [self.git_executable, "add", "-A"],
+                cwd=self.project_root,
+                timeout=10,
+            )
 
             # Commit
             result = subprocess.run(
-                ["git", "commit", "-m", message],
+                [self.git_executable, "commit", "-m", message],
                 capture_output=True,
                 text=True,
                 cwd=self.project_root,
@@ -527,6 +557,8 @@ class QuickActions:
                             if len(results) >= 50:
                                 break
                 except Exception:
+                    # ponytail: archivo ilegible (binario, encoding, permisos)
+                    # durante una búsqueda amplia — se omite y se sigue con el resto.
                     pass
 
                 if len(results) >= 50:

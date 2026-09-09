@@ -455,7 +455,7 @@ class IntelligenceConfig:
         with open(path, encoding="utf-8") as f:
             return cls.from_json(f.read())
 
-    def save(self, path: str):
+    def save(self, path: str) -> None:
         """Save to file."""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -505,13 +505,13 @@ class IntelligenceConfig:
         """Get configuration for a specific module."""
         return getattr(self, module_name, None)
 
-    def enable_module(self, module_name: str):
+    def enable_module(self, module_name: str) -> None:
         """Enable a module."""
         module = getattr(self, module_name, None)
         if module and hasattr(module, "enabled"):
             module.enabled = True
 
-    def disable_module(self, module_name: str):
+    def disable_module(self, module_name: str) -> None:
         """Disable a module."""
         module = getattr(self, module_name, None)
         if module and hasattr(module, "enabled"):
@@ -710,13 +710,13 @@ def get_config() -> IntelligenceConfig:
     return _config
 
 
-def set_config(config: IntelligenceConfig):
+def set_config(config: IntelligenceConfig) -> None:
     """Set the global intelligence configuration."""
     global _config
     _config = config
 
 
-def reset_config():
+def reset_config() -> None:
     """Reset to default configuration."""
     global _config
     _config = None
@@ -727,7 +727,7 @@ def reset_config():
 # =============================================================================
 
 
-def main():
+def main() -> None:
     """CLI for intelligence configuration."""
     import argparse
 

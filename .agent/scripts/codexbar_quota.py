@@ -12,6 +12,8 @@ import argparse
 import json
 import math
 import os
+import re
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -46,6 +48,34 @@ DEFAULT_ORDER = [
 
 def home_path(*parts: str) -> Path:
     return Path(os.path.expanduser("~")).joinpath(*parts)
+
+
+def default_codexbar_root() -> Path:
+    """Locate the checked-out WinCodexBar tree used by this workspace."""
+    repo_root = Path(__file__).resolve().parents[2]
+    candidates = [
+        repo_root.parent / "CodexBar-mainJp26.3.30" / "win-codexbar",
+        home_path("Github", "Jpkken1979", "CodexBar-mainJp26.3.30", "win-codexbar"),
+    ]
+    for candidate in candidates:
+        if (candidate / "dist-electron" / "electron" / "cli" / "cli-entry.js").exists():
+            return candidate
+    return candidates[0]
+
+
+def node_executable() -> str:
+    """Return a Node executable even when Hermes has a minimal PATH."""
+    configured = os.environ.get("NODE_EXE", "").strip()
+    candidates = [
+        configured,
+        shutil.which("node"),
+        r"C:\Program Files\nodejs\node.exe",
+        r"C:\Program Files (x86)\nodejs\node.exe",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    raise FileNotFoundError("No encontré node.exe para refrescar CodexBar")
 
 
 def load_json(path: Path) -> Any:
@@ -144,6 +174,19 @@ def window_text(window: dict[str, Any] | None, now: datetime) -> str:
     return f"{pct} ({reset})" if reset else pct
 
 
+def safe_window_label(provider_id: str, value: Any) -> str:
+    """Hide credential-shaped labels persisted by a provider snapshot."""
+    label = str(value or "Quota")
+    if provider_id.lower() == "openrouter" and re.search(r"(?i)\bsk-[a-z0-9._-]{4,}", label):
+        return "CREDENCIAL CONFIGURADA"
+    if re.search(
+        r"(?i)\b(?:api|access|auth|secret)[ _-]?key\b|\bbearer\b|\btoken[ _-]?(?:key|secret)\b|\btoken\s*[:=]",
+        label,
+    ):
+        return "CREDENCIAL CONFIGURADA"
+    return label
+
+
 def top_line(provider_id: str, snapshot: dict[str, Any], now: datetime) -> str:
     name = provider_label(provider_id)
     if snapshot.get("error"):
@@ -174,7 +217,7 @@ def detail_lines(provider_id: str, snapshot: dict[str, Any], now: datetime) -> l
 
     lines = [f"{name}:"]
     for window in windows:
-        label = str(window.get("label") or "Quota").upper()
+        label = safe_window_label(provider_id, window.get("label")).upper()
         lines.append(f"  {label} - {window_text(window, now)}")
 
     credits = snapshot.get("credits")
@@ -253,7 +296,7 @@ def run_refresh(codexbar_root: Path) -> str:
     if not cli.exists():
         raise FileNotFoundError(f"No encontre el CLI de CodexBar en {cli}")
     completed = subprocess.run(
-        ["node", str(cli), "usage", "--format", "json"],
+        [node_executable(), str(cli), "usage", "--format", "json"],
         cwd=str(codexbar_root),
         check=False,
         capture_output=True,
@@ -285,7 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--codexbar-root",
-        default=str(home_path("Github", "Jpkken1979", "CodexBar-mainJp26.3.30", "win-codexbar")),
+        default=str(default_codexbar_root()),
         help="Checkout de win-codexbar para --refresh.",
     )
     return parser

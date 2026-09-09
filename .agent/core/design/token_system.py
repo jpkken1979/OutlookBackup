@@ -96,7 +96,7 @@ class DesignTokenSystem:
         # Initialize with defaults
         self._init_default_primitives()
 
-    def _init_default_primitives(self):
+    def _init_default_primitives(self) -> None:
         """Initialize default primitive tokens."""
         # Colors - Gray scale
         grays = {
@@ -235,7 +235,7 @@ class DesignTokenSystem:
 
     def add_primitive(
         self, name: str, value: Any, category: TokenCategory, description: str | None = None
-    ):
+    ) -> None:
         """Add a primitive token."""
         token = Token(
             name=name,
@@ -248,7 +248,7 @@ class DesignTokenSystem:
 
     def add_semantic(
         self, name: str, reference: str, category: TokenCategory, description: str | None = None
-    ):
+    ) -> None:
         """Add a semantic token (references a primitive)."""
         if reference not in self.primitives:
             logger.warning(f"Semantic token {name} references unknown primitive: {reference}")
@@ -265,7 +265,7 @@ class DesignTokenSystem:
 
     def add_component(
         self, name: str, reference: str, category: TokenCategory, description: str | None = None
-    ):
+    ) -> None:
         """Add a component token (references semantic or primitive)."""
         token = Token(
             name=name,
@@ -277,7 +277,7 @@ class DesignTokenSystem:
         )
         self.components[name] = token
 
-    def setup_semantic_tokens(self):
+    def setup_semantic_tokens(self) -> None:
         """Setup default semantic tokens."""
         # Background colors
         self.add_semantic("color.background.primary", "color.white", TokenCategory.COLOR)
@@ -317,7 +317,7 @@ class DesignTokenSystem:
             "color.interactive.primaryActive", "color.primary.700", TokenCategory.COLOR
         )
 
-    def setup_component_tokens(self):
+    def setup_component_tokens(self) -> None:
         """Setup default component tokens."""
         # Button
         self.add_component(
@@ -593,7 +593,7 @@ class DesignTokenSystem:
 
         return issues
 
-    def save(self, output_dir: str, formats: list[str] = None):
+    def save(self, output_dir: str, formats: list[str] = None) -> None:
         """Save tokens in multiple formats."""
         formats = formats or ["css", "json", "tailwind"]
         output_path = Path(output_dir)
@@ -656,7 +656,7 @@ def create_brand_token_system(
 # =============================================================================
 
 
-def main():
+def main() -> None:
     """CLI entry point."""
     import argparse
 

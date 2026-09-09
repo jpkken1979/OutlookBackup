@@ -140,6 +140,121 @@ def _strip_thinking_blocks(messages: list) -> bool:
     return removed
 
 
+def _index_tool_use_resolution(messages: list) -> tuple[set[str], set[str]]:
+    """Indexa los `tool_use_id` vistos y los que ya tienen su `tool_result`.
+
+    Un `tool_result` cuenta como "resuelto" para su `tool_use_id` sin importar
+    el rol del mensaje contenedor: tras un hot-swap el historial puede
+    degenerar y traerlo fuera de un `role:user`. Si exigieramos `role:user`,
+    marcariamos el `tool_use` como huerfano e inyectariamos un `tool_result`
+    DUPLICADO (mismo id -> 400).
+
+    Args:
+        messages: Lista de mensajes Anthropic (ya copiada; no se modifica).
+
+    Returns:
+        Tupla ``(seen_tool_use_ids, resolved_tool_use_ids)``.
+    """
+    seen_tool_use_ids: set[str] = set()
+    resolved_tool_use_ids: set[str] = set()
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype == "tool_use" and msg.get("role") == "assistant":
+                tu_id = block.get("id")
+                if isinstance(tu_id, str):
+                    seen_tool_use_ids.add(tu_id)
+            elif btype == "tool_result":
+                tr_id = block.get("tool_use_id")
+                if isinstance(tr_id, str):
+                    resolved_tool_use_ids.add(tr_id)
+    return seen_tool_use_ids, resolved_tool_use_ids
+
+
+def _drop_orphan_tool_results(messages: list, seen_tool_use_ids: set[str]) -> None:
+    """Elimina in-place los `tool_result` sin `tool_use` previo conocido.
+
+    Opera sobre cualquier mensaje con content-lista (no solo `role:user`): tras
+    un hot-swap el historial puede degenerar y traer el `tool_result` fuera de
+    un mensaje `role:user`.
+
+    Args:
+        messages: Lista de mensajes Anthropic (se modifica in-place).
+        seen_tool_use_ids: Ids de `tool_use` conocidos (huerfano si no esta aca).
+    """
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        filtered = [
+            block
+            for block in content
+            if not (
+                isinstance(block, dict)
+                and block.get("type") == "tool_result"
+                and block.get("tool_use_id") not in seen_tool_use_ids
+            )
+        ]
+        if len(filtered) != len(content):
+            msg["content"] = filtered
+
+
+def _inject_synthetic_tool_results(messages: list, orphan_ids: set[str]) -> list:
+    """Inyecta `tool_result` sinteticos para los `tool_use` sin resolver.
+
+    Preserva el orden: se inyectan en el mensaje `user` inmediatamente
+    posterior al `assistant` que abrio el `tool_use` (o se crea uno si no
+    existe uno posterior).
+
+    Args:
+        messages: Lista de mensajes Anthropic. No se modifica in-place.
+        orphan_ids: Ids de `tool_use` sin `tool_result` correspondiente.
+
+    Returns:
+        Una nueva lista de mensajes con los `tool_result` sinteticos inyectados.
+    """
+    out: list = []
+    idx = 0
+    n = len(messages)
+    while idx < n:
+        msg = messages[idx]
+        out.append(msg)
+        pending = _orphan_ids_in_message(msg, orphan_ids)
+        if pending:
+            synthetic = [_synthetic_tool_result(tu_id) for tu_id in pending]
+            next_msg = messages[idx + 1] if idx + 1 < n else None
+            if isinstance(next_msg, dict) and next_msg.get("role") == "user":
+                # Inyectamos los tool_result en el user posterior, sin importar si
+                # su content es string o lista. Si fuera string, lo envolvemos en un
+                # bloque de texto: Claude Code MUY frecuentemente manda content como
+                # string plano, y crear un user sintetico nuevo en el medio dejaria
+                # dos role:user consecutivos -> la Messages API lo rechaza con 400.
+                next_content = next_msg.get("content")
+                if isinstance(next_content, str):
+                    next_content = [{"type": "text", "text": next_content}]
+                elif not isinstance(next_content, list):
+                    next_content = []
+                # Los tool_result deben ir al principio del content de un user.
+                next_msg["content"] = synthetic + next_content
+                out.append(next_msg)
+                idx += 2
+                continue
+            # Solo creamos un user sintetico nuevo si NO hay user posterior
+            # (tool_use huerfano al final del historial). Nunca dos user seguidos.
+            out.append({"role": "user", "content": synthetic})
+        idx += 1
+    return out
+
+
 def _reconcile_tool_blocks(messages: list) -> list:
     """Reconcilia pares `tool_use`/`tool_result` huerfanos del historial.
 
@@ -166,91 +281,17 @@ def _reconcile_tool_blocks(messages: list) -> list:
     result = copy.deepcopy(messages)
 
     # 1) Indexar los tool_use_id que YA tienen su tool_result.
-    seen_tool_use_ids: set[str] = set()
-    resolved_tool_use_ids: set[str] = set()
-    for msg in result:
-        if not isinstance(msg, dict):
-            continue
-        content = msg.get("content")
-        if not isinstance(content, list):
-            continue
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            btype = block.get("type")
-            if btype == "tool_use" and msg.get("role") == "assistant":
-                tu_id = block.get("id")
-                if isinstance(tu_id, str):
-                    seen_tool_use_ids.add(tu_id)
-            elif btype == "tool_result":
-                # Un tool_result cuenta como "resuelto" para su tool_use_id sin
-                # importar el rol del mensaje contenedor: tras un hot-swap el
-                # historial puede degenerar y traerlo fuera de un role:user. Si
-                # exigimos role:user, marcariamos el tool_use como huerfano e
-                # inyectariamos un tool_result DUPLICADO (mismo id -> 400).
-                tr_id = block.get("tool_use_id")
-                if isinstance(tr_id, str):
-                    resolved_tool_use_ids.add(tr_id)
+    seen_tool_use_ids, resolved_tool_use_ids = _index_tool_use_resolution(result)
 
-    # 2) Eliminar `tool_result` huerfanos (sin `tool_use` previo). Operamos sobre
-    #    cualquier mensaje con content-lista (no solo role:user) por la misma razon
-    #    de historial degenerado post-swap.
-    for msg in result:
-        if not isinstance(msg, dict):
-            continue
-        content = msg.get("content")
-        if not isinstance(content, list):
-            continue
-        filtered = [
-            block
-            for block in content
-            if not (
-                isinstance(block, dict)
-                and block.get("type") == "tool_result"
-                and block.get("tool_use_id") not in seen_tool_use_ids
-            )
-        ]
-        if len(filtered) != len(content):
-            msg["content"] = filtered
+    # 2) Eliminar `tool_result` huerfanos (sin `tool_use` previo).
+    _drop_orphan_tool_results(result, seen_tool_use_ids)
 
     # 3) Inyectar `tool_result` sinteticos para los `tool_use` sin resolver,
-    #    preservando el orden: se inyectan en el mensaje user inmediatamente
-    #    posterior al assistant que abrio el tool_use (o se crea uno).
+    #    preservando el orden.
     orphan_ids = seen_tool_use_ids - resolved_tool_use_ids
     if not orphan_ids:
         return result
-
-    out: list = []
-    idx = 0
-    n = len(result)
-    while idx < n:
-        msg = result[idx]
-        out.append(msg)
-        pending = _orphan_ids_in_message(msg, orphan_ids)
-        if pending:
-            synthetic = [_synthetic_tool_result(tu_id) for tu_id in pending]
-            next_msg = result[idx + 1] if idx + 1 < n else None
-            if isinstance(next_msg, dict) and next_msg.get("role") == "user":
-                # Inyectamos los tool_result en el user posterior, sin importar si
-                # su content es string o lista. Si fuera string, lo envolvemos en un
-                # bloque de texto: Claude Code MUY frecuentemente manda content como
-                # string plano, y crear un user sintetico nuevo en el medio dejaria
-                # dos role:user consecutivos -> la Messages API lo rechaza con 400.
-                next_content = next_msg.get("content")
-                if isinstance(next_content, str):
-                    next_content = [{"type": "text", "text": next_content}]
-                elif not isinstance(next_content, list):
-                    next_content = []
-                # Los tool_result deben ir al principio del content de un user.
-                next_msg["content"] = synthetic + next_content
-                out.append(next_msg)
-                idx += 2
-                continue
-            # Solo creamos un user sintetico nuevo si NO hay user posterior
-            # (tool_use huerfano al final del historial). Nunca dos user seguidos.
-            out.append({"role": "user", "content": synthetic})
-        idx += 1
-    return out
+    return _inject_synthetic_tool_results(result, orphan_ids)
 
 
 def reconcile_tool_blocks(messages: list) -> list:

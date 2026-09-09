@@ -287,6 +287,8 @@ def _detect_project_name(project_dir: Path) -> str:
             if name:
                 return name.replace("@", "").replace("/", "-")
         except (json.JSONDecodeError, OSError):
+            # ponytail: package.json ilegible/corrupto — cae al chequeo de
+            # pyproject.toml de abajo, que es el fallback intencional.
             pass
 
     pyproject = project_dir / "pyproject.toml"
@@ -299,6 +301,8 @@ def _detect_project_name(project_dir: Path) -> str:
                     if len(parts) == 2:
                         return parts[1].strip().strip('"').strip("'")
         except OSError:
+            # ponytail: pyproject.toml ilegible — cae al nombre del directorio
+            # como último fallback, ya devuelto abajo.
             pass
 
     return project_dir.name
@@ -315,6 +319,8 @@ def _get_project_deps(project_dir: Path) -> set[str]:
             deps.update(data.get("dependencies", {}).keys())
             deps.update(data.get("devDependencies", {}).keys())
         except (json.JSONDecodeError, OSError):
+            # ponytail: package.json ilegible/corrupto — se sigue acumulando
+            # deps desde pyproject.toml abajo.
             pass
 
     pyproject = project_dir / "pyproject.toml"
@@ -334,6 +340,8 @@ def _get_project_deps(project_dir: Path) -> set[str]:
                     if dep:
                         deps.add(dep)
         except OSError:
+            # ponytail: pyproject.toml ilegible — se devuelven las deps
+            # acumuladas hasta el momento (posiblemente solo de package.json).
             pass
 
     return deps
@@ -372,6 +380,8 @@ def _condition_large_project(project_dir: Path, deps: set[str]) -> bool:
                     if count >= 500:
                         return True
     except PermissionError:
+        # ponytail: subdirectorio sin permisos de lectura — se mantiene el
+        # conteo parcial, alcanza para esta heurística de tamaño.
         pass
     return False
 

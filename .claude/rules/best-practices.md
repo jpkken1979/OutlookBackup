@@ -1,67 +1,25 @@
-# Regla: Buenas Practicas de Desarrollo
+# Regla: buenas prácticas
 
-Aplica a todo el código del repositorio actual.
+- Entender contrato, consumidores y tests antes de modificar.
+- Mantener cambios estrechos, reversibles y verificables.
+- No duplicar capacidades del runtime, Nexus o broker.
+- Usar tipos precisos en APIs nuevas; no inventarlos para silenciar checks.
+- Validar entradas, paths y payloads en los límites.
+- No introducir datos falsos o fallback silencioso en producción.
+- Corregir generadores y plantillas antes que sus copias.
 
-## Arquitectura
+## Verificación
 
-- **MCP-first**: toda capacidad se expone y consume via MCP antes que por lectura directa de archivos.
-- **4 capas**: Directiva, Contexto, Ejecucion, Observabilidad. No mezclar responsabilidades.
-- **Backward compatible**: todo refactor debe mantener las interfaces publicas existentes.
-- **Minimal blast radius**: preferir cambios pequenos y enfocados sobre rewrites masivos.
-
-## Codigo Python
-
-- Type hints en TODAS las funciones (parametros + return)
-- Docstrings Google-style en funciones publicas
-- `shell=False` siempre en subprocess — usar `shlex.split()`
-- Validar inputs en los bordes del sistema (MCP handlers, CLI args)
-- Logging estructurado: `logger = logging.getLogger(__name__)`
-- Serialización segura: solo JSON o Pydantic (nunca formatos inseguros)
-
-## Codigo TypeScript
-
-- TypeScript strict — cero `any`
-- Componentes funcionales con hooks
-- Framer Motion variants FUERA de los componentes (archivos `*Variants.ts`)
-- Tailwind utility-first — no inline styles
-- IPC solo via `invoke()` de Tauri — nunca exponer Node APIs
+- Probar comportamiento y regresiones, no detalles accidentales.
+- Ejecutar primero el gate estrecho y después la suite de la superficie.
+- Leer cobertura y umbrales de `.github/workflows/`; no asumir un porcentaje
+  universal por módulo.
+- Revisar el diff completo y preservar cambios ajenos.
 
 ## Seguridad
 
-- NUNCA hardcodear tokens, passwords o API keys
-- Validar paths con `validatePathAccess()` antes de I/O
-- Sanitizar mensajes de error hacia el cliente (no exponer paths internos)
-- Rate limiting en endpoints publicos
-- CORS restrictivo: solo origenes conocidos
-
-## Tests
-
-- Coverage minimo 80% en core
-- Tests para toda logica de seguridad (pairing, auth, path validation)
-- Mocks solo para dependencias externas — preferir integracion real para SQLite
-- Nombres descriptivos: `it('rejects expired pairing codes')`
-
-## Git
-
-- Commits en espanol, formato convencional: `tipo(scope): descripcion`
-- No commitear `*.db`, `*.log`
-- Excepcion documentada: `.env` SI se versiona porque el repo es privado
-  (ver `.gitignore` lineas 151-153 y `.claude/rules/security.md`). Esta excepcion
-  NO aplica a forks ni mirrors publicos.
-- Feature branches + PR para cambios de codigo con riesgo (decision 2026-06-11):
-  - Aplica a: codigo Rust de Nexus, archivos criticos (ver config-guard.md), cambios
-    multi-archivo en `.agent/core/` o el gateway, y cualquier fix cuyo blast radius
-    no sea obvio
-  - NO aplica a: docs, memorias (`.claude/memory/`, `.agent/brain/`), bumps de version,
-    refresh de conteos AUTO — eso va directo a main
-  - Flujo: rama `fix/...` o `feat/...` → push → PR con `gh pr create` → el usuario
-    revisa y mergea
-- No force push a main
-
-## Performance
-
-- SQLite con WAL mode para concurrencia
-- Transactions para operaciones multi-statement
-- Lazy loading de subsistemas pesados
-- Jitter en schedulers para evitar thundering herd
-- Limits de concurrencia en ejecucion de skills (max 5)
+- No imprimir ni añadir secretos nuevos al historial.
+- Evitar shell construida con datos no confiables.
+- Sanitizar errores expuestos y aplicar permisos mínimos.
+- Respetar la excepción histórica de `.env` de este repositorio sin mostrar su
+  contenido; cualquier migración exige rotación y decisión del propietario.

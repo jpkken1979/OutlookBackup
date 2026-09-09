@@ -105,7 +105,9 @@ class _SkillsMixin:
 
         search = request.query.get("search", "").lower()
         offset = max(0, int(request.query.get("offset", "0")))
-        limit = min(100, max(1, int(request.query.get("limit", "50"))))
+        # Techo 500 alineado con /v1/agents — el clamp de 100 recortaba el
+        # catalogo (923+ skills) sin aviso al cliente (bug 2026-08-10)
+        limit = min(500, max(1, int(request.query.get("limit", "50"))))
         include_external = request.query.get("include_external", "").strip().lower() in {
             "1",
             "true",
@@ -145,6 +147,42 @@ class _SkillsMixin:
                 }
             )
         )
+
+    async def handle_reload_skills(self, request: web.Request) -> web.Response:
+        """POST /v1/skills/reload - Invalida y reconstruye el catálogo de skills."""
+        from .._gateway_main import _make_response, _sanitize_error
+
+        del request
+        try:
+            self.cache.invalidate("all_skills")
+            self.cache.invalidate("all_skills_with_external")
+
+            local_skills = await self._load_skills_list(include_external=False)
+            all_skills = await self._load_skills_list(include_external=True)
+            self.cache.set("all_skills", local_skills)
+            self.cache.set("all_skills_with_external", all_skills)
+
+            sources: dict[str, int] = {}
+            for skill in all_skills:
+                source = str(skill.get("source", "unknown"))
+                sources[source] = sources.get(source, 0) + 1
+
+            return web.json_response(
+                _make_response(
+                    data={
+                        "reloaded": True,
+                        "skills": len(all_skills),
+                        "local_skills": len(local_skills),
+                        "sources": sources,
+                    }
+                )
+            )
+        except Exception as exc:
+            log.exception("Skill catalog reload failed")
+            return web.json_response(
+                _make_response(error=_sanitize_error(exc), status=500),
+                status=500,
+            )
 
     async def _load_skills_list(self, include_external: bool = False) -> list[dict]:
         """Carga lista de skills en thread pool (no bloquea event loop)."""
@@ -676,6 +714,59 @@ class _SkillsMixin:
             )
         )
 
+    async def run_skill_script(
+        self,
+        skill_dir: Path,
+        user_input: str,
+        timeout: int,
+    ) -> dict | None:
+        """Ejecuta el scripts/main.py de un skill de forma determinista.
+
+        Núcleo transporte-agnóstico reutilizado por el endpoint HTTP y por el
+        broker MCP (`antigravity_run_skill` script-first, 2026-08-10).
+
+        Args:
+            skill_dir: Directorio raíz del skill.
+            user_input: Input del usuario, pasado como único argv (sin shell).
+            timeout: Timeout en segundos; al vencer se mata el proceso.
+
+        Returns:
+            Dict con output/stderr/returncode/duration_seconds, o ``None`` si
+            el skill no tiene script ejecutable (prompt-only).
+
+        Raises:
+            TimeoutError: si el script excede el timeout (proceso ya muerto).
+        """
+        import sys
+        import time
+
+        resolved_dir = skill_dir.resolve()
+        script_path = (resolved_dir / "scripts" / "main.py").resolve()
+        # Containment post-resolve: cubre symlinks/reparse points
+        if not script_path.is_file() or not script_path.is_relative_to(resolved_dir):
+            return None
+
+        exec_start = time.monotonic()
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            str(script_path),
+            user_input,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(resolved_dir),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
+            proc.kill()
+            raise
+        return {
+            "output": stdout.decode("utf-8", errors="replace").strip(),
+            "stderr": stderr.decode("utf-8", errors="replace").strip(),
+            "returncode": proc.returncode,
+            "duration_seconds": round(time.monotonic() - exec_start, 2),
+        }
+
     async def _execute_skill_via_script(
         self,
         *,
@@ -686,6 +777,8 @@ class _SkillsMixin:
         timeout: int,
     ) -> web.Response:
         """Ejecuta un skill corriendo su script main.py directamente.
+
+        Wrapper HTTP fino sobre :meth:`run_skill_script`.
 
         Args:
             skill_dir: Directorio raíz del skill.
@@ -699,43 +792,8 @@ class _SkillsMixin:
         """
         from .._gateway_main import _make_response, _sanitize_error
 
-        import time
-
-        script_path = skill_dir / "scripts" / "main.py"
-        if not script_path.exists():
-            return web.json_response(
-                _make_response(
-                    error="Executor no disponible y skill sin script ejecutable", status=503
-                ),
-                status=503,
-            )
-
-        exec_start = time.monotonic()
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "python",
-                str(script_path),
-                user_input,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            duration = time.monotonic() - exec_start
-            return web.json_response(
-                _make_response(
-                    data={
-                        "skill": skill_name,
-                        "source": skill_source,
-                        "agent_used": None,
-                        "result": {
-                            "output": stdout.decode("utf-8", errors="replace").strip(),
-                            "stderr": stderr.decode("utf-8", errors="replace").strip(),
-                            "returncode": proc.returncode,
-                        },
-                        "duration_seconds": round(duration, 2),
-                    }
-                )
-            )
+            script_result = await self.run_skill_script(skill_dir, user_input, timeout)
         except TimeoutError:
             return web.json_response(
                 _make_response(error=f"Timeout después de {timeout}s", status=504), status=504
@@ -744,6 +802,27 @@ class _SkillsMixin:
             return web.json_response(
                 _make_response(error=_sanitize_error(exc), status=500), status=500
             )
+
+        if script_result is None:
+            return web.json_response(
+                _make_response(
+                    error="Executor no disponible y skill sin script ejecutable", status=503
+                ),
+                status=503,
+            )
+
+        duration = script_result.pop("duration_seconds")
+        return web.json_response(
+            _make_response(
+                data={
+                    "skill": skill_name,
+                    "source": skill_source,
+                    "agent_used": None,
+                    "result": script_result,
+                    "duration_seconds": duration,
+                }
+            )
+        )
 
     async def _find_best_agent_for_skill(self, skill_name: str, executor=None) -> str | None:
         """Busca el agente más apropiado para ejecutar un skill dado."""

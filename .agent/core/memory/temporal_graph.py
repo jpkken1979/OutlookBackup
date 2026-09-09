@@ -245,7 +245,7 @@ class TemporalKnowledgeGraph:
         self._load()
         logger.info(f"TemporalKnowledgeGraph initialized at {self.storage_path}")
 
-    def _load(self):
+    def _load(self) -> None:
         """Load graph from disk."""
         entities_path = self.storage_path / "entities.json"
         relations_path = self.storage_path / "relations.json"
@@ -284,7 +284,7 @@ class TemporalKnowledgeGraph:
             f"Loaded {len(self.entities)} entities, {len(self.relations)} relations, {len(self.episodes)} episodes"
         )
 
-    def _save(self):
+    def _save(self) -> None:
         """Save graph to disk."""
         # Save entities
         entities_data = {
@@ -331,7 +331,7 @@ class TemporalKnowledgeGraph:
         words = re.findall(r"\b\w+\b", text.lower())
         return set(words)
 
-    def _index_entity(self, entity: Entity):
+    def _index_entity(self, entity: Entity) -> None:
         """Index entity for fast lookup."""
         # By name
         if entity.name not in self._entity_by_name:
@@ -354,7 +354,7 @@ class TemporalKnowledgeGraph:
                 self._word_index[word] = set()
             self._word_index[word].add(entity.id)
 
-    def _index_relation(self, relation: Relation):
+    def _index_relation(self, relation: Relation) -> None:
         """Index relation for fast lookup."""
         # By source
         if relation.source_id not in self._relations_by_source:
@@ -454,7 +454,7 @@ class TemporalKnowledgeGraph:
 
     async def invalidate_entity(
         self, entity_id: str, reason: str = "", invalidated_by: str | None = None
-    ):
+    ) -> None:
         """Mark an entity as no longer valid."""
         if entity_id in self.entities:
             entity = self.entities[entity_id]
@@ -568,7 +568,7 @@ class TemporalKnowledgeGraph:
 
         return results
 
-    async def invalidate_relation(self, relation_id: str, reason: str = ""):
+    async def invalidate_relation(self, relation_id: str, reason: str = "") -> None:
         """Mark a relation as no longer valid."""
         if relation_id in self.relations:
             relation = self.relations[relation_id]
@@ -890,7 +890,7 @@ def get_temporal_graph(storage_path: Path | None = None) -> TemporalKnowledgeGra
 # =============================================================================
 
 
-async def demo():
+async def demo() -> None:
     """Demonstrate temporal knowledge graph."""
     import tempfile
 

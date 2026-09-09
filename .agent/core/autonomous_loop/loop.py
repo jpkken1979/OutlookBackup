@@ -74,7 +74,7 @@ class AutonomousLoop:
         self.on_step = on_step
 
     @property
-    def llm(self):
+    def llm(self) -> Any:
         """Lazy-load LLM client with auto-detection of best available provider."""
         if self._llm_client is None:
             try:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -15,6 +16,35 @@ from .constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def extend_windows_path(path: Path) -> Path:
+    """Antepone el prefijo extended-length (``\\\\?\\``) en Windows.
+
+    Sin esto, ``Path.mkdir()``/``shutil.copy2()`` fallan con
+    ``FileNotFoundError: [WinError 3]`` en paths que superan MAX_PATH (260
+    caracteres) cuando la maquina no tiene ``LongPathsEnabled`` activo en el
+    registro (``HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem``) — caso
+    real en la maquina de desarrollo que rompia ``merge_tree`` al copiar
+    arboles de skills/agentes con rutas relativas largas. Mismo patron que
+    ``bundle_v2._io_path``, duplicado aca para evitar import circular
+    (``io_utils`` ya importa de ``path_utils``, no al reves).
+
+    Args:
+        path: Ruta a normalizar.
+
+    Returns:
+        La misma ruta sin cambios en POSIX; con prefijo ``\\\\?\\`` (o
+        ``\\\\?\\UNC\\`` para rutas de red) en Windows.
+    """
+    if os.name != "nt":
+        return path
+    value = str(path.resolve())
+    if value.startswith("\\\\?\\"):
+        return Path(value)
+    if value.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + value[2:])
+    return Path("\\\\?\\" + value)
 
 
 def _strip_windows_extended_path_prefix(value: str) -> str:
@@ -62,7 +92,7 @@ def ensure_dir(path: Path) -> None:
         from .io_utils import _backup_conflicting_path
 
         _backup_conflicting_path(path)
-    path.mkdir(parents=True, exist_ok=True)
+    extend_windows_path(path).mkdir(parents=True, exist_ok=True)
 
 
 def iter_content_files(path: Path) -> list[Path]:

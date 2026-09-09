@@ -28,18 +28,34 @@ class GatewayClientError(RuntimeError):
     """Redacted gateway failure safe to display in hooks and CLIs."""
 
 
-def resolve_gateway_token() -> str:
-    """Resolve an explicit token or decrypt the per-user local session key."""
+def _is_loopback_gateway(base_url: str) -> bool:
+    try:
+        hostname = urllib.parse.urlsplit(base_url).hostname
+    except ValueError:
+        return False
+    return hostname in {"127.0.0.1", "::1", "localhost"}
+
+
+def resolve_gateway_token(base_url: str = DEFAULT_GATEWAY_URL) -> str:
+    """Resolve auth without leaking a local session key to a remote gateway.
+
+    The local gateway owns the encrypted per-user session key, so that identity
+    takes precedence over stale values inherited from a tracked `.env`. Remote
+    gateways only receive the explicitly configured credential.
+    """
 
     explicit = os.environ.get("ANTIGRAVITY_API_KEY", "").strip()
-    if explicit:
+    if not _is_loopback_gateway(base_url):
         return explicit
     try:
         from core.session_key import read_session_key
 
-        return read_session_key() or ""
+        session_key = read_session_key() or ""
+        if session_key:
+            return session_key
     except (ImportError, OSError, ValueError):
-        return ""
+        pass
+    return explicit
 
 
 def _normalize_base_url(raw: str) -> str:
@@ -98,7 +114,7 @@ class GatewayClient:
                 "Content-Type": "application/json",
                 "X-Request-Id": f"python-{time.time_ns():x}",
             }
-            token = resolve_gateway_token()
+            token = resolve_gateway_token(self.base_url)
             if token:
                 headers["X-API-Key"] = token
             if idempotency_key:
@@ -163,9 +179,7 @@ def _session_report_payload() -> tuple[dict[str, Any], str]:
     project = project_dir.name or "unknown"
     session_id = str(hook_input.get("session_id") or os.environ.get("CLAUDE_SESSION_ID") or "")
     summary = str(
-        hook_input.get("summary")
-        or os.environ.get("CLAUDE_SESSION_SUMMARY")
-        or "Session ended"
+        hook_input.get("summary") or os.environ.get("CLAUDE_SESSION_SUMMARY") or "Session ended"
     )[:20_000]
     payload = {
         "project": project,

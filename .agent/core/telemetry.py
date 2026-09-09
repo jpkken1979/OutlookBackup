@@ -9,9 +9,11 @@ Implements:
 - Integration with common observability backends
 """
 
+from __future__ import annotations
+
 import inspect
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
@@ -138,7 +140,7 @@ def setup_telemetry(
         return {"tracer": None, "meter": None}
 
 
-def _setup_llm_tracing():
+def _setup_llm_tracing() -> None:
     """Setup OpenLLMetry for LLM-specific tracing."""
     try:
         from traceloop.sdk import Traceloop
@@ -160,7 +162,7 @@ def _setup_llm_tracing():
 # =============================================================================
 
 
-def get_tracer(name: str = "antigravity"):
+def get_tracer(name: str = "antigravity") -> Any:
     """Get or create a tracer."""
     global _tracer
 
@@ -177,27 +179,27 @@ def get_tracer(name: str = "antigravity"):
 class NoOpTracer:
     """No-op tracer for when OpenTelemetry is not available."""
 
-    def start_span(self, name: str, **kwargs):
+    def start_span(self, name: str, **kwargs) -> NoOpSpan:
         return NoOpSpan()
 
     @contextmanager
-    def start_as_current_span(self, name: str, **kwargs):
+    def start_as_current_span(self, name: str, **kwargs) -> Iterator[NoOpSpan]:
         yield NoOpSpan()
 
 
 class NoOpSpan:
     """No-op span."""
 
-    def set_attribute(self, key: str, value: Any):
+    def set_attribute(self, key: str, value: Any) -> None:
         pass
 
-    def set_status(self, status):
+    def set_status(self, status: Any) -> None:
         pass
 
-    def record_exception(self, exception):
+    def record_exception(self, exception: BaseException) -> None:
         pass
 
-    def end(self):
+    def end(self) -> None:
         pass
 
     def __enter__(self):
@@ -208,7 +210,9 @@ class NoOpSpan:
 
 
 @contextmanager
-def trace_agent_execution(agent_name: str, task: str, attributes: dict | None = None):
+def trace_agent_execution(
+    agent_name: str, task: str, attributes: dict | None = None
+) -> Iterator[Any]:
     """
     Context manager for tracing agent execution.
 
@@ -238,7 +242,9 @@ def trace_agent_execution(agent_name: str, task: str, attributes: dict | None = 
 
 
 @contextmanager
-def trace_llm_call(model: str, prompt_tokens: int = 0, attributes: dict | None = None):
+def trace_llm_call(
+    model: str, prompt_tokens: int = 0, attributes: dict | None = None
+) -> Iterator[Any]:
     """
     Context manager for tracing LLM API calls.
 
@@ -262,7 +268,7 @@ def trace_llm_call(model: str, prompt_tokens: int = 0, attributes: dict | None =
         yield span
 
 
-def trace_function(name: str | None = None):
+def trace_function(name: str | None = None) -> Callable[[Callable], Callable]:
     """
     Decorator for tracing function execution.
 
@@ -276,7 +282,7 @@ def trace_function(name: str | None = None):
         span_name = name or func.__name__
 
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args, **kwargs) -> Any:
             tracer = get_tracer()
             with tracer.start_as_current_span(span_name) as span:
                 try:
@@ -289,7 +295,7 @@ def trace_function(name: str | None = None):
                     raise
 
         @wraps(func)
-        async def async_wrapper(*args, **kwargs):
+        async def async_wrapper(*args, **kwargs) -> Any:
             tracer = get_tracer()
             with tracer.start_as_current_span(span_name) as span:
                 try:
@@ -313,7 +319,7 @@ def trace_function(name: str | None = None):
 # =============================================================================
 
 
-def get_meter(name: str = "antigravity"):
+def get_meter(name: str = "antigravity") -> Any:
     """Get or create a meter."""
     global _meter
 
@@ -329,27 +335,27 @@ def get_meter(name: str = "antigravity"):
 class NoOpMeter:
     """No-op meter for when OpenTelemetry is not available."""
 
-    def create_counter(self, name: str, **kwargs):
+    def create_counter(self, name: str, **kwargs) -> NoOpCounter:
         return NoOpCounter()
 
-    def create_histogram(self, name: str, **kwargs):
+    def create_histogram(self, name: str, **kwargs) -> NoOpHistogram:
         return NoOpHistogram()
 
-    def create_up_down_counter(self, name: str, **kwargs):
+    def create_up_down_counter(self, name: str, **kwargs) -> NoOpCounter:
         return NoOpCounter()
 
 
 class NoOpCounter:
     """No-op counter."""
 
-    def add(self, value: int, attributes: dict | None = None):
+    def add(self, value: int, attributes: dict | None = None) -> None:
         pass
 
 
 class NoOpHistogram:
     """No-op histogram."""
 
-    def record(self, value: float, attributes: dict | None = None):
+    def record(self, value: float, attributes: dict | None = None) -> None:
         pass
 
 
@@ -357,7 +363,7 @@ class NoOpHistogram:
 _metrics: dict[str, object] = {}
 
 
-def get_agent_execution_counter():
+def get_agent_execution_counter() -> Any:
     """Get counter for agent executions."""
     if "agent_executions" not in _metrics:
         meter = get_meter()
@@ -367,7 +373,7 @@ def get_agent_execution_counter():
     return _metrics["agent_executions"]
 
 
-def get_agent_duration_histogram():
+def get_agent_duration_histogram() -> Any:
     """Get histogram for agent execution duration."""
     if "agent_duration" not in _metrics:
         meter = get_meter()
@@ -377,7 +383,7 @@ def get_agent_duration_histogram():
     return _metrics["agent_duration"]
 
 
-def get_llm_tokens_counter():
+def get_llm_tokens_counter() -> Any:
     """Get counter for LLM token usage."""
     if "llm_tokens" not in _metrics:
         meter = get_meter()
@@ -389,7 +395,7 @@ def get_llm_tokens_counter():
 
 def record_agent_execution(
     agent_name: str, duration_seconds: float, success: bool = True, tokens_used: int = 0
-):
+) -> None:
     """
     Record metrics for an agent execution.
 
@@ -413,7 +419,7 @@ def record_agent_execution(
 # =============================================================================
 
 
-def main():
+def main() -> None:
     """Test telemetry system."""
 
     print("Testing Antigravity Telemetry...\n")
@@ -432,7 +438,7 @@ def main():
 
     # Test decorated function
     @trace_function("test_operation")
-    def test_operation():
+    def test_operation() -> str:
         return "success"
 
     result = test_operation()

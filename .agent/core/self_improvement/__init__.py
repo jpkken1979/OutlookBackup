@@ -132,7 +132,7 @@ class SelfImprover:
         self.proposals: dict[str, ImprovementProposal] = {}
         self._load_proposals()
 
-    def _load_proposals(self):
+    def _load_proposals(self) -> None:
         """Cargar propuestas existentes."""
         for file in self.proposals_path.glob("*.json"):
             try:
@@ -155,7 +155,7 @@ class SelfImprover:
             except Exception as e:
                 logger.warning(f"No se pudo cargar propuesta {file}: {e}")
 
-    def record_execution(self, metrics: ExecutionMetrics = None, **kwargs):
+    def record_execution(self, metrics: ExecutionMetrics = None, **kwargs) -> None:
         """Registrar metricas de una ejecucion."""
         if metrics is None:
             metrics = ExecutionMetrics(
@@ -401,7 +401,7 @@ except SpecificError as e:
 
         return new_proposals
 
-    def _save_proposal(self, proposal: ImprovementProposal):
+    def _save_proposal(self, proposal: ImprovementProposal) -> None:
         """Guardar propuesta a disco."""
         file_path = self.proposals_path / f"{proposal.id}.json"
         file_path.write_text(json.dumps(proposal.to_dict(), indent=2, ensure_ascii=False))
@@ -752,7 +752,7 @@ except SpecificError as e:
                 continue
 
             # Verificar que hay suficientes datos
-            metrics = self.get_agent_metrics(proposal.agent_name)
+            metrics = self.get_agent_metrics(proposal.target)
             if not metrics or metrics.get("total_executions", 0) < 10:
                 continue
 
@@ -765,7 +765,7 @@ except SpecificError as e:
             applied.append(
                 {
                     "proposal_id": proposal.id,
-                    "agent": proposal.agent_name,
+                    "agent": proposal.target,
                     "type": proposal.improvement_type.value,
                     "rationale": proposal.rationale,
                 }
@@ -774,7 +774,7 @@ except SpecificError as e:
             logger.info(
                 "Auto-aplicada mejora %s para agente %s: %s",
                 proposal.id,
-                proposal.agent_name,
+                proposal.target,
                 proposal.rationale,
             )
 

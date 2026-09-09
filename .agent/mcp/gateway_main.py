@@ -50,6 +50,7 @@ Endpoints (prefijo /v1):
     POST /v1/teams               - Crear equipo de agentes
     POST /v1/teams/:id/message   - Enviar mensaje entre agentes del equipo
     GET  /v1/skills              - Listar skills (?search=keyword&offset=0&limit=50)
+    POST /v1/skills/reload       - Refrescar el catálogo de skills
     GET  /v1/skills/:name        - Leer SKILL.md completo
     GET  /v1/costs               - Reporte de costos (?days=30)
     GET  /v1/history             - Historial de ejecuciones (?limit=10)
@@ -92,7 +93,8 @@ import hashlib
 import hmac
 import ipaddress
 from pathlib import Path
-from typing import Any
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any, TYPE_CHECKING, cast
 from datetime import datetime
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -117,11 +119,13 @@ log = logging.getLogger("antigravity-gateway")
 # ============================================================
 # Paths
 # ============================================================
-_ANTIGRAVITY_HOME = os.environ.get("ANTIGRAVITY_HOME")
+_ANTIGRAVITY_HOME = os.environ.get("ANTIGRAVITY_HOME") or os.environ.get("ANTIGRAVITY_ROOT")
 if _ANTIGRAVITY_HOME:
     BASE_DIR = Path(_ANTIGRAVITY_HOME)
 else:
-    BASE_DIR = Path(__file__).parent.parent.parent
+    BASE_DIR = Path(__file__).resolve().parent.parent.parent
+    if not (BASE_DIR / ".agent").exists():
+        BASE_DIR = Path.cwd()
 
 AGENTS_DIR = BASE_DIR / ".agent" / "agents"
 SKILLS_DIR = BASE_DIR / ".agent" / "skills"
@@ -130,6 +134,14 @@ CORE_DIR = BASE_DIR / ".agent" / "core"
 
 # Add core to path
 sys.path.insert(0, str(CORE_DIR.parent))
+
+from core.global_rules import (
+    GlobalRulesConflictError,
+    GlobalRulesValidationError,
+    load_global_rules,
+    update_global_rules,
+)
+from core.nexus_manifest import build_nexus_manifest
 
 
 def _mcp_broker_v2_enabled(project_root: Path = BASE_DIR) -> bool:
@@ -183,20 +195,28 @@ def _setup_audit_logger() -> logging.Logger:
 
 _audit_log: logging.Logger = _setup_audit_logger()
 
-try:
+if TYPE_CHECKING:
     from .security_utils import (
         DEFAULT_CORS_ORIGINS,
         is_localhost_client as shared_is_localhost_client,
         is_origin_allowed as shared_is_origin_allowed,
         parse_cors_origins,
     )
-except ImportError:
-    from security_utils import (
-        DEFAULT_CORS_ORIGINS,
-        is_localhost_client as shared_is_localhost_client,
-        is_origin_allowed as shared_is_origin_allowed,
-        parse_cors_origins,
-    )
+else:
+    try:
+        from .security_utils import (
+            DEFAULT_CORS_ORIGINS,
+            is_localhost_client as shared_is_localhost_client,
+            is_origin_allowed as shared_is_origin_allowed,
+            parse_cors_origins,
+        )
+    except ImportError:
+        from security_utils import (
+            DEFAULT_CORS_ORIGINS,
+            is_localhost_client as shared_is_localhost_client,
+            is_origin_allowed as shared_is_origin_allowed,
+            parse_cors_origins,
+        )
 
 try:
     from .session_key import ensure_session_key
@@ -254,6 +274,11 @@ try:
     AIOHTTP_AVAILABLE = True
 except ImportError:
     AIOHTTP_AVAILABLE = False
+
+if TYPE_CHECKING:
+    from core.gateway_executor import GatewayExecutor as _GatewayExecutor
+
+_RequestHandler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
 # ============================================================
 # Constantes y limites
@@ -317,7 +342,7 @@ def _is_origin_allowed(origin: str, allowed_origins: list[str]) -> bool:
 class Metrics:
     """Recolector de metricas para el gateway."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.request_count: dict[str, int] = defaultdict(int)
         self.request_errors: dict[str, int] = defaultdict(int)
         self.request_duration_ms: dict[str, list[float]] = defaultdict(list)
@@ -524,6 +549,7 @@ from .gateway._mixin_context_engine import _ContextEngineMixin
 from .gateway._mixin_watcher import _WatcherMixin
 from .gateway._mixin_brain import _BrainMixin
 from .gateway._mixin_provider import _ProviderMixin
+from .gateway._mixin_plan_review import _PlanReviewMixin
 from .gateway._mixin_proxy import _ProxyMixin
 from .broker import AntigravityMcpBroker
 
@@ -607,6 +633,7 @@ class AntigravityGateway(
     _ContextEngineMixin,
     _BrainMixin,
     _ProviderMixin,
+    _PlanReviewMixin,
     _ProxyMixin,
 ):
     """HTTP Gateway production-ready para el ecosistema de agentes Antigravity."""
@@ -616,7 +643,7 @@ class AntigravityGateway(
         self.events = EventManager()
         self.metrics = Metrics()
         self.cache = TTLCache()
-        self._executor = None
+        self._executor: _GatewayExecutor | None = None
         self._teams: dict[str, dict] = {}  # {id: {team, created_at}}
         self._start_time = datetime.now()
         # Thread pool escalable: evita saturacion con mem0/Ollama concurrente.
@@ -627,6 +654,7 @@ class AntigravityGateway(
         self._openapi = _build_openapi_schema()
         self.mcp_broker = AntigravityMcpBroker(self, BASE_DIR)
         self.mcp_broker_v2_enabled = _mcp_broker_v2_enabled()
+        self.global_rules_path = BASE_DIR / ".antigravity" / "global-ai-rules.json"
         # Guard para loguear el warning de CORS wildcard una sola vez (evita spam).
         self._cors_wildcard_warned = False
 
@@ -667,25 +695,30 @@ class AntigravityGateway(
                 log.warning("Error inicializando ParallelRacer: %s", e)
 
     @property
-    def executor(self):
+    def executor(self) -> "_GatewayExecutor | None":
         """Retorna el executor si ya fue cargado, o None."""
         return self._executor
 
-    async def get_executor(self):
+    async def get_executor(self) -> "_GatewayExecutor | None":
         """Carga el executor en thread pool (no bloquea event loop)."""
         if self._executor is not None:
             return self._executor
-        if not EXECUTOR_AVAILABLE:
+        if not EXECUTOR_AVAILABLE or AgentExecutor is None:
             return None
         loop = asyncio.get_running_loop()
-        self._executor = await loop.run_in_executor(self._thread_pool, AgentExecutor)
+        executor_factory = cast("Callable[[], _GatewayExecutor]", AgentExecutor)
+        self._executor = await loop.run_in_executor(self._thread_pool, executor_factory)
         return self._executor
 
     # --------------------------------------------------------
     # Middlewares
     # --------------------------------------------------------
     @web.middleware
-    async def middleware_request_id(self, request: web.Request, handler) -> web.Response:
+    async def middleware_request_id(
+        self,
+        request: web.Request,
+        handler: _RequestHandler,
+    ) -> web.StreamResponse:
         """Agrega request ID unico a cada peticion."""
         request_id = request.headers.get("X-Request-ID", uuid.uuid4().hex[:12])
         request["request_id"] = request_id
@@ -711,8 +744,8 @@ class AntigravityGateway(
         )
         return response
 
-    # Endpoints sensibles que requieren audit logging (metodo POST solamente)
-    _AUDIT_POST_PREFIXES: tuple[str, ...] = (
+    # Endpoints sensibles que requieren audit logging cuando mutan estado.
+    _AUDIT_WRITE_PREFIXES: tuple[str, ...] = (
         "/v1/agents/",  # cubre /v1/agents/{name}/run
         "/v1/skills/",  # cubre /v1/skills/{name}/execute
         "/v1/mcp",  # cubre /v1/mcp y /v1/mcp/message
@@ -729,20 +762,25 @@ class AntigravityGateway(
         "/v1/negotiation/",
         "/v1/a2a/request",
         "/v1/project/write",
+        "/v1/rules/",
     )
 
     @web.middleware
-    async def middleware_audit_log(self, request: web.Request, handler: Any) -> web.Response:
+    async def middleware_audit_log(
+        self,
+        request: web.Request,
+        handler: _RequestHandler,
+    ) -> web.StreamResponse:
         """Audit logging no-bloqueante para endpoints sensibles.
 
         Registra timestamp, client_ip, method, path, status_code y duration_ms
-        en logs/audit.log via RotatingFileHandler. Solo actua en POST a rutas
-        sensibles; health checks y GETs simples son ignorados.
+        en logs/audit.log via RotatingFileHandler. Solo actua en metodos
+        mutadores de rutas sensibles; health checks y GETs son ignorados.
         """
-        # Filtrar: solo POST a rutas sensibles
+        # Filtrar: metodos mutadores en rutas sensibles.
         path = request.path
-        is_sensitive = request.method == "POST" and any(
-            path.startswith(prefix) for prefix in self._AUDIT_POST_PREFIXES
+        is_sensitive = request.method in {"POST", "PUT", "PATCH", "DELETE"} and any(
+            path.startswith(prefix) for prefix in self._AUDIT_WRITE_PREFIXES
         )
 
         if not is_sensitive:
@@ -773,11 +811,15 @@ class AntigravityGateway(
         return response
 
     @web.middleware
-    async def middleware_cors(self, request: web.Request, handler) -> web.Response:
+    async def middleware_cors(
+        self,
+        request: web.Request,
+        handler: _RequestHandler,
+    ) -> web.StreamResponse:
         """CORS middleware."""
         # Preflight
         if request.method == "OPTIONS":
-            response = web.Response(status=204)
+            response: web.StreamResponse = web.Response(status=204)
         else:
             response = await handler(request)
 
@@ -821,7 +863,11 @@ class AntigravityGateway(
         return response
 
     @web.middleware
-    async def middleware_auth(self, request: web.Request, handler) -> web.Response:
+    async def middleware_auth(
+        self,
+        request: web.Request,
+        handler: _RequestHandler,
+    ) -> web.StreamResponse:
         """Autenticacion via API key."""
         # Endpoints publicos (sin auth)
         public_paths = {"/health", "/v1/health", "/v1/ready", "/v1/"}
@@ -875,7 +921,11 @@ class AntigravityGateway(
         return await handler(request)
 
     @web.middleware
-    async def middleware_rate_limit(self, request: web.Request, handler) -> web.Response:
+    async def middleware_rate_limit(
+        self,
+        request: web.Request,
+        handler: _RequestHandler,
+    ) -> web.StreamResponse:
         """Rate limiting por IP.  Desactivado cuando profile.rate_limit == 0."""
         # Health, ready y endpoints de monitoreo exentos del rate limit
         # (son health checks internos, no operaciones de datos)
@@ -910,7 +960,7 @@ class AntigravityGateway(
             client_tier = RateTier.LOCAL if _is_loopback(client_ip) else None
             result = self._sliding_rate_limiter.check(client_ip, tier=client_tier)
             if not result.allowed:
-                response = web.json_response(
+                rate_limit_response = web.json_response(
                     _make_response(
                         error=f"Rate limit excedido: {result.reason}",
                         status=429,
@@ -918,8 +968,8 @@ class AntigravityGateway(
                     status=429,
                 )
                 for header_name, header_value in result.headers.items():
-                    response.headers[header_name] = header_value
-                return response
+                    rate_limit_response.headers[header_name] = header_value
+                return rate_limit_response
             try:
                 response = await handler(request)
             except Exception:
@@ -942,7 +992,11 @@ class AntigravityGateway(
         return await handler(request)
 
     @web.middleware
-    async def middleware_timeout(self, request: web.Request, handler) -> web.Response:
+    async def middleware_timeout(
+        self,
+        request: web.Request,
+        handler: _RequestHandler,
+    ) -> web.StreamResponse:
         """Timeout global: ningun handler puede bloquear mas de 60s.
 
         Es mayor que el timeout individual de mem0 (15s) para que handlers
@@ -971,7 +1025,11 @@ class AntigravityGateway(
             )
 
     @web.middleware
-    async def middleware_error_handler(self, request: web.Request, handler) -> web.Response:
+    async def middleware_error_handler(
+        self,
+        request: web.Request,
+        handler: _RequestHandler,
+    ) -> web.StreamResponse:
         """Captura errores no manejados y los sanitiza."""
         try:
             return await handler(request)
@@ -1001,10 +1059,7 @@ class AntigravityGateway(
             "yes",
             "on",
         }:
-            log.info(
-                "Portable runtime activo: memoria global, autonomia y pollers "
-                "permanecen lazy"
-            )
+            log.info("Portable runtime activo: memoria global, autonomia y pollers permanecen lazy")
             return
         self._mem0_prewarm_task = asyncio.create_task(self.prewarm_mem0_background())
         # Activación eager de la autonomía (daemon + subsistemas) en background.
@@ -1668,6 +1723,124 @@ class AntigravityGateway(
             }
         )
 
+    async def handle_nexus_manifest(self, request: web.Request) -> web.Response:
+        """Return the authenticated, secret-free Nexus discovery contract."""
+
+        try:
+            ecosystem_version = (
+                (BASE_DIR / ".agent" / "VERSION").read_text(encoding="utf-8").strip()
+            )
+        except OSError:
+            ecosystem_version = "unknown"
+
+        effective_rules: list[Mapping[str, object]] = []
+        rules_status = "degraded"
+        try:
+            rules_document = load_global_rules(
+                self.global_rules_path,
+                create_if_missing=True,
+            )
+            rules = cast(list[Mapping[str, object]], rules_document["rules"])
+            effective_rules = [
+                {
+                    "id": rule["id"],
+                    "title": rule["title"],
+                    "enabled": rule["enabled"],
+                }
+                for rule in rules
+                if rule["enabled"]
+            ]
+            rules_status = "ready"
+        except (OSError, GlobalRulesValidationError) as exc:
+            log.warning("Global rules unavailable for Nexus manifest: %s", exc)
+
+        manifest = build_nexus_manifest(
+            gateway_version=VERSION,
+            ecosystem_version=ecosystem_version or "unknown",
+            authentication_required=self.config.require_auth,
+            capability_states={
+                "agents": "ready" if EXECUTOR_AVAILABLE else "unavailable",
+                "skills": "ready",
+                "mcp": "ready" if self.mcp_broker_v2_enabled else "degraded",
+                "brain": "ready",
+                "memory": "ready",
+                "providers": "ready",
+                "rules": rules_status,
+            },
+            effective_rules=effective_rules,
+        )
+        return web.json_response(_make_response(data=manifest))
+
+    async def handle_global_rules_get(self, request: web.Request) -> web.Response:
+        """Return the editable universal rules document."""
+
+        try:
+            document = load_global_rules(
+                self.global_rules_path,
+                create_if_missing=True,
+            )
+        except (OSError, GlobalRulesValidationError) as exc:
+            log.error("No se pudieron cargar las reglas globales: %s", exc)
+            return web.json_response(
+                _make_response(
+                    error="No se pudieron cargar las reglas globales",
+                    status=503,
+                ),
+                status=503,
+            )
+        return web.json_response(_make_response(data=document))
+
+    async def handle_global_rules_put(self, request: web.Request) -> web.Response:
+        """Atomically update global rules if the editor version is current."""
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response(
+                _make_response(error="JSON body is required", status=400),
+                status=400,
+            )
+        if not isinstance(body, dict):
+            return web.json_response(
+                _make_response(error="JSON body must be an object", status=400),
+                status=400,
+            )
+
+        try:
+            expected_version = body.get("expected_version")
+            if isinstance(expected_version, bool) or not isinstance(expected_version, int):
+                raise GlobalRulesValidationError("expected_version must be an integer")
+            document = update_global_rules(
+                self.global_rules_path,
+                rules=body.get("rules"),
+                expected_version=expected_version,
+            )
+        except GlobalRulesConflictError as exc:
+            conflict = _make_response(
+                error="Las reglas cambiaron en otra ventana; vuelve a cargarlas",
+                status=409,
+            )
+            conflict["data"] = {"current_version": exc.current_version}
+            return web.json_response(
+                conflict,
+                status=409,
+            )
+        except GlobalRulesValidationError as exc:
+            return web.json_response(
+                _make_response(error=str(exc), status=400),
+                status=400,
+            )
+        except OSError as exc:
+            log.error("No se pudieron guardar las reglas globales: %s", exc)
+            return web.json_response(
+                _make_response(
+                    error="No se pudieron guardar las reglas globales",
+                    status=503,
+                ),
+                status=503,
+            )
+        return web.json_response(_make_response(data=document))
+
     async def handle_mcp_tool_call(self, request: web.Request) -> web.Response:
         """Execute one broker meta-tool from an authenticated first-party client."""
 
@@ -1757,13 +1930,32 @@ class AntigravityGateway(
         app.router.add_get("/v1/ready", self.handle_ready)
         app.router.add_get("/v1/metrics", self.handle_metrics)
         app.router.add_get("/v1/openapi.json", self.handle_openapi)
+        app.router.add_get("/v1/nexus/manifest", self.handle_nexus_manifest)
+        app.router.add_get("/v1/rules/global", self.handle_global_rules_get)
+        app.router.add_put("/v1/rules/global", self.handle_global_rules_put)
         # Provider switch (conmutar backend IA de Claude Code) — protegido por X-API-Key
         app.router.add_get("/v1/provider/status", self.handle_provider_status)
         app.router.add_post("/v1/provider/switch", self.handle_provider_switch)
         app.router.add_post("/v1/provider/disable", self.handle_provider_disable)
+        app.router.add_post("/v1/provider/native", self.handle_provider_native)
         app.router.add_post("/v1/provider/hotswap", self.handle_provider_hotswap)
         app.router.add_post("/v1/provider/refresh-models", self.handle_provider_refresh_models)
         app.router.add_post("/v1/provider/reset", self.handle_provider_reset)
+        # Plan Canvas local — protegido por X-API-Key; no ejecuta planes.
+        app.router.add_get("/v1/plan-reviews", self.handle_plan_review_list)
+        app.router.add_post("/v1/plan-reviews/open", self.handle_plan_review_open)
+        app.router.add_post(
+            "/v1/plan-reviews/{review_id}/annotations",
+            self.handle_plan_review_annotation,
+        )
+        app.router.add_post(
+            "/v1/plan-reviews/{review_id}/annotations/{annotation_id}/resolve",
+            self.handle_plan_review_resolve_annotation,
+        )
+        app.router.add_post(
+            "/v1/plan-reviews/{review_id}/decision",
+            self.handle_plan_review_decision,
+        )
         # Canonical routing v2. Provider endpoints above remain temporary aliases.
         app.router.add_get("/v1/routing/status", self.handle_routing_status)
         app.router.add_get("/v1/routing/profiles", self.handle_routing_profiles)
@@ -1778,6 +1970,8 @@ class AntigravityGateway(
         )
         app.router.add_post("/v1/routing/probe", self.handle_routing_probe)
         app.router.add_get("/v1/routing/events", self.handle_routing_events)
+        app.router.add_get("/v1/routing/turns", self.handle_routing_turns)
+        app.router.add_get("/v1/routing/fault-lab", self.handle_routing_fault_lab)
         app.router.add_get(
             "/v1/routing/models/{provider}",
             self.handle_routing_models,
@@ -1799,6 +1993,7 @@ class AntigravityGateway(
         app.router.add_post("/v1/teams", self.handle_create_team)
         app.router.add_post("/v1/teams/{id}/message", self.handle_team_message)
         app.router.add_get("/v1/skills", self.handle_list_skills)
+        app.router.add_post("/v1/skills/reload", self.handle_reload_skills)
         app.router.add_get("/v1/skills/{name}", self.handle_read_skill)
         app.router.add_post("/v1/skills/{name}/execute", self.handle_execute_skill)
         app.router.add_get("/v1/tools/manifest", self.handle_tools_manifest)
@@ -1817,6 +2012,9 @@ class AntigravityGateway(
         app.router.add_get("/v1/history", self.handle_history)
         # --- Brain Network HTTP ---
         app.router.add_get("/v1/brain/query", self.handle_brain_query)
+        app.router.add_post("/v1/brain/ingest", self.handle_brain_ingest)
+        app.router.add_get("/v1/brain/timeline", self.handle_brain_timeline)
+        app.router.add_get("/v1/brain/node/{slug}", self.handle_brain_node_read)
         app.router.add_get("/v1/brain/stats", self.handle_brain_stats)
         # SSE /v1/events removido — bloquea middleware CORS (handler nunca retorna)
         # y causa CLOSE_WAIT zombie connections que freezan el gateway.
@@ -2151,8 +2349,14 @@ class AntigravityGateway(
         app.router.add_post("/v1/context-engine/stats", self.handle_context_engine_stats)
 
         # Redirect / -> /v1/
-        app.router.add_get("/", lambda r: web.HTTPFound("/v1/"))
-        app.router.add_get("/health", lambda r: web.HTTPFound("/v1/health"))
+        async def redirect_root(_request: web.Request) -> web.StreamResponse:
+            raise web.HTTPFound("/v1/")
+
+        async def redirect_health(_request: web.Request) -> web.StreamResponse:
+            raise web.HTTPFound("/v1/health")
+
+        app.router.add_get("/", redirect_root)
+        app.router.add_get("/health", redirect_health)
 
         # --- Excel Engine Routes ---
         register_excel_routes(app)
@@ -2304,7 +2508,7 @@ def build_app_for_tests(
         os.environ["ANTIGRAVITY_BRAIN_DIR"] = brain_dir
 
     @web.middleware
-    async def auth_mw(request: web.Request, handler: web.RequestHandler) -> web.StreamResponse:
+    async def auth_mw(request: web.Request, handler: _RequestHandler) -> web.StreamResponse:
         public_paths = {"/health", "/v1/health", "/v1/ready"}
         if request.path in public_paths or request.method == "OPTIONS":
             return await handler(request)
@@ -2426,17 +2630,9 @@ def _log_startup_banner(config: GatewayConfig, profile: ProfileConfig) -> None:
         log.info("  EventBus: ACTIVO")
 
 
-def main() -> None:
-    """Punto de entrada del gateway HTTP."""
-    if not AIOHTTP_AVAILABLE:
-        sys.stderr.write("Error: aiohttp no instalado.\nInstala con: pip install aiohttp\n")
-        sys.exit(1)
-
-    profile = ACTIVE_PROFILE
-
-    # Env vars / CLI pueden sobreescribir valores del perfil.
-    # El perfil provee los *defaults inteligentes*; env vars tienen prioridad explícita.
-    config = GatewayConfig(
+def _build_gateway_config(profile: ProfileConfig) -> GatewayConfig:
+    """Construye la configuracion efectiva desde perfil y variables de entorno."""
+    return GatewayConfig(
         port=int(os.environ.get("ANTIGRAVITY_GATEWAY_PORT", DEFAULT_PORT)),
         host=os.environ.get("ANTIGRAVITY_GATEWAY_HOST", DEFAULT_HOST),
         api_key=os.environ.get("ANTIGRAVITY_API_KEY"),
@@ -2447,58 +2643,58 @@ def main() -> None:
         profile=profile,
     )
 
-    # Parsear argumentos CLI (mutan `config` in-place segun los flags recibidos)
-    _parse_cli_args(sys.argv[1:], config, profile)
 
-    # Si require_auth pero no hay API key explicita, generar/cargar session key
-    # del disco. Asi cualquier cliente local del ecosistema (Nexus, bot Telegram,
-    # CLI) que tenga acceso al user's home puede leerla y autenticarse, sin que
-    # un browser u otra app sin acceso al filesystem pueda hacer drive-by CORS.
-    if config.require_auth:
-        if not config.api_key:
-            try:
-                config.api_key = ensure_session_key()
-                log.info(
-                    "Session key efimera generada/cargada en ~/.antigravity/session.key (0600). "
-                    "Los clientes locales del ecosistema deben leerla para autenticarse."
-                )
-            except OSError as exc:
-                log.error(
-                    "No se pudo crear ~/.antigravity/session.key: %s. "
-                    "Setea ANTIGRAVITY_API_KEY explicitamente o corre con --no-auth.",
-                    exc,
-                )
-                sys.exit(2)
-        else:
-            # Si hay una API key explicita configurada (por ejemplo, en el .env),
-            # la persistimos cifrada en session.key para que los clientes locales
-            # (Nexus, CLI, bot) puedan autenticarse sin discrepancias de llaves.
-            try:
-                try:
-                    from .session_key import session_key_path, _atomic_write_encrypted
-                except ImportError:
-                    from session_key import session_key_path, _atomic_write_encrypted  # type: ignore[no-redef]
+def _persist_explicit_session_key(api_key: str) -> None:
+    """Persiste cifrada la API key explicita para clientes locales."""
+    try:
+        try:
+            from .session_key import session_key_path, _atomic_write_encrypted
+        except ImportError:
+            from session_key import session_key_path, _atomic_write_encrypted  # type: ignore[no-redef]
 
-                try:
-                    from core.dpapi import encrypt_for_user
-                except ImportError:
-                    parent_agent = str(Path(__file__).resolve().parents[1])
-                    if parent_agent not in sys.path:
-                        sys.path.insert(0, parent_agent)
-                    from core.dpapi import encrypt_for_user
+        try:
+            from core.dpapi import encrypt_for_user
+        except ImportError:
+            parent_agent = str(Path(__file__).resolve().parents[1])
+            if parent_agent not in sys.path:
+                sys.path.insert(0, parent_agent)
+            from core.dpapi import encrypt_for_user
 
-                path = session_key_path()
-                path.parent.mkdir(parents=True, exist_ok=True)
-                encrypted = encrypt_for_user(config.api_key.encode("utf-8"), path)
-                _atomic_write_encrypted(path, encrypted)
-                log.info(
-                    "API key explicito guardado y cifrado en ~/.antigravity/session.key para compatibilidad local."
-                )
-            except Exception as e:
-                log.warning("No se pudo persistir la API key explicito en session.key: %s", e)
+        path = session_key_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        encrypted = encrypt_for_user(api_key.encode("utf-8"), path)
+        _atomic_write_encrypted(path, encrypted)
+        log.info(
+            "API key explicito guardado y cifrado en ~/.antigravity/session.key para compatibilidad local."
+        )
+    except Exception as exc:  # noqa: BLE001 — persistencia best-effort
+        log.warning("No se pudo persistir la API key explicito en session.key: %s", exc)
 
-    # SECURITY: Block --no-auth + 0.0.0.0 combination (was only warning)
-    # nosec B104: no es un bind a 0.0.0.0 sino el guard que lo BLOQUEA sin auth.
+
+def _ensure_gateway_api_key(config: GatewayConfig) -> None:
+    """Genera o persiste la credencial efectiva cuando auth esta activa."""
+    if not config.require_auth:
+        return
+    if config.api_key:
+        _persist_explicit_session_key(config.api_key)
+        return
+    try:
+        config.api_key = ensure_session_key()
+        log.info(
+            "Session key efimera generada/cargada en ~/.antigravity/session.key (0600). "
+            "Los clientes locales del ecosistema deben leerla para autenticarse."
+        )
+    except OSError as exc:
+        log.error(
+            "No se pudo crear ~/.antigravity/session.key: %s. "
+            "Setea ANTIGRAVITY_API_KEY explicitamente o corre con --no-auth.",
+            exc,
+        )
+        sys.exit(2)
+
+
+def _validate_gateway_startup(config: GatewayConfig) -> None:
+    """Aplica los guards de seguridad y existencia previos al bind."""
     if config.host == "0.0.0.0" and not config.require_auth:  # nosec B104
         log.error(
             "SEGURIDAD CRITICA: Gateway no puede exponerse a 0.0.0.0 sin autenticacion. "
@@ -2513,11 +2709,12 @@ def main() -> None:
         )
         sys.exit(1)
 
+
+def _run_gateway(config: GatewayConfig, profile: ProfileConfig) -> None:
+    """Construye la app y ejecuta el servidor aiohttp."""
     gateway = AntigravityGateway(config)
     app = gateway.build_app()
-
     _log_startup_banner(config, profile)
-
     web.run_app(
         app,
         host=config.host,
@@ -2529,6 +2726,33 @@ def main() -> None:
         # en vuelo dejando DB inconsistente al proximo startup.
         shutdown_timeout=15,
     )
+
+
+def main() -> None:
+    """Punto de entrada del gateway HTTP."""
+    if not AIOHTTP_AVAILABLE:
+        sys.stderr.write("Error: aiohttp no instalado.\nInstala con: pip install aiohttp\n")
+        sys.exit(1)
+
+    profile = ACTIVE_PROFILE
+
+    # Env vars / CLI pueden sobreescribir valores del perfil.
+    # El perfil provee los *defaults inteligentes*; env vars tienen prioridad explícita.
+    config = _build_gateway_config(profile)
+
+    # Parsear argumentos CLI (mutan `config` in-place segun los flags recibidos)
+    _parse_cli_args(sys.argv[1:], config, profile)
+
+    # Si require_auth pero no hay API key explicita, generar/cargar session key
+    # del disco. Asi cualquier cliente local del ecosistema (Nexus, bot Telegram,
+    # CLI) que tenga acceso al user's home puede leerla y autenticarse, sin que
+    # un browser u otra app sin acceso al filesystem pueda hacer drive-by CORS.
+    _ensure_gateway_api_key(config)
+
+    # SECURITY: Block --no-auth + 0.0.0.0 combination (was only warning)
+    # nosec B104: no es un bind a 0.0.0.0 sino el guard que lo BLOQUEA sin auth.
+    _validate_gateway_startup(config)
+    _run_gateway(config, profile)
 
 
 if __name__ == "__main__":

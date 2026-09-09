@@ -163,8 +163,8 @@ class SkillSearchIndex:
                 for i, mid in enumerate(existing["ids"]):
                     mt = existing["metadatas"][i] if existing["metadatas"] else {}
                     existing_hashes[mid] = mt.get("content_hash", "")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo leer existing_hashes de ChromaDB, se reindexa todo: %s", e)
         for skill_md in skill_files:
             info = self._parse_skill_md(skill_md)
             if info is None:

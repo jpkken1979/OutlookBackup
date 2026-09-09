@@ -120,6 +120,9 @@ Responde únicamente con el análisis directo y el archivo culpable."""
                 else:
                     skipped += 1
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                # ponytail: process exited or became inaccessible between the
+                # iteration snapshot and the kill attempt — race is harmless,
+                # just move on to the next candidate.
                 pass
 
         return f"Restart sequence executed: Killed {killed} MCP processes (skipped {skipped} non-MCP). Client will auto-reconnect."

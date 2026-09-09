@@ -384,8 +384,8 @@ def list_checkpoints() -> list[dict[str, Any]]:
                     "created": f.stat().st_mtime,
                 }
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Checkpoint ilegible, se omite %s: %s", f, e)
     return checkpoints
 
 

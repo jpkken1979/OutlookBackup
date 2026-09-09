@@ -443,7 +443,7 @@ class DynamicReplanning:
             "last_updated": plan.updated_at.isoformat(),
         }
 
-    def register_callback(self, callback: Callable):
+    def register_callback(self, callback: Callable) -> None:
         """Registra callback para notificaciones de replan."""
         self.replan_callbacks.append(callback)
 

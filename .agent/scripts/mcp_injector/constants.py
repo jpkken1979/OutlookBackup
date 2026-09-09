@@ -134,9 +134,14 @@ CLAUDE_DIRS: list[str] = ["hooks", "rules", "commands"]
 # ---------------------------------------------------------------------------
 # Reglas especificas de OpenAntigravity (NO inyectar en proyectos externos)
 # ---------------------------------------------------------------------------
+# Plantillas de reglas que existen para el checkout del ecosistema, pero no son
+# una superficie portable. Contienen identidad local o asumen memoria de Claude.
+INJECTION_RULE_TEMPLATE_EXCLUDES: frozenset[str] = frozenset(
+    {"README.md", "memory-sync.md", "user-identity.md"}
+)
+
 # Archivos de .claude/rules/ que NO deben inyectarse en proyectos externos:
 # son especificos de OpenAntigravity (estado del ecosistema, arquitectura interna).
-# La identidad del usuario viaja via user-identity.md en las templates.
 RULES_EXCLUDE: frozenset[str] = frozenset({"AI_MEMORY.md"})
 ANTIGRAVITY_FILES: list[str] = [
     "rules.md",

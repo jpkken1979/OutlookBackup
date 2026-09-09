@@ -20,7 +20,7 @@ Uso:
     # Acceder a valores
     config["llm"]["model"]
     config["gateway"]["port"]
-    config.get_nested("llm.model", default="claude-sonnet-4-20250514")
+    config.get_nested("llm.model", default="claude-sonnet-4-6")
 
 v1.0.0 - 2026-02-27
 """
@@ -55,7 +55,7 @@ _DEFAULTS: dict[str, Any] = {
     "profile": "development",
     "llm": {
         "provider": "anthropic",
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 4096,
         "temperature": 0.1,
         "fallback_model": "gpt-4o-mini",

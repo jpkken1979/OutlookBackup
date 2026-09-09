@@ -60,18 +60,18 @@ class LazyConnectorRuntime:
             headers[header] = value
         return headers
 
-    async def call(
-        self,
-        connector: ConnectorManifest,
-        operation: str,
-        arguments: dict[str, Any],
-    ) -> dict[str, Any]:
+    def _ensure_callable(self, connector: ConnectorManifest) -> None:
+        """Valida verificacion y secretos antes de invocar un connector.
+
+        Raises:
+            ConnectorRuntimeError: si el connector no esta verificado o le
+                faltan secretos requeridos.
+        """
         if connector.verification != "verified":
             raise ConnectorRuntimeError(
                 f"Connector '{connector.id}' has no verified pinned artifact",
                 status=ConnectorStatus.UNVERIFIED,
             )
-
         missing = self.registry.required_secrets_missing(connector)
         if missing:
             raise ConnectorRuntimeError(
@@ -79,61 +79,80 @@ class LazyConnectorRuntime:
                 status=ConnectorStatus.AUTH_REQUIRED,
             )
 
+    async def _call_internal(
+        self,
+        connector: ConnectorManifest,
+        operation: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(
+                call_internal,
+                self.project_root,
+                connector.id,
+                operation,
+                arguments,
+            )
+        except InternalConnectorError as exc:
+            raise ConnectorRuntimeError(
+                str(exc),
+                status=exc.status,
+                retryable=exc.retryable,
+            ) from exc
+
+    async def _open_transport_session(
+        self,
+        stack: AsyncExitStack,
+        connector: ConnectorManifest,
+        transport: dict[str, Any],
+    ) -> ClientSession:
+        """Abre los streams read/write segun el transporte y entra la sesion MCP."""
+        if transport["type"] == "streamable_http":
+            url = transport.get("url")
+            if not url:
+                raise ConnectorRuntimeError("Connector URL is not configured")
+            http_client = await stack.enter_async_context(
+                httpx.AsyncClient(
+                    headers=self._auth_headers(connector),
+                    timeout=self.timeout_seconds,
+                    follow_redirects=False,
+                )
+            )
+            read_stream, write_stream, _ = await stack.enter_async_context(
+                streamable_http_client(url, http_client=http_client)
+            )
+        elif transport["type"] == "stdio":
+            command = transport.get("command")
+            if not command:
+                raise ConnectorRuntimeError("Connector command is not configured")
+            parameters = StdioServerParameters(
+                command=command,
+                args=transport.get("args", []),
+                cwd=transport.get("cwd"),
+                env={},
+            )
+            read_stream, write_stream = await stack.enter_async_context(stdio_client(parameters))
+        else:
+            raise ConnectorRuntimeError(
+                f"Connector '{connector.id}' requires a managed adapter",
+                status=ConnectorStatus.OFFLINE,
+            )
+        return await stack.enter_async_context(ClientSession(read_stream, write_stream))
+
+    async def call(
+        self,
+        connector: ConnectorManifest,
+        operation: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._ensure_callable(connector)
         transport = self.registry.transport_values(connector)
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 if transport["type"] == "internal":
-                    try:
-                        return await asyncio.to_thread(
-                            call_internal,
-                            self.project_root,
-                            connector.id,
-                            operation,
-                            arguments,
-                        )
-                    except InternalConnectorError as exc:
-                        raise ConnectorRuntimeError(
-                            str(exc),
-                            status=exc.status,
-                            retryable=exc.retryable,
-                        ) from exc
+                    return await self._call_internal(connector, operation, arguments)
                 async with AsyncExitStack() as stack:
-                    if transport["type"] == "streamable_http":
-                        url = transport.get("url")
-                        if not url:
-                            raise ConnectorRuntimeError("Connector URL is not configured")
-                        http_client = await stack.enter_async_context(
-                            httpx.AsyncClient(
-                                headers=self._auth_headers(connector),
-                                timeout=self.timeout_seconds,
-                                follow_redirects=False,
-                            )
-                        )
-                        read_stream, write_stream, _ = await stack.enter_async_context(
-                            streamable_http_client(url, http_client=http_client)
-                        )
-                    elif transport["type"] == "stdio":
-                        command = transport.get("command")
-                        if not command:
-                            raise ConnectorRuntimeError("Connector command is not configured")
-                        parameters = StdioServerParameters(
-                            command=command,
-                            args=transport.get("args", []),
-                            cwd=transport.get("cwd"),
-                            env={},
-                        )
-                        read_stream, write_stream = await stack.enter_async_context(
-                            stdio_client(parameters)
-                        )
-                    else:
-                        raise ConnectorRuntimeError(
-                            f"Connector '{connector.id}' requires a managed adapter",
-                            status=ConnectorStatus.OFFLINE,
-                        )
-
-                    session = await stack.enter_async_context(
-                        ClientSession(read_stream, write_stream)
-                    )
+                    session = await self._open_transport_session(stack, connector, transport)
                     initialize_result = await session.initialize()
                     result = await session.call_tool(
                         operation,

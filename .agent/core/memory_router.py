@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from .gateway_client import resolve_gateway_token
+
 logger = logging.getLogger(__name__)
 
 
@@ -79,6 +81,11 @@ class MemoryRouter:
         base = os.environ.get("ANTIGRAVITY_GATEWAY_URL", "http://127.0.0.1:4747")
         return f"{base.rstrip('/')}/{path.lstrip('/')}" if path else base
 
+    def _gateway_headers(self) -> dict[str, str]:
+        """Resolve the current gateway credential for every request."""
+        token = resolve_gateway_token(self._gateway_url())
+        return {"X-API-Key": token} if token else {}
+
     def _get_project_memory(self) -> Any:
         """Obtiene ProjectMemory de forma lazy."""
         if self._project_memory is None:
@@ -130,15 +137,28 @@ class MemoryRouter:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     self._gateway_url("/v1/mem0/stats"),
+                    headers=self._gateway_headers(),
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         inner = data.get("data", {})
-                        # Si mem0底层 falla, el endpoint retorna error en inner
+                        total = inner.get("total", inner.get("total_memories", -1))
+                        backend = str(inner.get("backend") or "").strip().lower()
+                        fallback_available = inner.get("success") is True and backend not in {
+                            "",
+                            "none",
+                            "unavailable",
+                            "offline",
+                        }
+                        # `mem0_available` describe el SDK mem0. El gateway también
+                        # puede servir un backend semántico funcional directo
+                        # (por ejemplo chromadb-direct), que debe considerarse
+                        # disponible para recall/store.
                         self._mem0_available = (
-                            inner.get("mem0_available", False) is True
-                            and inner.get("total", -1) >= 0
+                            (inner.get("mem0_available") is True or fallback_available)
+                            and isinstance(total, int)
+                            and total >= 0
                         )
                     else:
                         self._mem0_available = False
@@ -159,6 +179,7 @@ class MemoryRouter:
                 async with session.get(
                     self._gateway_url("/v1/mem0/recall"),
                     params=params,
+                    headers=self._gateway_headers(),
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     if resp.status == 200:
@@ -185,7 +206,7 @@ class MemoryRouter:
                             )
         except Exception as e:
             logger.debug("Error buscando en mem0: %s", e)
-        return results
+        return results[:limit]
 
     def _search_project_memory(self, query: str, limit: int = 5) -> list[MemoryResult]:
         """Busca en la memoria del proyecto."""
@@ -407,6 +428,7 @@ class MemoryRouter:
                         async with session.post(
                             self._gateway_url("/v1/mem0/store"),
                             json=payload,
+                            headers=self._gateway_headers(),
                             timeout=aiohttp.ClientTimeout(total=10),
                         ) as resp:
                             results["mem0"] = resp.status == 200

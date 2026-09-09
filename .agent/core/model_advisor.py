@@ -264,6 +264,30 @@ def has_code_signal(text: str, file_paths: list[str] | None) -> bool:
     return any(path.lower().endswith(_CODE_FILE_EXTS) for path in file_paths or [])
 
 
+def _critical_path_reason(text: str, file_paths: list[str] | None) -> str | None:
+    """Devuelve la primera razon de path critico respetando el orden original."""
+    for path in file_paths or []:
+        plow = path.lower()
+        if any(marker in plow for marker in _CRITICAL_PATH_MARKERS):
+            return f"archivo critico ({path})"
+
+    text_marker = next((marker for marker in _CRITICAL_PATH_MARKERS if marker in text), None)
+    if text_marker:
+        return f"archivo critico mencionado ({text_marker})"
+    return None
+
+
+def _standard_code_floor(text: str) -> tuple[str, str]:
+    """Clasifica una tarea que ya fue identificada como trabajo sobre codigo."""
+    standard = _matches(text, _STANDARD_CODE_KEYWORDS)
+    if standard:
+        return "sonnet", f"codigo estandar ({standard})"
+    mechanical = _matches(text, _MECHANICAL_KEYWORDS)
+    if mechanical:
+        return "sonnet", f"mecanico sobre codigo ({mechanical})"
+    return "sonnet", "codigo sin categoria clara -> piso conservador"
+
+
 def classify_risk(text: str, file_paths: list[str] | None = None) -> tuple[str, str]:
     """Determina el piso de modelo por riesgo de calidad (modo conservador).
 
@@ -276,15 +300,9 @@ def classify_risk(text: str, file_paths: list[str] | None = None) -> tuple[str, 
     """
     low = text.lower()
 
-    for path in file_paths or []:
-        plow = path.lower()
-        if any(marker in plow for marker in _CRITICAL_PATH_MARKERS):
-            return "opus", f"archivo critico ({path})"
-
-    # Archivo critico mencionado en el texto (modo anotar no recibe file_paths).
-    text_marker = next((m for m in _CRITICAL_PATH_MARKERS if m in low), None)
-    if text_marker:
-        return "opus", f"archivo critico mencionado ({text_marker})"
+    critical_reason = _critical_path_reason(low, file_paths)
+    if critical_reason:
+        return "opus", critical_reason
 
     hit = _matches(low, _SENSITIVE_KEYWORDS)
     if hit:
@@ -297,13 +315,7 @@ def classify_risk(text: str, file_paths: list[str] | None = None) -> tuple[str, 
         return "opus", "refactor multi-archivo"
 
     if has_code_signal(text, file_paths):
-        std = _matches(low, _STANDARD_CODE_KEYWORDS)
-        if std:
-            return "sonnet", f"codigo estandar ({std})"
-        mech = _matches(low, _MECHANICAL_KEYWORDS)
-        if mech:
-            return "sonnet", f"mecanico sobre codigo ({mech})"
-        return "sonnet", "codigo sin categoria clara -> piso conservador"
+        return _standard_code_floor(low)
 
     non = _matches(low, _NON_CODE_KEYWORDS)
     if non:

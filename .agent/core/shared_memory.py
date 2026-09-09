@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -80,7 +81,7 @@ class SharedMemory:
 
     @staticmethod
     @contextmanager
-    def _file_lock(file_handle: Any, exclusive: bool = True):
+    def _file_lock(file_handle: Any, exclusive: bool = True) -> Iterator[Any]:
         """Acquire a file lock (exclusive for writes, shared for reads).
 
         Uses fcntl on Unix and msvcrt on Windows. The lock is released
@@ -103,6 +104,8 @@ class SharedMemory:
                 try:
                     msvcrt.locking(file_handle.fileno(), msvcrt.LK_UNLCK, 1)
                 except OSError:
+                    # ponytail: best-effort unlock on context-manager exit;
+                    # the OS releases the lock anyway when the fd is closed.
                     pass
             else:
                 fcntl.flock(file_handle.fileno(), fcntl.LOCK_UN)
@@ -245,7 +248,7 @@ class VectorMemory:
         self._collection = None
 
     @property
-    def client(self):
+    def client(self) -> Any:
         """Lazy-load ChromaDB client.
 
         When http_host is set, uses ChromaHttpClient — a minimal stdlib-only
@@ -295,7 +298,7 @@ class VectorMemory:
         return self._client
 
     @property
-    def collection(self):
+    def collection(self) -> Any:
         """Get or create the memory collection."""
         if self._collection is None:
             self._collection = self.client.get_or_create_collection(
@@ -717,7 +720,7 @@ def get_memory_bus(memory_dir: Path | None = None) -> MemoryBus:
 # =============================================================================
 
 
-def main():
+def main() -> None:
     """Test memory systems."""
     import tempfile
 

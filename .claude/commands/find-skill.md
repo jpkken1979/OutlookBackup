@@ -1,13 +1,8 @@
 ---
-description: Buscar e instalar skills de skills.sh
-argument-hint: "[query]"
-allowed-tools: Bash
+description: Buscar y validar skills locales, MCP o skills.sh sin instalarlas
+argument-hint: "[capacidad, problema o consulta]"
 ---
 
-Buscar skills en skills.sh que coincidan con la query del usuario: $ARGUMENTS
+Usa `$find-skill` con la petición original: `$ARGUMENTS`.
 
-1. Ejecutar `npx skills find "$ARGUMENTS"` para buscar
-2. Mostrar los top 5 resultados con nombre, instalaciones y URL
-3. Preguntar al usuario cuál quiere instalar
-4. Si elige uno, instalarlo con: `npx skills add <owner/repo> --skill <skill-name> --agent claude-code --yes`
-5. Verificar que se instaló con `npx skills list`
+Busca en el orden definido por la skill, verifica la procedencia y diferencia fuentes sin resultados de fuentes no disponibles. Devuelve candidatos comparados y una recomendación; no instales nada en este flujo.

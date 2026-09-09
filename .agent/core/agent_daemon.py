@@ -1392,7 +1392,7 @@ async def _main() -> None:
     # Graceful shutdown
     loop = asyncio.get_running_loop()
 
-    def _handle_signal():
+    def _handle_signal() -> None:
         logger.info("Señal recibida, iniciando shutdown...")
         loop.create_task(daemon.stop())
 

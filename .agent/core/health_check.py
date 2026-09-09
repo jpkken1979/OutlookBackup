@@ -187,7 +187,7 @@ class HealthChecker:
             summary=summary,
         )
 
-    def _add_check(self, result: CheckResult):
+    def _add_check(self, result: CheckResult) -> None:
         """Agrega resultado de verificación."""
         self.checks.append(result)
 
@@ -207,7 +207,7 @@ class HealthChecker:
         except Exception as e:
             return -1, "", str(e)
 
-    def _check_python(self):
+    def _check_python(self) -> None:
         """Verifica versión de Python."""
         start = time.time()
         version = sys.version_info
@@ -231,7 +231,7 @@ class HealthChecker:
             )
         )
 
-    def _check_dependencies(self):
+    def _check_dependencies(self) -> None:
         """Verifica dependencias instaladas."""
         start = time.time()
 
@@ -274,7 +274,7 @@ class HealthChecker:
             )
         )
 
-    def _check_core_modules(self):
+    def _check_core_modules(self) -> None:
         """Verifica módulos core."""
         start = time.time()
 
@@ -323,7 +323,7 @@ class HealthChecker:
             )
         )
 
-    def _check_critical_agents(self):
+    def _check_critical_agents(self) -> None:
         """Verifica agentes críticos."""
         start = time.time()
 
@@ -370,7 +370,7 @@ class HealthChecker:
             )
         )
 
-    def _check_memory_system(self):
+    def _check_memory_system(self) -> None:
         """Verifica sistema de memoria."""
         start = time.time()
 
@@ -408,7 +408,7 @@ class HealthChecker:
             )
         )
 
-    def _check_directory_structure(self):
+    def _check_directory_structure(self) -> None:
         """Verifica estructura de directorios."""
         start = time.time()
 
@@ -459,7 +459,7 @@ class HealthChecker:
             )
         )
 
-    def _check_git_status(self):
+    def _check_git_status(self) -> None:
         """Verifica estado de git."""
         start = time.time()
 
@@ -495,7 +495,7 @@ class HealthChecker:
             )
         )
 
-    def _check_config_files(self):
+    def _check_config_files(self) -> None:
         """Verifica archivos de configuración."""
         start = time.time()
 
@@ -537,7 +537,7 @@ class HealthChecker:
             )
         )
 
-    def _check_network_connectivity(self):
+    def _check_network_connectivity(self) -> None:
         """Verifica conectividad de red a servicios clave."""
         start = time.time()
         import urllib.request
@@ -592,7 +592,7 @@ class HealthChecker:
             )
         )
 
-    def _check_mcp_servers(self):
+    def _check_mcp_servers(self) -> None:
         """Verifica que los MCP servers locales responden."""
         start = time.time()
         import urllib.request
@@ -661,7 +661,7 @@ class HealthChecker:
         return fixed
 
 
-def main():
+def main() -> None:
     """Función principal."""
     import argparse
 

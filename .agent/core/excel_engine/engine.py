@@ -9,20 +9,20 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
 
-from excel_engine.backends.openpyxl_backend import OpenpyxlBackend
-from excel_engine.backends.super_agent_backend import (
+from .backends.openpyxl_backend import OpenpyxlBackend
+from .backends.super_agent_backend import (
     SuperAgentBackend,
     SuperAgentInvocationError,
 )
-from excel_engine.backends.xlwings_backend import XlwingsBackend
-from excel_engine.brain_tracker import BrainTracker
-from excel_engine.router import (
+from .backends.xlwings_backend import XlwingsBackend
+from .brain_tracker import BrainTracker
+from .router import (
     BackendRouter,
     BackendUnavailable,
     RouterEnv,
 )
-from excel_engine.sessions import SessionManager
-from excel_engine.types import (
+from .sessions import SessionManager
+from .types import (
     Backend,
     CellFormat,
     ErrorInfo,
@@ -85,7 +85,7 @@ class ExcelEngine:
         t0 = time.time()
         if mode == "live":
             try:
-                handle = self._xlwings.open(path, mode=mode)
+                xlwings_handle = self._xlwings.open(path, mode=mode)
             except ImportError as exc:
                 return self._error(
                     rid,
@@ -105,7 +105,7 @@ class ExcelEngine:
                     message=str(exc),
                 )
             sid = self._sessions.create(path, mode, Backend.XLWINGS)
-            self._handles[sid] = handle
+            self._handles[sid] = xlwings_handle
             self._op_history[sid] = Counter()
             return OpResult(
                 status="ok",
@@ -130,7 +130,7 @@ class ExcelEngine:
                 suggested=["verificar el path"],
             )
         try:
-            handle = self._openpyxl.open(path, mode=mode)
+            openpyxl_handle = self._openpyxl.open(path, mode=mode)
         except (FileNotFoundError, PermissionError, ValueError) as exc:
             return self._error(
                 rid,
@@ -141,7 +141,7 @@ class ExcelEngine:
                 message=str(exc),
             )
         sid = self._sessions.create(path, mode, Backend.OPENPYXL)
-        self._handles[sid] = handle
+        self._handles[sid] = openpyxl_handle
         self._op_history[sid] = Counter()
         return OpResult(
             status="ok",
@@ -364,14 +364,12 @@ class ExcelEngine:
         Returns:
             OpResult con metadata de la operación si status='ok'.
         """
-        return self._with_session(
-            session_id,
-            "apply_formula",
-            lambda h: (
-                self._openpyxl.apply_formula(h, sheet=sheet, range_addr=range_addr, formula=formula)
-                or {"sheet": sheet, "range": range_addr}
-            ),
-        )
+
+        def _apply_formula(h: Any) -> dict[str, Any]:
+            self._openpyxl.apply_formula(h, sheet=sheet, range_addr=range_addr, formula=formula)
+            return {"sheet": sheet, "range": range_addr}
+
+        return self._with_session(session_id, "apply_formula", _apply_formula)
 
     def set_format(
         self,
@@ -391,14 +389,12 @@ class ExcelEngine:
         Returns:
             OpResult con metadata de la operación si status='ok'.
         """
-        return self._with_session(
-            session_id,
-            "set_format",
-            lambda h: (
-                self._openpyxl.set_format(h, sheet=sheet, range_addr=range_addr, fmt=fmt)
-                or {"sheet": sheet, "range": range_addr}
-            ),
-        )
+
+        def _set_format(h: Any) -> dict[str, Any]:
+            self._openpyxl.set_format(h, sheet=sheet, range_addr=range_addr, fmt=fmt)
+            return {"sheet": sheet, "range": range_addr}
+
+        return self._with_session(session_id, "set_format", _set_format)
 
     def create_table(
         self,
@@ -420,16 +416,14 @@ class ExcelEngine:
         Returns:
             OpResult con metadata de la tabla si status='ok'.
         """
-        return self._with_session(
-            session_id,
-            "create_table",
-            lambda h: (
-                self._openpyxl.create_table(
-                    h, sheet=sheet, range_addr=range_addr, name=name, style=style
-                )
-                or {"name": name, "sheet": sheet, "range": range_addr}
-            ),
-        )
+
+        def _create_table(h: Any) -> dict[str, Any]:
+            self._openpyxl.create_table(
+                h, sheet=sheet, range_addr=range_addr, name=name, style=style
+            )
+            return {"name": name, "sheet": sheet, "range": range_addr}
+
+        return self._with_session(session_id, "create_table", _create_table)
 
     def save_as(
         self,
@@ -447,14 +441,12 @@ class ExcelEngine:
         Returns:
             OpResult con path y formato si status='ok'.
         """
-        return self._with_session(
-            session_id,
-            "save_as",
-            lambda h: (
-                self._openpyxl.save_as(h, path=path, format=format)
-                or {"path": path, "format": format}
-            ),
-        )
+
+        def _save_as(h: Any) -> dict[str, Any]:
+            self._openpyxl.save_as(h, path=path, format=format)
+            return {"path": path, "format": format}
+
+        return self._with_session(session_id, "save_as", _save_as)
 
     # ----- Plan B placeholders -----
 
@@ -933,6 +925,8 @@ class ExcelEngine:
                 request_id=rid,
             )
         except Exception:
+            # ponytail: see "Best-effort error ingest" comment above — Brain
+            # ingest failures must never mask the original error being reported.
             pass
         return OpResult(
             status="error",

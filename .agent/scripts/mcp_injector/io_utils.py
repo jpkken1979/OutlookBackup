@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .constants import LEGACY_CLAUDE_DIRS, SKIP_TREE_NAMES, SKIP_TREE_PREFIXES
-from .path_utils import ensure_dir, normalize_path
+from .path_utils import ensure_dir, extend_windows_path, normalize_path
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +233,7 @@ def merge_tree(
         if _same_file_metadata(src, dst):
             return 0
         ensure_dir(dst.parent)
-        shutil.copy2(src, dst)
+        shutil.copy2(extend_windows_path(src), extend_windows_path(dst))
         return 1
 
     copied = 0
@@ -252,7 +252,7 @@ def merge_tree(
             if _same_file_metadata(item, target):
                 continue
             ensure_dir(target.parent)
-            shutil.copy2(item, target)
+            shutil.copy2(extend_windows_path(item), extend_windows_path(target))
             copied += 1
     return copied
 

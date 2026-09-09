@@ -234,7 +234,7 @@ class BrainGraph:
             try:
                 node = self.brain.get_node(rel_slug, track_access=False)
                 neighbors.append(self._node_to_graph_node(node))
-            except FileNotFoundError:
+            except (FileNotFoundError, ValueError):
                 continue
 
         # Ordenar por importancia y access_count
@@ -285,6 +285,8 @@ class BrainGraph:
                         "type": rel.type,
                     }
                 )
+            except ValueError:
+                continue
             except FileNotFoundError:
                 related_details.append({"slug": rel_slug, "title": rel_slug, "type": "unknown"})
 

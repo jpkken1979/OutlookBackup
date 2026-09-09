@@ -518,7 +518,7 @@ def notify_error(error_message: str, context: dict | None = None) -> dict[str, b
 # =============================================================================
 
 
-def main():
+def main() -> None:
     """Test webhooks from command line."""
     import argparse
 

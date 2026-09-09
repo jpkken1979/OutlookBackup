@@ -79,6 +79,79 @@ def _anthropic_content_to_openai(content: Any) -> str | list[dict[str, Any]]:
     return ""
 
 
+def _convert_user_message(content: Any) -> list[dict[str, Any]]:
+    """Convierte un mensaje user, incluidos todos sus tool_result paralelos."""
+    if isinstance(content, list):
+        tool_results = [
+            block
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "tool_result"
+        ]
+        if tool_results:
+            return [
+                {
+                    "role": "tool",
+                    "tool_call_id": str(tool_result.get("tool_use_id", "")),
+                    "content": _flatten_text(tool_result.get("content")),
+                }
+                for tool_result in tool_results
+            ]
+    text = _flatten_text(content)
+    return [{"role": "user", "content": text}]
+
+
+def _convert_assistant_block(
+    block: Any,
+    tool_call_index: list[int],
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Convierte un bloque assistant en texto o en un tool_call OpenAI."""
+    text_piece: str | None = None
+    tool_call: dict[str, Any] | None = None
+    if not isinstance(block, dict):
+        return text_piece, tool_call
+    block_type = block.get("type")
+    if block_type == "text":
+        text = str(block.get("text", ""))
+        if text:
+            text_piece = text
+    elif block_type == "tool_use":
+        index = tool_call_index[0]
+        tool_call_index[0] += 1
+        tool_call = {
+            "id": str(block.get("id", f"call_{index}")),
+            "type": "function",
+            "function": {
+                "name": str(block.get("name", "")),
+                "arguments": json.dumps(block.get("input", {}), ensure_ascii=False),
+            },
+        }
+    return text_piece, tool_call
+
+
+def _convert_assistant_message(
+    content: Any,
+    tool_call_index: list[int],
+) -> list[dict[str, Any]]:
+    """Convierte texto y tool_use de un mensaje assistant."""
+    out: dict[str, Any] = {"role": "assistant"}
+    text_parts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    if isinstance(content, list):
+        for block in content:
+            text_piece, tool_call = _convert_assistant_block(block, tool_call_index)
+            if text_piece:
+                text_parts.append(text_piece)
+            if tool_call:
+                tool_calls.append(tool_call)
+    if text_parts:
+        out["content"] = "\n".join(text_parts)
+    if tool_calls:
+        out["tool_calls"] = tool_calls
+    if "content" not in out and "tool_calls" not in out:
+        return []
+    return [out]
+
+
 def _convert_message(msg: dict[str, Any], tool_call_index: list[int]) -> list[dict[str, Any]]:
     """Convierte UN mensaje Anthropic a CERO O MAS mensajes OpenAI Chat Completions.
 
@@ -106,61 +179,10 @@ def _convert_message(msg: dict[str, Any], tool_call_index: list[int]) -> list[di
         return [{"role": "system", "content": text}] if text else []
 
     if role == "user":
-        # El user puede contener tool_result (respuesta de herramienta) o texto.
-        if isinstance(content, list):
-            tool_results = [
-                b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"
-            ]
-            if tool_results:
-                # Cada tool_result se convierte en un mensaje role:tool de OpenAI.
-                # Con tool calls PARALELOS hay varios tool_result en un solo mensaje
-                # user; OpenAI exige uno por cada tool_call_id, asi que los emitimos
-                # TODOS (antes solo iba el primero -> 400 en providers OpenAI remotos).
-                return [
-                    {
-                        "role": "tool",
-                        "tool_call_id": str(tr.get("tool_use_id", "")),
-                        "content": _flatten_text(tr.get("content")),
-                    }
-                    for tr in tool_results
-                ]
-        text = _flatten_text(content)
-        return [{"role": "user", "content": text}]
+        return _convert_user_message(content)
 
     if role == "assistant":
-        out: dict[str, Any] = {"role": "assistant"}
-        text_parts: list[str] = []
-        tool_calls: list[dict[str, Any]] = []
-        if isinstance(content, list):
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
-                btype = block.get("type")
-                if btype == "text":
-                    t = str(block.get("text", ""))
-                    if t:
-                        text_parts.append(t)
-                elif btype == "tool_use":
-                    idx = tool_call_index[0]
-                    tool_call_index[0] += 1
-                    tool_calls.append(
-                        {
-                            "id": str(block.get("id", f"call_{idx}")),
-                            "type": "function",
-                            "function": {
-                                "name": str(block.get("name", "")),
-                                "arguments": json.dumps(block.get("input", {}), ensure_ascii=False),
-                            },
-                        }
-                    )
-        if text_parts:
-            out["content"] = "\n".join(text_parts)
-        if tool_calls:
-            out["tool_calls"] = tool_calls
-        # assistant con content vacio Y sin tool_calls no aporta; se omite.
-        if "content" not in out and "tool_calls" not in out:
-            return []
-        return [out]
+        return _convert_assistant_message(content, tool_call_index)
 
     return []
 
@@ -444,6 +466,8 @@ class OpenAiStreamTranslator:
         self._input_tokens = 0
         self._output_tokens = 0
         self._finished = False  # True tras _finish(): evita doble cierre en flush()
+        self._completed_cleanly = False
+        self._synthetic_completion = False
         # Carry-over de la linea `data:` incompleta entre feed(): iter_any() de
         # aiohttp no alinea chunks a limites de linea. Se guarda en BYTES (no str)
         # para no partir un caracter UTF-8 multi-byte al decodificar.
@@ -453,6 +477,18 @@ class OpenAiStreamTranslator:
         # en _dialect_mode retiene TODO hasta resolver en _finish()/flush().
         self._pending_text = ""
         self._dialect_mode = False
+
+    @property
+    def completed_cleanly(self) -> bool:
+        """True only when the upstream sent a finish reason or ``[DONE]``."""
+
+        return self._completed_cleanly
+
+    @property
+    def synthetic_completion(self) -> bool:
+        """True when ``flush`` had to synthesize a stop for compatibility."""
+
+        return self._synthetic_completion
 
     def _begin_message(self) -> list[bytes]:
         """Emite message_start (una sola vez por turno)."""
@@ -647,8 +683,9 @@ class OpenAiStreamTranslator:
             return []
         data_str = line[len("data:") :].strip()
         if data_str == "[DONE]":
-            # El cierre final lo hace flush() para garantizar orden de stop.
-            return []
+            if self._finished:
+                return []
+            return self._finish("stop")
         try:
             delta_obj = json.loads(data_str)
         except json.JSONDecodeError:
@@ -656,6 +693,94 @@ class OpenAiStreamTranslator:
             # el re-ensamblado lo resuelve el buffer). Se descarta sin tumbar el stream.
             return []
         return self._handle_delta(delta_obj)
+
+    def _update_usage(self, delta_obj: dict[str, Any]) -> None:
+        """Actualiza los contadores con el chunk final de usage de OpenAI."""
+        usage = delta_obj.get("usage")
+        if isinstance(usage, dict):
+            if usage.get("prompt_tokens"):
+                self._input_tokens = int(usage["prompt_tokens"])
+            if usage.get("completion_tokens"):
+                self._output_tokens = int(usage["completion_tokens"])
+
+    def _start_structured_tool_call(
+        self,
+        tool_call: dict[str, Any],
+        index: int,
+    ) -> tuple[dict[str, Any], list[bytes]]:
+        """Abre un content block Anthropic para un tool_call estructurado."""
+        out: list[bytes] = []
+        block_index = index + 1
+        tool_id = str(tool_call.get("id", f"toolu_proxy_{index}"))
+        function = tool_call.get("function") or {}
+        name = str(function.get("name", ""))
+        block: dict[str, Any] = {
+            "index": block_index,
+            "id": tool_id,
+            "name": name,
+            "arguments": "",
+        }
+        self._tool_blocks[index] = block
+        if self._text_block_open:
+            out.extend(self._close_text_block())
+        out.append(
+            _sse(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": block_index,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": tool_id,
+                        "name": name,
+                        "input": {},
+                    },
+                },
+            )
+        )
+        return block, out
+
+    def _process_structured_tool_call(self, tool_call: dict[str, Any]) -> list[bytes]:
+        """Procesa un fragmento incremental de un tool_call OpenAI."""
+        out: list[bytes] = []
+        index = int(tool_call.get("index", 0))
+        block = self._tool_blocks.get(index)
+        if block is None:
+            block, started = self._start_structured_tool_call(tool_call, index)
+            out.extend(started)
+
+        function = tool_call.get("function") or {}
+        argument_piece = function.get("arguments")
+        if isinstance(argument_piece, str) and argument_piece:
+            block["arguments"] += argument_piece
+            out.append(
+                _sse(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": block["index"],
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": argument_piece,
+                        },
+                    },
+                )
+            )
+        return out
+
+    def _process_structured_tool_calls(self, tool_calls: list[Any]) -> list[bytes]:
+        """Procesa la lista incremental de tool_calls conservando su orden."""
+        out: list[bytes] = []
+        if tool_calls and self._pending_text and not self._dialect_mode:
+            # Llego un tool_call estructurado: la cola de texto retenida ya no
+            # puede ser un dialecto — emitirla antes de cerrar el bloque texto.
+            out.extend(self._emit_text_delta(self._pending_text))
+            self._pending_text = ""
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            out.extend(self._process_structured_tool_call(tool_call))
+        return out
 
     def _handle_delta(self, delta_obj: dict[str, Any]) -> list[bytes]:
         """Convierte UN objeto delta de OpenAI a eventos Anthropic."""
@@ -666,12 +791,7 @@ class OpenAiStreamTranslator:
         # Token de uso ANTES del early-return por choices vacio: con
         # stream_options.include_usage, OpenAI manda el usage en un chunk final
         # extra SIN choices — si se lee despues del return, se pierde siempre.
-        usage = delta_obj.get("usage")
-        if isinstance(usage, dict):
-            if usage.get("prompt_tokens"):
-                self._input_tokens = int(usage["prompt_tokens"])
-            if usage.get("completion_tokens"):
-                self._output_tokens = int(usage["completion_tokens"])
+        self._update_usage(delta_obj)
 
         choices = delta_obj.get("choices") or []
         if not choices:
@@ -688,64 +808,7 @@ class OpenAiStreamTranslator:
         # tool_calls incremental -> tool_use content blocks (index a partir de 1).
         tool_calls = delta.get("tool_calls")
         if isinstance(tool_calls, list):
-            if tool_calls and self._pending_text and not self._dialect_mode:
-                # Llego un tool_call estructurado: la cola de texto retenida ya no
-                # puede ser un dialecto — emitirla antes de cerrar el bloque texto.
-                out.extend(self._emit_text_delta(self._pending_text))
-                self._pending_text = ""
-            for tc in tool_calls:
-                if not isinstance(tc, dict):
-                    continue
-                idx = int(tc.get("index", 0))
-                block = self._tool_blocks.get(idx)
-                if block is None:
-                    # Nuevo tool_use: reservar index despues del bloque de texto.
-                    block_index = idx + 1
-                    tool_id = str(tc.get("id", f"toolu_proxy_{idx}"))
-                    fn = tc.get("function") or {}
-                    name = str(fn.get("name", ""))
-                    block = {
-                        "index": block_index,
-                        "id": tool_id,
-                        "name": name,
-                        "arguments": "",
-                    }
-                    self._tool_blocks[idx] = block
-                    if self._text_block_open:
-                        out.extend(self._close_text_block())
-                    out.append(
-                        _sse(
-                            "content_block_start",
-                            {
-                                "type": "content_block_start",
-                                "index": block_index,
-                                "content_block": {
-                                    "type": "tool_use",
-                                    "id": tool_id,
-                                    "name": name,
-                                    "input": {},
-                                },
-                            },
-                        )
-                    )
-                # Acumular argumentos (viene en cachitos delta).
-                fn = tc.get("function") or {}
-                arg_piece = fn.get("arguments")
-                if isinstance(arg_piece, str) and arg_piece:
-                    block["arguments"] += arg_piece
-                    out.append(
-                        _sse(
-                            "content_block_delta",
-                            {
-                                "type": "content_block_delta",
-                                "index": block["index"],
-                                "delta": {
-                                    "type": "input_json_delta",
-                                    "partial_json": arg_piece,
-                                },
-                            },
-                        )
-                    )
+            out.extend(self._process_structured_tool_calls(tool_calls))
 
         # finish_reason -> cerramos bloques abiertos y señalamos stop.
         finish_reason = choice.get("finish_reason")
@@ -788,6 +851,7 @@ class OpenAiStreamTranslator:
         # blocks no se re-cierren (evita message_stop duplicado hacia Claude Code).
         self._tool_blocks.clear()
         self._finished = True
+        self._completed_cleanly = True
         return out
 
     def flush(self) -> list[bytes]:
@@ -833,6 +897,8 @@ class OpenAiStreamTranslator:
                 )
             )
             out.append(_sse("message_stop", {"type": "message_stop"}))
+        self._finished = True
+        self._synthetic_completion = True
         return out
 
 

@@ -21,6 +21,7 @@ from .constants import (
     CLAUDE_DIRS,
     DEFAULT_GATEWAY_URL,
     ECOSYSTEM_VERSION,
+    INJECTION_RULE_TEMPLATE_EXCLUDES,
     LEGACY_CLAUDE_DIRS,
     NON_PORTABLE_CLAUDE_MARKERS,
 )
@@ -34,6 +35,7 @@ from .io_utils import (
     merge_tree,
     read_json_file,
 )
+from .client_profiles import DEFAULT_CLIENT_IDS, get_client_profiles, install_client_adapter
 from .mcp_config import (
     LEGACY_MANAGED_MCP_SERVER_NAMES,
     get_mcp_servers,
@@ -43,6 +45,7 @@ from .mcp_config import (
     safe_merge_continue_json,
     safe_merge_codex_toml,
     safe_merge_json,
+    safe_merge_opencode_json,
     safe_merge_vscode_mcp,
     safe_merge_zed_settings,
 )
@@ -180,6 +183,148 @@ def import_named_entries_with_backup(
 # ---------------------------------------------------------------------------
 
 
+def build_injection_scope(
+    repo_root: Path,
+    target_dir: Path,
+    *,
+    enable_dev_preset: bool,
+    include_mcp: bool,
+) -> dict[str, Any]:
+    """Describe the real surfaces, clients and preservation policy of an install.
+
+    The UI needs a source-of-truth preview, not a second handwritten list of
+    client paths.  The bundle analysis and client profiles are therefore read
+    from the same modules used by the installer itself.
+    """
+    from .bundle_v2 import analyze_source_install
+
+    bundle = analyze_source_install(repo_root, target_dir)
+    internal_rules_dir = repo_root / ".claude" / "rules"
+    internal_rule_count = (
+        sum(
+            1
+            for path in internal_rules_dir.iterdir()
+            if path.is_file() and path.suffix.lower() == ".md"
+        )
+        if internal_rules_dir.is_dir()
+        else 0
+    )
+    template_rules_dir = repo_root / ".agent" / "templates" / "injection-rules"
+    template_rule_count = (
+        sum(
+            1
+            for path in template_rules_dir.iterdir()
+            if path.is_file() and path.name not in {*INJECTION_RULE_TEMPLATE_EXCLUDES, "CLAUDE.md"}
+        )
+        if template_rules_dir.is_dir()
+        else 0
+    )
+    clients = [
+        {
+            "id": profile.id,
+            "label": profile.name,
+            "configPath": profile.mcp_config,
+            "rulesPath": profile.rules_file,
+            "enabled": include_mcp,
+            "operation": "smart-merge",
+        }
+        for profile in get_client_profiles()
+    ]
+
+    return {
+        "mode": "mcp" if include_mcp else "local",
+        "devPreset": enable_dev_preset,
+        "bundle": bundle,
+        "clients": clients,
+        "surfaces": [
+            {
+                "id": "portable-runtime",
+                "label": "Runtime portable y broker",
+                "source": ".agent/ + mcp-server/ + .context/",
+                "target": ".agent/ + mcp-server/ + .antigravity/",
+                "operation": "merge atomico",
+                "enabled": True,
+            },
+            {
+                "id": "workspace-rules",
+                "label": "Reglas genericas de inyeccion",
+                "source": f".agent/templates/injection-rules/ ({template_rule_count} plantillas)",
+                "target": ".claude/rules/",
+                "operation": "crear solo si falta",
+                "enabled": True,
+            },
+            {
+                "id": "internal-rules",
+                "label": "Reglas internas de OpenAntigravity",
+                "source": f".claude/rules/ ({internal_rule_count} archivos)",
+                "target": "No se inyectan",
+                "operation": "solo este ecosistema",
+                "enabled": False,
+            },
+            {
+                "id": "private-rule-templates",
+                "label": "Plantillas locales no portables",
+                "source": "memory-sync.md + user-identity.md",
+                "target": "No se inyectan",
+                "operation": "excluidas por privacidad",
+                "enabled": False,
+            },
+            {
+                "id": "workspace-docs",
+                "label": "Documentacion del proyecto",
+                "source": "contrato Antigravity",
+                "target": "CLAUDE.md, AGENTS.md, GEMINI.md y Copilot",
+                "operation": "actualizar solo bloques administrados",
+                "enabled": True,
+            },
+            {
+                "id": "mcp-clients",
+                "label": "Configuracion MCP de clientes",
+                "source": "broker antigravity",
+                "target": "perfiles MCP del workspace",
+                "operation": "smart-merge sin borrar servidores ajenos",
+                "enabled": include_mcp,
+            },
+        ],
+        "preserved": [
+            {
+                "path": "RULES.md y WORKFLOW_RULES.md",
+                "reason": "Son documentos del proyecto destino; el bundle no los administra.",
+            },
+            {
+                "path": ".claude/rules/*.md existente",
+                "reason": "Las plantillas solo crean archivos que faltan; no reemplazan reglas locales.",
+            },
+            {
+                "path": ".antigravity/rules.md",
+                "reason": "Es una regla propia del workspace y queda fuera del bundle administrado.",
+            },
+            {
+                "path": ".agent/skills-custom/*",
+                "reason": "Los skills custom del destino se conservan como overlay del proyecto.",
+            },
+            {
+                "path": "Contenido fuera de superficies administradas",
+                "reason": "La inyeccion no borra extras del destino; los conflictos se reportan aparte.",
+            },
+        ],
+        "editable": [
+            {
+                "id": "dev-preset",
+                "label": "Servers MCP de desarrollo",
+                "enabled": enable_dev_preset,
+                "control": "includeDevServers",
+            },
+            {
+                "id": "global-rules",
+                "label": "Reglas globales editables",
+                "enabled": True,
+                "control": "global-rules-editor",
+            },
+        ],
+    }
+
+
 def inspect_installation(
     target_dir: Path,
     repo_root: Path,
@@ -257,6 +402,12 @@ def inspect_installation(
         "success": True,
         "mode": "mcp" if include_mcp else "local",
         "devPreset": enable_dev_preset,
+        "injectionScope": build_injection_scope(
+            repo_root,
+            target_dir,
+            enable_dev_preset=enable_dev_preset,
+            include_mcp=include_mcp,
+        ),
         "summary": {
             "differenceItems": difference_items,
             "upstreamItems": upstream_items,
@@ -408,8 +559,9 @@ Instalado por Nexus el {datetime.now().strftime("%Y-%m-%d")}.
 
 El estilo de comunicacion de la IA se adapta segun el modo de persona.
 Modos disponibles: `gentleman` (detallado, pedagogico), `neutral` (factual),
-`conciso` (minimalista). Configurar via `ANTIGRAVITY_PERSONA` env var o
-`.antigravity/config.json`. Ver `.claude/rules/persona.md` para detalles.
+`conciso` (minimalista). Configurar el runtime via `ANTIGRAVITY_PERSONA`.
+`personaConfig` en `.antigravity/config.json` es metadata del adaptador y no
+reemplaza la variable de entorno. Ver `.claude/rules/persona.md` para detalles.
 
 ### Runtime MCP-first
 
@@ -504,77 +656,24 @@ def install_project_memory(target_dir: Path, repo_root: Path) -> bool:
 
 
 def install_copilot_instructions(target_dir: Path, repo_root: Path) -> bool:
-    """Escribe .github/copilot-instructions.md con contexto del ecosistema Antigravity."""
-    agents_dir = repo_root / ".agent" / "agents"
-    tiers: dict[int, list[str]] = {}
-    unlisted: list[str] = []
+    """Delega en la implementacion canonica de `markdown_update`.
 
-    if agents_dir.exists():
-        for agent_dir in sorted(agents_dir.iterdir()):
-            if not agent_dir.is_dir() or agent_dir.name == "_deprecated":
-                continue
-            cfg_path = agent_dir / "agent.json"
-            if cfg_path.exists():
-                try:
-                    cfg = read_json_file(cfg_path)
-                    tier = int(cfg.get("tier", 0))
-                    tiers.setdefault(tier, []).append(agent_dir.name)
-                except Exception:
-                    unlisted.append(agent_dir.name)
-            else:
-                unlisted.append(agent_dir.name)
+    Habia aca una segunda implementacion divergente que sobrescribia el archivo
+    entero (sin marcadores ANTIGRAVITY-START/END), con los conteos de skills
+    hardcodeados y sin filtrar `__pycache__`/`_archive` de la lista de agentes.
+    Como era la unica registrada en el flujo de inyeccion, era la que corria en
+    produccion y dejaba un preambulo obsoleto encima del bloque bueno.
 
-    num_agents = sum(len(v) for v in tiers.values()) + len(unlisted)
+    Args:
+        target_dir: Proyecto destino de la inyeccion.
+        repo_root: Raiz del ecosistema.
 
-    gateway_url = DEFAULT_GATEWAY_URL
-    for config_path in [
-        target_dir / ".antigravity" / "config.json",
-        repo_root / ".antigravity" / "config.json",
-    ]:
-        if config_path.exists():
-            try:
-                cfg = read_json_file(config_path)
-                gateway_url = cfg.get("gateway", DEFAULT_GATEWAY_URL)
-                break
-            except Exception:
-                pass
+    Returns:
+        True si se escribio el archivo.
+    """
+    from .markdown_update import install_copilot_instructions as _canonical
 
-    tier_lines: list[str] = []
-    for tier_num in sorted(tiers.keys()):
-        tier_lines.append(f"\n### Tier {tier_num}")
-        for agent_name in tiers[tier_num]:
-            tier_lines.append(f"- `{agent_name}`")
-    if unlisted:
-        tier_lines.append(f"\n### Specialized / No-tier ({len(unlisted)} agents)")
-        for agent_name in unlisted[:10]:
-            tier_lines.append(f"- `{agent_name}`")
-        if len(unlisted) > 10:
-            tier_lines.append(f"- ... y {len(unlisted) - 10} mas")
-
-    content = f"""# AI Copilot Instructions — Antigravity Ecosystem
-
-## Version
-- Antigravity: {ECOSYSTEM_VERSION}
-- Gateway: {gateway_url}
-
-## Agents ({num_agents} agentes)
-{tiers.get(1, []) and "".join(tier_lines) or "".join(tier_lines)}
-
-## Skills
-- Base: `.agent/skills/` (801 skills)
-- Custom: `.agent/skills-custom/` (52 skills)
-- Plugins: `.agent/plugins/` (78 skills)
-"""
-
-    copilot_path = target_dir / ".github" / "copilot-instructions.md"
-    try:
-        ensure_dir(copilot_path.parent)
-        copilot_path.write_text(content, encoding="utf-8")
-        logger.info("✅ [.github/copilot-instructions.md] Creado")
-        return True
-    except Exception as exc:
-        logger.error(f"❌ [.github/copilot-instructions.md] Error: {exc}")
-        return False
+    return _canonical(target_dir, repo_root)
 
 
 # ---------------------------------------------------------------------------
@@ -1450,6 +1549,17 @@ def inject_workspace(
 
     failures: list[str] = []
 
+    try:
+        install_client_adapter(
+            target_dir,
+            clients=DEFAULT_CLIENT_IDS,
+            gateway_url=gateway_url,
+        )
+        logger.info("✅ [Nexus] Adaptador universal instalado")
+    except (OSError, ValueError) as exc:
+        logger.error("❌ [Nexus] No se pudo instalar el adaptador: %s", exc)
+        failures.append("Nexus adapter")
+
     json_targets = [
         ("Cursor", target_dir / ".cursor" / "mcp.json"),
         ("Windsurf", target_dir / ".windsurf" / "mcp.json"),
@@ -1501,6 +1611,13 @@ def inject_workspace(
     else:
         logger.error(f"❌ [Codex] Falló la configuración — ruta: {codex_path}")
         failures.append("Codex")
+
+    opencode_path = target_dir / "opencode.json"
+    if safe_merge_opencode_json(opencode_path, servers):
+        logger.info("✅ [OpenCode] Configurado con una entrada MCP antigravity")
+    else:
+        logger.error("❌ [OpenCode] Falló la configuración — ruta: %s", opencode_path)
+        failures.append("OpenCode")
 
     install_copilot_instructions(target_dir, repo_root)
 

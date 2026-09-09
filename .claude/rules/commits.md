@@ -1,39 +1,18 @@
-# Regla: Formato de Commits
+# Regla: commits
 
-## Estructura
+Formato convencional:
 
-```
-<type>(<scope>): <descripción en español>
+```text
+<type>(<scope>): <descripción breve en español>
 
-[cuerpo opcional]
-
-Co-Authored-By: Claude <noreply@anthropic.com>
+<cuerpo opcional con motivo, riesgo y verificación>
 ```
 
-## Tipos permitidos
+Tipos habituales: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `style`.
 
-| Tipo | Cuándo usarlo |
-|------|---------------|
-| `feat` | Nueva funcionalidad |
-| `fix` | Corrección de bug |
-| `docs` | Solo documentación |
-| `style` | Formato, sin cambio lógico |
-| `refactor` | Refactorización sin cambio de comportamiento |
-| `test` | Añadir o corregir tests |
-| `chore` | Mantenimiento, deps, configuración |
-
-## Ejemplos
-
-```
-feat(agents): agregar agente especializado en análisis de costos
-fix(nexus): corregir race condition en splash screen lifecycle
-chore(metrics): actualizar métricas de rendimiento de agentes
-docs(skills): documentar estructura de skills modulares
-```
-
-## Reglas adicionales
-
-- Descripción siempre en **español**
-- Scope en inglés (nombre del módulo/directorio)
-- Primera línea máximo 72 caracteres
-- Usar imperative mood en el tipo pero descripción en indicativo
+- Scope en inglés y título breve.
+- No mezclar cambios no relacionados ni cambios ajenos del worktree.
+- No atribuir coautoría a una persona o IA que no participó realmente.
+- No incluir secretos, logs sensibles o artefactos generados accidentales.
+- Revisar el diff y ejecutar gates antes de commitear.
+- Commit, push, merge y release son acciones diferentes; hacer solo las pedidas.

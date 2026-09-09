@@ -17,7 +17,8 @@ from typing import Any
 import yaml  # type: ignore[import-untyped]
 
 from .dates import _normalize_date_value, _parse_date_value
-from .text import _parse_sections
+from .constants import _SLUG_PATTERN
+from .text import _parse_sections, derive_topic_key, semantic_content_hash
 
 
 @dataclass
@@ -46,6 +47,11 @@ class BrainNode:
     access_count: int = 0
     last_accessed: str = ""
     version: int = 1
+    content_hash: str = ""
+    topic_key: str = ""
+
+    # Resultado transitorio de ingest; no se persiste en frontmatter.
+    deduplicated: bool = field(default=False, repr=False, compare=False)
 
     # Contenido por secciones
     context: str = ""
@@ -74,6 +80,8 @@ class BrainNode:
             "access_count": self.access_count,
             "last_accessed": self.last_accessed,
             "version": self.version,
+            "content_hash": self.content_hash,
+            "topic_key": self.topic_key,
         }
         lines = ["---"]
         lines.append(yaml.dump(fm, default_flow_style=False, allow_unicode=True).strip())
@@ -141,12 +149,15 @@ class BrainNode:
 
         fm_text, body = fm_match.group(1), fm_match.group(2)
         fm = yaml.safe_load(fm_text) or {}
+        slug = fm.get("slug")
+        if not isinstance(slug, str) or not _SLUG_PATTERN.fullmatch(slug):
+            raise ValueError(f"Slug invalido en {file_path or 'contenido'}: {slug!r}")
 
         # Extraer secciones del body
         sections = _parse_sections(body)
 
-        return cls(
-            slug=fm.get("slug", ""),
+        node = cls(
+            slug=slug,
             type=fm.get("type", "session"),
             area=fm.get("area", "general"),
             date=_normalize_date_value(fm.get("date", "")),
@@ -162,6 +173,8 @@ class BrainNode:
             access_count=fm.get("access_count", 0),
             last_accessed=fm.get("last_accessed", ""),
             version=fm.get("version", 1),
+            content_hash=fm.get("content_hash", ""),
+            topic_key=fm.get("topic_key", ""),
             context=sections.get("contexto", ""),
             decisions=sections.get("decisiones", ""),
             output=sections.get("output", ""),
@@ -169,6 +182,11 @@ class BrainNode:
             crossrefs=sections.get("cross-refs", ""),
             source_notes=sections.get("fuentes", ""),
         )
+        if not node.content_hash:
+            node.content_hash = semantic_content_hash(content)
+        if not node.topic_key:
+            node.topic_key = derive_topic_key(node.area, node.title)
+        return node
 
 
 @dataclass

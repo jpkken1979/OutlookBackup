@@ -458,8 +458,8 @@ class ContractNetProtocol:
                     },
                     from_agent="negotiation-protocol",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo publicar auction_awarded en el bus: %s", e)
 
         self._finalize_auction(result)
         return result

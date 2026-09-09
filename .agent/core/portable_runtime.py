@@ -35,9 +35,7 @@ def project_root() -> Path:
 
 
 def _safe_agent_name(agent_name: str) -> bool:
-    return bool(agent_name) and not any(
-        marker in agent_name for marker in ("/", "\\", "..")
-    )
+    return bool(agent_name) and not any(marker in agent_name for marker in ("/", "\\", ".."))
 
 
 def resolve_agent_script(agent_name: str, root: Path | None = None) -> Path | None:
@@ -112,8 +110,7 @@ def run_portable_script_cli(argv: Sequence[str] | None = None) -> int | None:
     root = project_root()
     script = Path(arguments[1]).expanduser().resolve()
     if not script.is_file() or not any(
-        script.is_relative_to(allowed_root)
-        for allowed_root in _allowed_script_roots(root)
+        script.is_relative_to(allowed_root) for allowed_root in _allowed_script_roots(root)
     ):
         return 2
 

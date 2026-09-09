@@ -87,6 +87,7 @@ from .mcp_config import (  # noqa: F401
     maybe_add_remote_server,
     get_mcp_servers,
     safe_merge_json,
+    safe_merge_opencode_json,
     safe_merge_vscode_mcp,
     safe_merge_zed_settings,
     safe_merge_continue_json,
@@ -100,6 +101,12 @@ from .mcp_config import (  # noqa: F401
     get_agent_version,
     show_injection_diff,
     check_blocking_processes,
+)
+
+from .client_profiles import (  # noqa: F401
+    DEFAULT_CLIENT_IDS,
+    build_client_adapter,
+    install_client_adapter,
 )
 
 from .sdk_install import (  # noqa: F401
@@ -124,6 +131,7 @@ from .markdown_update import (  # noqa: F401
     update_markdown_section,
     update_claude_md,
     update_agents_md,
+    update_gemini_md,
     generate_ide_rules,
     install_copilot_instructions,
     parse_markdown_sections,

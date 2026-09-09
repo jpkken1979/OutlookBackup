@@ -13,9 +13,13 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..base import ContextEngineInput, ContextEngineMetadata
 from ..context_injection_compat import call_legacy_build
+
+if TYPE_CHECKING:
+    from ..context_injection import InjectionContext
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +39,9 @@ class BrainAwareContextEngine:
             version="1.0.0",
         )
 
-    async def prepare(self, inp: ContextEngineInput, base=None):  # type: ignore[no-untyped-def]
+    async def prepare(
+        self, inp: ContextEngineInput, base: InjectionContext | None = None
+    ) -> InjectionContext:
         if base is not None:
             ctx = base
         else:

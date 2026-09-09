@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlparse
 
 from core import provider_switch
 
@@ -40,8 +41,9 @@ def is_openai_compatible(provider: str) -> bool:
     Deriva del catalogo (`.antigravity/providers.json`): un provider es
     OpenAI-compatible si su `wire == "openai"` y es `routable`. Para estos el proxy
     traduce el payload y el stream via `core.openai_translator`. Los backends
-    Anthropic-compatible (claude, minimax, zai) y los no-ruteables (nvidia) devuelven
-    False y siguen el path de passthrough/sanitizacion Anthropic existente.
+    Anthropic-compatible (claude, minimax, zai) y cualquier entrada declarada como
+    no-ruteable devuelven False y siguen el path de passthrough/sanitizacion Anthropic
+    existente.
 
     Args:
         provider: Id del provider (ollama, lmstudio, openrouter, opencode, ...).
@@ -116,14 +118,22 @@ def resolve_target(provider: str, incoming_headers: dict, root: Path | None = No
 
     base = cfg.base_url.rstrip("/")
 
-    # Backends OpenAI-compatible (ollama, lmstudio): endpoint /v1/chat/completions.
+    # Backends OpenAI-compatible: endpoint de Chat Completions.
     # El proxy traduce el payload y el stream via core.openai_translator. Los locales
     # (ollama en :11434, lmstudio en :1234/v1) no requieren API key; si el usuario
-    # configuro una para un remoto (openrouter/kimi futuro), ya quedo en Authorization.
+    # configuro una para un remoto, ya quedo en Authorization.
     if is_openai_compatible(provider):
-        # LM Studio ya incluye /v1 en su base_url; Ollama no. Normalizamos para no
-        # doblar el segmento: si la base ya termina en /v1 lo respetamos.
-        if base.endswith("/v1"):
+        # Algunas raíces ya contienen el API root completo (LM Studio /v1,
+        # Gemini /v1beta/openai, Fireworks /inference/v1). Sólo Ollama y
+        # DeepSeek declaran el host antes de /v1.
+        path = urlparse(base).path.rstrip("/")
+        has_api_root = (
+            path.endswith("/v1")
+            or path.endswith("/openai")
+            or "/openai/v1" in path
+            or "/inference/v1" in path
+        )
+        if has_api_root:
             return {"url": f"{base}/chat/completions", "headers": headers}
         return {"url": f"{base}/v1/chat/completions", "headers": headers}
 

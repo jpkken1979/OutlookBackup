@@ -7,6 +7,8 @@ y proporciona una interfaz unificada para que Claude sea máximamente efectivo.
 NO es otro agente más. Es la INTELIGENCIA CENTRAL que coordina todo.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from collections.abc import Callable
@@ -26,9 +28,9 @@ try:
     from .intelligence.output_verification import OutputVerification, get_output_verification
     from .intelligence.user_preference_model import UserPreferenceModel, get_user_preference_model
     from .session_bootstrap import SessionBootstrap
-except ImportError:
+except ImportError as e:
     # Fallback para ejecución directa
-    pass
+    log.debug("Import interno opcional no disponible en claude_core: %s", e)
 
 
 class TaskPhase(Enum):
@@ -133,7 +135,7 @@ class ClaudeCore:
         return self._bootstrap
 
     @property
-    def context_predictor(self):
+    def context_predictor(self) -> ContextPrediction | None:
         if self._context_predictor is None:
             try:
                 self._context_predictor = get_context_prediction()
@@ -142,7 +144,7 @@ class ClaudeCore:
         return self._context_predictor
 
     @property
-    def preference_model(self):
+    def preference_model(self) -> UserPreferenceModel | None:
         if self._preference_model is None:
             try:
                 self._preference_model = get_user_preference_model()
@@ -151,7 +153,7 @@ class ClaudeCore:
         return self._preference_model
 
     @property
-    def verifier(self):
+    def verifier(self) -> OutputVerification | None:
         if self._verifier is None:
             try:
                 self._verifier = get_output_verification()
@@ -160,7 +162,7 @@ class ClaudeCore:
         return self._verifier
 
     @property
-    def cost_tracker(self):
+    def cost_tracker(self) -> CostAwareness | None:
         if self._cost_tracker is None:
             try:
                 self._cost_tracker = get_cost_awareness()
@@ -213,7 +215,7 @@ class ClaudeCore:
             "ready": True,
         }
 
-    def end_session(self, summary: str | None = None):
+    def end_session(self, summary: str | None = None) -> None:
         """
         Finaliza la sesión actual.
         LLAMAR ESTO AL FINAL DE CADA CONVERSACIÓN.
@@ -269,7 +271,7 @@ class ClaudeCore:
 
         return task
 
-    def complete_task(self, success: bool = True, learned: str | None = None):
+    def complete_task(self, success: bool = True, learned: str | None = None) -> None:
         """
         Completa la tarea actual.
 
@@ -312,7 +314,7 @@ class ClaudeCore:
 
         self.state.active_task = None
 
-    def record_decision(self, decision: str, reason: str, confidence: float = 0.8):
+    def record_decision(self, decision: str, reason: str, confidence: float = 0.8) -> None:
         """
         Registra una decisión tomada.
 
@@ -428,21 +430,21 @@ class ClaudeCore:
             return value
         return default
 
-    def learn_preference(self, key: str, value: Any, evidence: str):
+    def learn_preference(self, key: str, value: Any, evidence: str) -> None:
         """Aprende una preferencia del usuario."""
         if self.preference_model:
             from .intelligence.user_preference_model import PreferenceSource
 
             self.preference_model.set(key, value, PreferenceSource.INFERRED, evidence)
 
-    def observe_user_action(self, action_type: str, data: dict):
+    def observe_user_action(self, action_type: str, data: dict) -> None:
         """Observa una acción del usuario para aprender."""
         if self.preference_model:
             self.preference_model.observe(action_type, data)
 
     # ==================== FEEDBACK DEL USUARIO ====================
 
-    def record_user_feedback(self, feedback_type: str, content: str):
+    def record_user_feedback(self, feedback_type: str, content: str) -> None:
         """
         Registra feedback del usuario.
 
@@ -510,13 +512,13 @@ class ClaudeCore:
             return ConfidenceLevel.LOW
         return ConfidenceLevel.UNCERTAIN
 
-    def _log_event(self, event_type: str, data: dict):
+    def _log_event(self, event_type: str, data: dict) -> None:
         """Registra evento en historial de sesión."""
         self.session_history.append(
             {"event": event_type, "timestamp": datetime.now().isoformat(), "data": data}
         )
 
-    def _save_session_history(self):
+    def _save_session_history(self) -> None:
         """Guarda historial de sesión a disco."""
         history_dir = self.project_root / ".agent" / "memory" / "sessions"
         history_dir.mkdir(parents=True, exist_ok=True)
@@ -581,7 +583,7 @@ def init_session() -> dict:
     return get_claude_core().start_session()
 
 
-def end_session(summary: str | None = None):
+def end_session(summary: str | None = None) -> None:
     """Finaliza sesión de Claude. LLAMAR AL FINAL."""
     get_claude_core().end_session(summary)
 

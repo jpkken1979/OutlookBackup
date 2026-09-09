@@ -20,9 +20,8 @@ from .constants import (
     ANTIGRAVITY_FILES,
     CLAUDE_DIRS,
     ECOSYSTEM_VERSION,
+    INJECTION_RULE_TEMPLATE_EXCLUDES,
     PORTABLE_AGENT_DIRS,
-    ROOT_RULE_FILES,
-    RULES_EXCLUDE,
     SKIP_TREE_NAMES,
     SKIP_TREE_PREFIXES,
 )
@@ -31,6 +30,43 @@ INSTALL_SCHEMA_VERSION = 2
 INSTALL_MANIFEST = Path(".antigravity/install.json")
 _INSTALL_LOCKS: dict[str, threading.RLock] = {}
 _INSTALL_LOCKS_GUARD = threading.Lock()
+
+# Project rules are user-owned documents.  They may be created from the small,
+# curated injection template set, but a reinjection must never replace a
+# project's edited copy or remove it merely because the source bundle changed.
+_USER_OWNED_DOCUMENTS = frozenset(
+    {
+        "RULES.md",
+        "WORKFLOW_RULES.md",
+        ".antigravity/rules.md",
+    }
+)
+_INJECTION_TEMPLATE_EXCLUDES = INJECTION_RULE_TEMPLATE_EXCLUDES | {"CLAUDE.md"}
+
+
+def _is_user_owned_document(relative: str) -> bool:
+    """Return whether *relative* is a project-owned rules document."""
+
+    normalized = relative.replace("\\", "/")
+    return normalized in _USER_OWNED_DOCUMENTS or normalized.startswith(".claude/rules/")
+
+
+def _iter_injection_rule_templates(
+    repo_root: Path,
+) -> Iterator[tuple[Path, Path]]:
+    """Yield only generic external rule templates for the portable bundle.
+
+    The repository's live ``.claude/rules`` directory contains rules specific
+    to OpenAntigravity itself (including pending work and internal memory).  It
+    is not a safe source for arbitrary target projects.  The dedicated template
+    directory is the public injection surface.
+    """
+
+    source_root = repo_root / ".agent" / "templates" / "injection-rules"
+    for source_path, relative in _iter_tree(source_root, Path(".claude") / "rules"):
+        if source_path.name in _INJECTION_TEMPLATE_EXCLUDES:
+            continue
+        yield source_path, relative
 
 
 def _utc_now() -> str:
@@ -116,21 +152,21 @@ def iter_bundle_files(
     yield from _iter_tree(repo_root / ".agent" / "VERSION", Path(".agent/VERSION"))
     yield from _iter_tree(repo_root / "mcp-server", Path("mcp-server"))
 
+    # Hooks and commands are runtime-managed.  Rules are handled below from
+    # the curated external templates, never from this repository's live rules.
     for dirname in CLAUDE_DIRS:
+        if dirname == "rules":
+            continue
         source = repo_root / ".claude" / dirname
-        for source_path, relative in _iter_tree(source, Path(".claude") / dirname):
-            if dirname == "rules" and source_path.name in RULES_EXCLUDE:
-                continue
-            yield source_path, relative
+        yield from _iter_tree(source, Path(".claude") / dirname)
 
+    yield from _iter_injection_rule_templates(repo_root)
     yield from _iter_tree(repo_root / ".context", Path(".context"))
     for filename in ANTIGRAVITY_FILES:
         yield from _iter_tree(
             repo_root / ".antigravity" / filename,
             Path(".antigravity") / filename,
         )
-    for filename in ROOT_RULE_FILES:
-        yield from _iter_tree(repo_root / filename, Path(filename))
     if runtime_root is not None:
         yield from _iter_tree(
             runtime_root,
@@ -170,9 +206,7 @@ class InstallManifestV2:
     managed_files: dict[str, str]
     overlay_files: list[str] = field(default_factory=list)
     clients: list[str] = field(default_factory=list)
-    feature_flags: dict[str, bool] = field(
-        default_factory=lambda: {"mcpBrokerV2": True}
-    )
+    feature_flags: dict[str, bool] = field(default_factory=lambda: {"mcpBrokerV2": True})
     previous_install_id: str | None = None
     backup_dir: str | None = None
 
@@ -208,6 +242,10 @@ def _analyze_index(
         if not io_destination.exists():
             changes["create"].append(relative)
             continue
+        if _is_user_owned_document(relative):
+            if not io_destination.is_file() or _sha256(destination) != expected_hash:
+                changes["preserve"].append(relative)
+            continue
         if not io_destination.is_file() or _sha256(destination) != expected_hash:
             if relative.startswith(".agent/skills-custom/"):
                 changes["preserve"].append(relative)
@@ -216,7 +254,11 @@ def _analyze_index(
             else:
                 changes["update"].append(relative)
     if previous:
-        changes["remove"] = sorted(set(previous.managed_files) - set(index))
+        changes["remove"] = sorted(
+            relative
+            for relative in set(previous.managed_files) - set(index)
+            if not _is_user_owned_document(relative)
+        )
     return {
         "schema_version": INSTALL_SCHEMA_VERSION,
         "bundle_version": ECOSYSTEM_VERSION,
@@ -259,8 +301,7 @@ def _install_index(
         previous = read_install_manifest(target_dir)
         analysis = _analyze_index(index, target_dir)
         actionable = sum(
-            len(analysis["changes"][key])
-            for key in ("create", "update", "repair", "remove")
+            len(analysis["changes"][key]) for key in ("create", "update", "repair", "remove")
         )
         if (
             actionable == 0
@@ -349,14 +390,10 @@ def _install_index(
                 managed_files={
                     relative: file_hash
                     for relative, (_, file_hash) in index.items()
-                    if relative not in overlay_paths
+                    if relative not in overlay_paths and not _is_user_owned_document(relative)
                 },
                 overlay_files=sorted(
-                    {
-                        relative
-                        for relative in index
-                        if relative.startswith(".agent/skills-custom/")
-                    }
+                    {relative for relative in index if relative.startswith(".agent/skills-custom/")}
                 ),
                 clients=sorted(clients or []),
                 feature_flags={"mcpBrokerV2": True},
@@ -463,11 +500,7 @@ def install_from_archive(
                     shutil.copyfileobj(source, output)
 
         runtime_manifest = (
-            extraction_root
-            / ".antigravity"
-            / "runtime"
-            / "current"
-            / "runtime-manifest.json"
+            extraction_root / ".antigravity" / "runtime" / "current" / "runtime-manifest.json"
         )
         if runtime_manifest.is_file():
             from .portable_build import platform_tag
@@ -494,9 +527,7 @@ def rollback(target_dir: Path) -> dict[str, Any]:
         if current is None or not current.backup_dir:
             raise RuntimeError("No recoverable previous installation")
         backup_root = target_dir / current.backup_dir
-        metadata = json.loads(
-            _io_path(backup_root / "rollback.json").read_text(encoding="utf-8")
-        )
+        metadata = json.loads(_io_path(backup_root / "rollback.json").read_text(encoding="utf-8"))
         restored = 0
         removed = 0
         for relative, record in metadata["files"].items():

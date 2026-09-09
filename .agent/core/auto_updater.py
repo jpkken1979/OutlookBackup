@@ -10,6 +10,7 @@ Funcionalidades:
 - Rollback si falla
 """
 
+import argparse
 import json
 import logging
 import shutil
@@ -93,6 +94,8 @@ class AutoUpdater:
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip().split("/")[-1]
         except Exception:
+            # ponytail: best-effort branch detection; falls back to "main" below
+            # regardless of the failure mode (no git, no origin, timeout, etc.).
             pass
 
         return "main"
@@ -177,6 +180,8 @@ class AutoUpdater:
                         update_available = True
                         changes = commits[:10]
         except Exception:
+            # ponytail: git check is best-effort; the block below falls back
+            # to the PyPI check when update_available stays False.
             pass
 
         if not update_available:
@@ -226,7 +231,7 @@ class AutoUpdater:
         logger.info("Backup created at %s", backup_path)
         return str(backup_path)
 
-    def _cleanup_old_backups(self, keep: int = 5):
+    def _cleanup_old_backups(self, keep: int = 5) -> None:
         """Elimina backups antiguos."""
         backups = sorted(
             [d for d in self.backup_dir.iterdir() if d.is_dir()],
@@ -319,7 +324,7 @@ class AutoUpdater:
         agents = list(agents_dir.glob("*/IDENTITY.md"))
         return len(agents) >= 10
 
-    def _rollback(self, backup_path: str):
+    def _rollback(self, backup_path: str) -> None:
         """Restaura desde backup."""
         backup = Path(backup_path)
         if not backup.exists():
@@ -375,7 +380,7 @@ class AutoUpdater:
         return True
 
 
-def _cmd_check(updater: "AutoUpdater", args) -> None:
+def _cmd_check(updater: "AutoUpdater", args: argparse.Namespace) -> None:
     """Imprime el estado de actualización disponible.
 
     Args:
@@ -392,7 +397,7 @@ def _cmd_check(updater: "AutoUpdater", args) -> None:
             print(f"  - {change}")
 
 
-def _cmd_update(updater: "AutoUpdater", args) -> None:
+def _cmd_update(updater: "AutoUpdater", args: argparse.Namespace) -> None:
     """Aplica la actualización e imprime el resultado.
 
     Args:
@@ -406,7 +411,7 @@ def _cmd_update(updater: "AutoUpdater", args) -> None:
         print(f"Backup: {result.backup_path}")
 
 
-def _cmd_backup(updater: "AutoUpdater", args) -> None:
+def _cmd_backup(updater: "AutoUpdater", args: argparse.Namespace) -> None:
     """Crea un backup e imprime la ruta resultante.
 
     Args:
@@ -417,7 +422,7 @@ def _cmd_backup(updater: "AutoUpdater", args) -> None:
     print(f"Backup created: {path}")
 
 
-def _cmd_list(updater: "AutoUpdater", args) -> None:
+def _cmd_list(updater: "AutoUpdater", args: argparse.Namespace) -> None:
     """Lista los backups disponibles.
 
     Args:
@@ -430,7 +435,7 @@ def _cmd_list(updater: "AutoUpdater", args) -> None:
         print(f"  - {backup['name']} (v{backup['version']}) - {backup['created']}")
 
 
-def _cmd_restore(updater: "AutoUpdater", args) -> None:
+def _cmd_restore(updater: "AutoUpdater", args: argparse.Namespace) -> None:
     """Restaura un backup por nombre, terminando el proceso si falla.
 
     Args:
@@ -447,10 +452,8 @@ def _cmd_restore(updater: "AutoUpdater", args) -> None:
         sys.exit(1)
 
 
-def main():
+def main() -> None:
     """CLI para auto-updater."""
-    import argparse
-
     parser = argparse.ArgumentParser(description="Antigravity Auto Updater")
     parser.add_argument(
         "command",

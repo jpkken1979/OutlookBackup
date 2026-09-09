@@ -30,6 +30,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Lock
+from typing import Any
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -111,7 +112,7 @@ class CostTracker:
         self._lock = Lock()
         self._load_records()
 
-    def _load_records(self):
+    def _load_records(self) -> None:
         """Load existing records from storage."""
         if self.storage_path.exists():
             try:
@@ -122,7 +123,7 @@ class CostTracker:
                 logger.warning(f"Could not load cost records: {e}")
                 self.records = []
 
-    def _save_records(self):
+    def _save_records(self) -> None:
         """Save records to storage."""
         try:
             data = {"records": [asdict(r) for r in self.records[-10000:]]}  # Keep last 10k records
@@ -339,7 +340,7 @@ class CostTracker:
             "days_remaining": 30 - (datetime.now().day),
         }
 
-    def clear_old_records(self, days_to_keep: int = 90):
+    def clear_old_records(self, days_to_keep: int = 90) -> None:
         """
         Clear records older than specified days.
 
@@ -359,7 +360,7 @@ class CostTracker:
 
 
 # Convenience decorator for tracking
-def track_usage(agent: str, model: str = "default"):
+def track_usage(agent: str, model: str = "default") -> Callable[[Callable], Callable]:
     """
     Decorator to track function usage.
 
@@ -373,8 +374,8 @@ def track_usage(agent: str, model: str = "default"):
             pass
     """
 
-    def decorator(func):
-        async def wrapper(*args, **kwargs):
+    def decorator(func: Callable) -> Callable:
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
             tracker = CostTracker()
             start_tokens = kwargs.pop("_input_tokens", 1000)
 

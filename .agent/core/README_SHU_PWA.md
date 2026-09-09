@@ -1,5 +1,10 @@
 # ShuMobile PWA Sync Module
 
+> Guía del módulo creada para la entrega 1.0.0 del 2026-06-16. Verificar API,
+> montaje y cobertura contra `shu_pwa_sync.py`,
+> `../../tests/core/test_shu_pwa_sync.py` y el gateway actual; las cifras de la
+> entrega original no son gates perpetuos.
+
 Welcome to the ShuMobile PWA backend synchronization module. This directory contains everything needed to understand, integrate, and maintain the PWA session sync service.
 
 ## Quick Start
@@ -42,7 +47,7 @@ Welcome to the ShuMobile PWA backend synchronization module. This directory cont
   - ~500 lines, 30-minute read
 
 #### For Complete Reference
-- **`SHU_PWA_SYNC.md`** 
+- **`SHU_PWA_SYNC.md`**
   - Full API reference
   - All method signatures
   - Database schema
@@ -290,18 +295,15 @@ OpenAntigravity26.3.30/
 └── DELIVERY_SHUMOBILE_PWA_SYNC.md         ← Executive summary
 ```
 
-## Key Metrics
+## Verification
 
-| Metric | Value |
-|--------|-------|
-| Module Size | 500 LOC |
-| Test Size | 400 LOC, 13 tests |
-| Docs | 2,000+ LOC |
-| Type Hints | 100% |
-| Docstrings | 100% (Google style) |
-| Test Coverage | 100% path coverage |
-| Error Handling | Comprehensive |
-| Logging | Structured (INFO/ERROR/DEBUG) |
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\core\test_shu_pwa_sync.py -q
+```
+
+La cobertura global y sus umbrales pertenecen al workflow canónico. Si se
+necesita cobertura aislada del módulo, medirla en el commit actual y fechar el
+resultado; no reutilizar el “100 %” de la entrega original.
 
 ## Version History
 

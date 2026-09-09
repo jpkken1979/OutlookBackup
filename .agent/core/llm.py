@@ -53,6 +53,8 @@ from pydantic import BaseModel
 
 logger = logging.getLogger("antigravity.llm")
 
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
+
 # Late imports to avoid circular dependencies
 # Clients are imported in _create_client() method when needed
 
@@ -88,7 +90,7 @@ class LLMConfig(BaseModel):
     """
 
     provider: LLMProvider = LLMProvider.ANTHROPIC
-    model: str = "claude-sonnet-4-20250514"
+    model: str = DEFAULT_ANTHROPIC_MODEL
     api_key: str | None = None
     base_url: str | None = None
     max_tokens: int = 4096
@@ -112,14 +114,16 @@ class LLMConfig(BaseModel):
         sobreescribir parametros pasados explicitamente al constructor.
         """
         env_model = os.getenv("ANTIGRAVITY_LLM_MODEL")
-        if env_model and self.model == "claude-sonnet-4-20250514":
+        if env_model and self.model == DEFAULT_ANTHROPIC_MODEL:
             self.model = env_model
         env_max_tokens = os.getenv("ANTIGRAVITY_LLM_MAX_TOKENS")
         if env_max_tokens and self.max_tokens == 4096:
             try:
                 self.max_tokens = int(env_max_tokens)
-            except ValueError:
-                pass
+            except ValueError as e:
+                logger.debug(
+                    "ANTIGRAVITY_LLM_MAX_TOKENS inválido (%r), se ignora: %s", env_max_tokens, e
+                )
         env_thinking = os.getenv("ANTIGRAVITY_LLM_THINKING")
         if env_thinking and self.thinking_level == "off":
             self.thinking_level = env_thinking
@@ -161,6 +165,7 @@ PRICING = {
     # Anthropic
     "claude-opus-4-20250514": {"input": 15.0, "output": 75.0},
     "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
     "claude-3-5-haiku-20241022": {"input": 0.25, "output": 1.25},
     # OpenAI
     "gpt-4o": {"input": 2.5, "output": 10.0},
@@ -611,7 +616,7 @@ try:
         OpenRouterClient,  # noqa: F401
     )
 except ImportError:
-    # En entornos donde los clientes individuales no están disponibles
+    # ponytail: en entornos donde los clientes individuales no están disponibles
     # los tests que los requieran serán saltados por el fixture
     pass
 
@@ -621,7 +626,7 @@ except ImportError:
 # =============================================================================
 
 
-async def main():
+async def main() -> None:
     """Test LLM integration."""
     import argparse
 
@@ -659,7 +664,7 @@ async def main():
         provider=LLMProvider(args.provider),
         model=args.model
         or {
-            "anthropic": "claude-sonnet-4-20250514",
+            "anthropic": DEFAULT_ANTHROPIC_MODEL,
             "openai": "gpt-4o",
             "gemini": "gemini-2.0-flash",
             "ollama": "llama3.1",

@@ -166,7 +166,7 @@ class FederatedLearning:
         self.propagation_threshold = 0.7  # Minimum confidence to propagate
         self._load_data()
 
-    def _load_data(self):
+    def _load_data(self) -> None:
         """Load stored data."""
         data_file = self.storage_path / "federated_data.json"
         if data_file.exists():
@@ -183,7 +183,7 @@ class FederatedLearning:
             except Exception as e:
                 logger.error(f"Error loading federated data: {e}")
 
-    def _save_data(self):
+    def _save_data(self) -> None:
         """Save data to disk."""
         data_file = self.storage_path / "federated_data.json"
         try:
@@ -204,7 +204,7 @@ class FederatedLearning:
         capabilities: list[str],
         specializations: list[str] | None = None,
         tools: list[str] | None = None,
-    ):
+    ) -> None:
         """Register an agent's profile."""
         self.agent_profiles[name] = AgentProfile(
             name=name,
@@ -535,7 +535,7 @@ def get_federated_learning() -> FederatedLearning:
 # Example usage
 if __name__ == "__main__":
 
-    async def demo():
+    async def demo() -> None:
         fl = get_federated_learning()
 
         # Register agents

@@ -173,7 +173,7 @@ class ConsensusProtocol:
         self.consensus_history: list[ConsensusResult] = []
         self.agent_weights: dict[str, dict[str, float]] = {}  # agent -> domain -> weight
 
-    def set_agent_weight(self, agent_id: str, domain: str, weight: float):
+    def set_agent_weight(self, agent_id: str, domain: str, weight: float) -> None:
         """Set expertise weight for an agent in a domain."""
         if agent_id not in self.agent_weights:
             self.agent_weights[agent_id] = {}
@@ -575,7 +575,7 @@ async def reach_consensus(
 # =============================================================================
 
 
-async def main():
+async def main() -> None:
     """CLI entry point."""
     print("Consensus Protocol - Demo")
     print("=" * 40)

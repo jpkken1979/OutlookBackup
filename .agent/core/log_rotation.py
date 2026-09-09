@@ -66,6 +66,8 @@ def rotate_jsonl_if_needed(path: Path, max_lines: int = 2000) -> None:
             try:
                 os.unlink(tmp_path)
             except OSError:
+                # ponytail: best-effort cleanup while already handling another
+                # failure (about to re-raise below) — nothing more to do here.
                 pass
             raise
 

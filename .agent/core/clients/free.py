@@ -36,7 +36,7 @@ class FreeClient(BaseLLMClient):
         super().__init__(config)
         self._client = None
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         """Lazy load g4f async client with optional cookie auth."""
         if self._client is None:
             try:

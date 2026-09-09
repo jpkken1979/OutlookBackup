@@ -10,9 +10,67 @@ comportamiento.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import unicodedata
 from typing import Any
+
+import yaml  # type: ignore[import-untyped]
+
+
+_SEMANTIC_FRONTMATTER_KEYS = ("type", "area", "title")
+
+
+def _stable_whitespace(text: str) -> str:
+    """Normaliza Unicode y whitespace sin depender del sistema operativo."""
+    normalized = unicodedata.normalize("NFKC", text).replace("\r\n", "\n").replace("\r", "\n")
+    return " ".join(normalized.split())
+
+
+def normalize_semantic_content(content: str) -> str:
+    """Devuelve una representación estable del conocimiento de un nodo.
+
+    Los metadatos operativos y mutables (slug, fechas, accesos, versión,
+    relaciones, fuentes y estado) quedan fuera deliberadamente. Así, una copia
+    del mismo conocimiento con CRLF, espacios o procedencia distintos conserva
+    identidad, y ``ingest`` puede fusionar tags/sources sin alterar el hash.
+    """
+    frontmatter: dict[str, Any] = {}
+    body = content
+    match = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n?(.*)", content, re.DOTALL)
+    if match:
+        loaded = yaml.safe_load(match.group(1)) or {}
+        if isinstance(loaded, dict):
+            frontmatter = {
+                key: _stable_whitespace(str(loaded.get(key, "")))
+                for key in _SEMANTIC_FRONTMATTER_KEYS
+            }
+        body = match.group(2)
+
+    payload = {
+        "schema": 1,
+        "frontmatter": frontmatter,
+        "body": _stable_whitespace(body),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def semantic_content_hash(content: str) -> str:
+    """Calcula el SHA-256 de la representación semántica normalizada."""
+    normalized = normalize_semantic_content(content)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def derive_topic_key(area: str, title: str, *, explicit: str = "") -> str:
+    """Normaliza una clave explícita o deriva ``area + title`` de forma estable."""
+    source = explicit.strip() or f"{area} {title}"
+    normalized = unicodedata.normalize("NFKC", source).casefold()
+    normalized = re.sub(r"[_\-\s]+", "-", normalized)
+    normalized = re.sub(r"[^\w-]+", "", normalized, flags=re.UNICODE).strip("-")
+    if normalized:
+        return normalized[:120]
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
 
 
 def _ascii_slug_words(text: str) -> list[str]:

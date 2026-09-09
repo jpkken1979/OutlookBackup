@@ -10,10 +10,14 @@ Visualizar el Brain Network como grafo force-directed y obtener estadísticas de
 | `/graph neighbors <slug>` | `/gn <slug>` | Nodos relacionados directos (1 salto) |
 | `/graph search <tag>` | `/gst <tag>` | Buscar nodos por tag |
 
-## API de referencia (MCP tools)
+## API histórica de referencia
+
+El servidor `antigravity-brain-graph` no forma parte del `.mcp.json` vigente.
+Para datos actuales usa el gateway (`/v1/brain/stats`, `/v1/brain/query` y
+`/v1/brain/node/{slug}`); para la visualización completa abre Brain Graph en Nexus.
 
 ```bash
-# tools disponibles en antigravity-brain-graph:
+# operaciones del adaptador histórico antigravity-brain-graph:
 brain_graph(center_slug?, depth=2)  -> {nodes, edges, tags, areas, totalNodes, totalEdges}
 brain_graph_stats()                 -> {total_nodes, total_connections, typeCounts, topTags, ...}
 brain_graph_neighbors(slug)         -> {neighbors: [{id, title, type, area, tags, importance}]}

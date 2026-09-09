@@ -134,7 +134,10 @@ def run_hook_once(command: str, payload: str) -> tuple[float, int, str]:
     try:
         proc = subprocess.run(
             command,
-            shell=True,
+            # Paridad con Claude Code: los hooks de settings.json (fuente local
+            # confiable) se ejecutan via shell, igual que lo hace el propio
+            # Claude Code; shlex.split romperia operadores de shell.
+            shell=True,  # subprocess-scan: ignore
             cwd=str(PROJECT_ROOT),
             input=payload,
             capture_output=True,

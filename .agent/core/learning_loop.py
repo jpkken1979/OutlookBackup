@@ -153,7 +153,7 @@ class LearningLoop:
         outcome: OutcomeType,
         user_feedback: str | None = None,
         correction: str | None = None,
-    ):
+    ) -> None:
         """
         Registra el resultado de una acción.
 
@@ -186,7 +186,9 @@ class LearningLoop:
         self._save_events()
         self._save_patterns()
 
-    def record_user_correction(self, original: str, corrected: str, context: dict | None = None):
+    def record_user_correction(
+        self, original: str, corrected: str, context: dict | None = None
+    ) -> None:
         """
         Registra cuando el usuario me corrige.
 
@@ -222,7 +224,7 @@ class LearningLoop:
 
     # ==================== APRENDIZAJE ====================
 
-    def _learn_from_correction(self, event: LearningEvent):
+    def _learn_from_correction(self, event: LearningEvent) -> None:
         """Aprende de una corrección del usuario."""
         if not event.correction:
             return
@@ -249,7 +251,7 @@ class LearningLoop:
             )
             self.patterns.append(pattern)
 
-    def _reinforce_success(self, event: LearningEvent):
+    def _reinforce_success(self, event: LearningEvent) -> None:
         """Refuerza un patrón de éxito."""
         similar = self._find_similar_pattern(event.action, PatternType.SUCCESS_PATTERN)
 
@@ -269,7 +271,7 @@ class LearningLoop:
             )
             self.patterns.append(pattern)
 
-    def _learn_from_failure(self, event: LearningEvent):
+    def _learn_from_failure(self, event: LearningEvent) -> None:
         """Aprende de un fallo."""
         similar = self._find_similar_pattern(event.action, PatternType.ERROR_PATTERN)
 
@@ -309,7 +311,7 @@ class LearningLoop:
 
         return None
 
-    def _add_or_update_pattern(self, new_pattern: LearnedPattern):
+    def _add_or_update_pattern(self, new_pattern: LearnedPattern) -> None:
         """Agrega o actualiza un patrón."""
         existing = self._find_similar_pattern(new_pattern.trigger, new_pattern.pattern_type)
 
@@ -506,7 +508,7 @@ class LearningLoop:
             logger.warning("No se pudieron cargar events del learning loop: %s", exc)
             return []
 
-    def _save_events(self):
+    def _save_events(self) -> None:
         """Guarda eventos a disco."""
         events_file = self.learning_path / self.EVENTS_FILE
 
@@ -557,7 +559,7 @@ class LearningLoop:
             logger.warning("No se pudieron cargar patterns del learning loop: %s", exc)
             return []
 
-    def _save_patterns(self):
+    def _save_patterns(self) -> None:
         """Guarda patrones a disco."""
         patterns_file = self.learning_path / self.PATTERNS_FILE
 

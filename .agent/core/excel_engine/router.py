@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from excel_engine.types import Backend, SessionState
+from .types import Backend, SessionState
 
 logger = logging.getLogger(__name__)
 

@@ -98,7 +98,7 @@ class MetricsCollector:
         self._history: list[SystemMetrics] = []
         self._load_state()
 
-    def _load_state(self):
+    def _load_state(self) -> None:
         """Carga estado desde disco."""
         # Cargar métricas de agentes
         agents_file = self.metrics_path / self.AGENTS_FILE
@@ -137,7 +137,7 @@ class MetricsCollector:
             except Exception as e:
                 logger.debug("Error loading metrics data: %s", e)
 
-    def _save_state(self):
+    def _save_state(self) -> None:
         """Guarda estado a disco."""
         # Guardar métricas de agentes
         agents_file = self.metrics_path / self.AGENTS_FILE
@@ -173,7 +173,7 @@ class MetricsCollector:
 
     # ==================== TRACKING ====================
 
-    def track_agent_invocation(self, agent_name: str, success: bool, duration_ms: int):
+    def track_agent_invocation(self, agent_name: str, success: bool, duration_ms: int) -> None:
         """Registra invocación de agente."""
         if agent_name not in self._agent_metrics:
             self._agent_metrics[agent_name] = AgentMetrics(name=agent_name)
@@ -196,7 +196,7 @@ class MetricsCollector:
         total_agents: int = 0,
         memory_entries: int = 0,
         error_count: int = 0,
-    ):
+    ) -> None:
         """Registra estado del sistema."""
         active = sum(1 for m in self._agent_metrics.values() if m.invocations > 0)
 
@@ -213,7 +213,7 @@ class MetricsCollector:
         self._history.append(metrics)
         self._save_state()
 
-    def track_error(self, error_type: str, message: str):
+    def track_error(self, error_type: str, message: str) -> None:
         """Registra un error."""
         errors_file = self.metrics_path / "errors.json"
 
@@ -221,8 +221,8 @@ class MetricsCollector:
         if errors_file.exists():
             try:
                 errors = json.loads(errors_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
+            except (json.JSONDecodeError, OSError) as e:
+                logger.debug("No se pudo leer errors.json, se reinicia el historial: %s", e)
 
         errors.append(
             {"timestamp": datetime.now().isoformat(), "type": error_type, "message": message[:500]}
@@ -348,7 +348,7 @@ def get_metrics_collector(project_root: str = ".") -> MetricsCollector:
     return _collector
 
 
-def track_agent(agent_name: str, success: bool, duration_ms: int):
+def track_agent(agent_name: str, success: bool, duration_ms: int) -> None:
     """Shortcut para tracking de agente."""
     get_metrics_collector().track_agent_invocation(agent_name, success, duration_ms)
 

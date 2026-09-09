@@ -28,11 +28,13 @@ Usage:
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from enum import IntEnum
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("antigravity.redis_message_bus")
@@ -161,6 +163,42 @@ class BusMessage:
 # ============================================================
 # Fallback SQLite (cuando Redis no está disponible)
 # ============================================================
+
+
+def _repo_root() -> Path:
+    """Resuelve la raiz del repo.
+
+    Mismo patron que ``provider_catalog._repo_root`` y ``provider_switch.default_root``:
+    ``ANTIGRAVITY_ROOT`` si esta seteada; si no, infiere desde la ubicacion del modulo
+    (``.agent/core/`` -> raiz dos niveles arriba).
+
+    Returns:
+        Path a la raiz del repo.
+    """
+    env = os.environ.get("ANTIGRAVITY_ROOT")
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parents[2]
+
+
+def default_bus_db_path() -> Path:
+    """Resuelve el path de la DB del bus, anclado a la raiz del repo.
+
+    Antes era ``Path(".antigravity_message_bus.db")`` — relativo al **CWD**, asi que
+    el bus se fragmentaba segun desde donde se lanzara el proceso: un publisher
+    arrancado en la raiz no compartia cola con un subscriber arrancado en ``.agent/``.
+    Quedaron tres copias divergentes en el repo (2707 / 291 / 18 filas al 2026-07-29).
+
+    Returns:
+        Env ``ANTIGRAVITY_BUS_DB`` si esta seteada; si no,
+        ``<repo_root>/.antigravity_message_bus.db``.
+    """
+    override = os.environ.get("ANTIGRAVITY_BUS_DB")
+    if override:
+        return Path(override)
+    return _repo_root() / ".antigravity_message_bus.db"
+
+
 class _SQLiteFallback:
     """
     Fallback usando TelepathyBlackboard + asyncio cuando Redis no está disponible.
@@ -168,9 +206,7 @@ class _SQLiteFallback:
     """
 
     def __init__(self) -> None:
-        from pathlib import Path
-
-        self._db_path = Path(".antigravity_message_bus.db")
+        self._db_path = default_bus_db_path()
         self._subscribers: dict[str, list[asyncio.Queue]] = {}
         self._init_db()
 

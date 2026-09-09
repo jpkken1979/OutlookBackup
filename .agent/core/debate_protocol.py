@@ -582,7 +582,7 @@ def get_debate_protocol() -> DebateProtocol:
 # Example usage
 if __name__ == "__main__":
 
-    async def demo():
+    async def demo() -> None:
         protocol = get_debate_protocol()
 
         # Initiate debate

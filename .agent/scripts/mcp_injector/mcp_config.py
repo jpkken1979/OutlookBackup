@@ -105,6 +105,7 @@ LEGACY_MANAGED_MCP_SERVER_NAMES: frozenset[str] = frozenset(
         "git",
         "chrome-devtools",
         "magic-21st",
+        "serena",
         "sqlite",
         "filesystem",
     }
@@ -776,9 +777,7 @@ def safe_merge_json(file_path: Path, new_servers: dict[str, Any]) -> bool:
         if name == "antigravity" and set(new_servers) == {"antigravity"}:
             existing = current_servers.get(name)
             current_servers[name] = (
-                _merge_broker_entry(existing, new_cfg)
-                if isinstance(existing, dict)
-                else new_cfg
+                _merge_broker_entry(existing, new_cfg) if isinstance(existing, dict) else new_cfg
             )
             continue
         if name in current_servers and isinstance(current_servers[name], dict):
@@ -896,6 +895,75 @@ def safe_merge_vscode_mcp(file_path: Path, new_servers: dict[str, Any]) -> bool:
         config["inputs"] = []
     # Migracion: si un injector previo dejo "mcpServers", quitarlo (VS Code lo ignora).
     config.pop("mcpServers", None)
+    return write_json_file(file_path, config)
+
+
+def safe_merge_opencode_json(file_path: Path, new_servers: dict[str, Any]) -> bool:
+    """Merge the broker into OpenCode's project config without touching user keys."""
+
+    config = read_json_file(file_path)
+    if not isinstance(config, dict):
+        return False
+    current_servers = config.get("mcp")
+    if not isinstance(current_servers, dict):
+        current_servers = {}
+    current_servers, migrated = _migrate_managed_servers(current_servers, new_servers)
+    if migrated:
+        logger.info(
+            "🧹 [OpenCode MCP] Entradas administradas migradas en %s: %s",
+            file_path.name,
+            ", ".join(migrated),
+        )
+
+    for name, server in new_servers.items():
+        if not isinstance(server, dict):
+            continue
+        if isinstance(server.get("url"), str):
+            converted: dict[str, Any] = {
+                "type": "remote",
+                "url": server["url"],
+                "enabled": True,
+            }
+            headers = server.get("headers")
+            if isinstance(headers, dict) and headers:
+                converted["headers"] = headers
+        else:
+            command = server.get("command")
+            if not isinstance(command, str):
+                continue
+            args = server.get("args")
+            converted = {
+                "type": "local",
+                "command": [
+                    command,
+                    *(args if isinstance(args, list) else []),
+                ],
+                "enabled": True,
+            }
+            environment = server.get("env")
+            if isinstance(environment, dict) and environment:
+                converted["environment"] = environment
+
+        existing = current_servers.get(name)
+        if isinstance(existing, dict):
+            preserved = {
+                key: value
+                for key, value in existing.items()
+                if key
+                not in {
+                    "type",
+                    "command",
+                    "environment",
+                    "url",
+                    "headers",
+                    "enabled",
+                }
+            }
+            converted = {**preserved, **converted}
+        current_servers[name] = converted
+
+    config.setdefault("$schema", "https://opencode.ai/config.json")
+    config["mcp"] = current_servers
     return write_json_file(file_path, config)
 
 

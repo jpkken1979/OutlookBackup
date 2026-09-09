@@ -11,6 +11,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .document_envelope import (
+    ConcurrentDocumentChangeError,
+    ManagedBlockError,
+    apply_managed_block_update,
+    preview_managed_block_update,
+)
 from .io_utils import ensure_dir, read_json_file
 
 logger = logging.getLogger(__name__)
@@ -22,6 +28,68 @@ logger = logging.getLogger(__name__)
 ECOSYSTEM_VERSION: str
 """Ecosystem version, read lazily from VERSION file."""
 DEFAULT_GATEWAY_URL = "http://localhost:4747"
+
+# Criterio de conteo: DEBE coincidir con `.agent/scripts/refresh_claude_md.py`,
+# fuente canonica de los bloques AUTO de CLAUDE.md. Si divergen, las reglas de
+# los IDEs contradicen al CLAUDE.md y un agente externo lee numeros distintos
+# segun por donde entre al ecosistema.
+
+
+def _is_agent_dir(path: Path) -> bool:
+    """True si el directorio es un agente real.
+
+    Un agente es un directorio con `IDENTITY.md` (ver
+    `.claude/rules/architecture.md`). Contar por ese archivo excluye solo las
+    carpetas auxiliares (`_docs`, `_archive`, `__pycache__`, `ce-*`) sin
+    mantener blacklists que se desactualizan.
+
+    Args:
+        path: Directorio candidato dentro de `.agent/agents/`.
+
+    Returns:
+        True si contiene `IDENTITY.md`.
+    """
+    return path.is_dir() and (path / "IDENTITY.md").is_file()
+
+
+def _is_skill_dir(path: Path) -> bool:
+    """True si el directorio es un skill real (no `_*` ni `__pycache__`).
+
+    Args:
+        path: Directorio candidato dentro de `.agent/skills/`.
+
+    Returns:
+        False para directorios ocultos o con prefijo `_`.
+    """
+    return path.is_dir() and not path.name.startswith((".", "_"))
+
+
+def _read_mcp_servers(target_dir: Path, repo_root: Path) -> list[str]:
+    """Lee los servers MCP realmente registrados en `.mcp.json`.
+
+    No hardcodear esta lista: desde la consolidacion del broker (2026-07-27) el
+    unico server es `antigravity`, y anunciar los `antigravity-*` granulares
+    manda a los IDEs a invocar servidores que no se levantan.
+
+    Args:
+        target_dir: Proyecto destino de la inyeccion.
+        repo_root: Raiz del ecosistema (fallback).
+
+    Returns:
+        Nombres de los servers registrados; lista vacia si no hay `.mcp.json` legible.
+    """
+    for mcp_path in (target_dir / ".mcp.json", repo_root / ".mcp.json"):
+        if not mcp_path.exists():
+            continue
+        try:
+            cfg = read_json_file(mcp_path)
+        except Exception as exc:  # noqa: BLE001 - config rota no debe abortar la inyeccion
+            logger.warning("[Reglas] .mcp.json ilegible (%s): %s", mcp_path, exc)
+            continue
+        servers = cfg.get("mcpServers")
+        if isinstance(servers, dict) and servers:
+            return sorted(servers)
+    return []
 
 
 def _read_ecosystem_version() -> str:
@@ -75,44 +143,18 @@ def update_markdown_section(
     end_marker: str,
     section: str,
 ) -> bool:
-    """Inserta o reemplaza una seccion delimitada por marcadores."""
-    existing = ""
-    if path.exists():
-        try:
-            existing = path.read_text(encoding="utf-8")
-        except Exception as exc:
-            logger.error(f"❌ [Docs] Error leyendo {path}: {exc}")
-            return False
-
-    # Cuenta pares START/END. Un archivo sano tiene 1. Si tiene >1 (corrupcion por
-    # doble inyeccion o merge manual), hay que purgar TODOS los bloques antiguos
-    # antes de insertar la seccion limpia; de lo contrario .index() solo reemplaza
-    # el primer par y deja los siguientes como bloques fantasma que se acumulan.
-    count_start = existing.count(start_marker)
-    count_end = existing.count(end_marker)
-
-    if count_start >= 1 and count_end >= 1:
-        if count_start > 1 or count_end > 1:
-            # Estado corrupto: eliminar todos los bloques START...END y reconstruir.
-            cleaned = _strip_all_tagged_blocks(existing, start_marker, end_marker)
-            prefix = cleaned.rstrip()
-            new_content = f"{prefix}\n\n{section}\n" if prefix else f"{section}\n"
-        else:
-            start_idx = existing.index(start_marker)
-            end_idx = existing.index(end_marker) + len(end_marker)
-            prefix = existing[:start_idx].rstrip()
-            new_content = f"{prefix}\n\n{section}\n" if prefix else f"{section}\n"
-            if end_idx < len(existing):
-                new_content += existing[end_idx:].lstrip("\n")
-    else:
-        separator = "\n\n---\n\n" if existing.strip() else ""
-        new_content = existing.rstrip() + separator + section + "\n"
-
+    """Insert or replace only the marked section, preserving the document envelope."""
     try:
-        path.write_text(new_content, encoding="utf-8")
+        preview = preview_managed_block_update(
+            path,
+            start_marker,
+            end_marker,
+            section,
+        )
+        apply_managed_block_update(preview)
         return True
-    except Exception as exc:
-        logger.error(f"❌ [Docs] Error escribiendo {path}: {exc}")
+    except (OSError, ManagedBlockError, ConcurrentDocumentChangeError) as exc:
+        logger.error("❌ [Docs] No se pudo actualizar %s: %s", path, exc)
         return False
 
 
@@ -153,20 +195,24 @@ Instalado por Nexus el {datetime.now().strftime("%Y-%m-%d")}.
 
 El estilo de comunicacion de la IA se adapta segun el modo de persona.
 Modos disponibles: `gentleman` (detallado, pedagogico), `neutral` (factual),
-`conciso` (minimalista). Configurar via `ANTIGRAVITY_PERSONA` env var o
-`.antigravity/config.json`. Ver `.claude/rules/persona.md` para detalles.
+`conciso` (minimalista). Configurar el runtime via `ANTIGRAVITY_PERSONA`.
+`personaConfig` en `.antigravity/config.json` es metadata del adaptador y no
+reemplaza la variable de entorno. Ver `.claude/rules/persona.md` para detalles.
 
-### Runtime MCP-first
+### Nexus discovery (MCP-first)
 
-```
-.agent/
-  agents/ skills/ skills-custom/ workflows/
-  scripts/ core/ mcp/ plugins/
-.claude/
-  settings.json hooks/ rules/
-.antigravity/
-  config.json sdk/ ai_manifest.json rules.md
-```
+- Nexus is the shared control plane. Its small, versioned client adapter lives at
+  `.antigravity/nexus-client.json`.
+- Discover the live contract through `GET /v1/nexus/manifest`; authenticate only
+  through the credential reference declared by the adapter. Never copy a token
+  into this document or into generated client configuration.
+- Connect through the single MCP broker named `antigravity`. Start with
+  `antigravity_search`, inspect with `antigravity_describe`, then run the selected
+  agent or skill.
+- Agents and skills remain in Nexus and are loaded on demand. Do not bulk-copy
+  the catalog into this project. An offline bundle is an explicit opt-in.
+- Local and web gateways expose the same adapter contract, so changing transport
+  does not change how the client discovers capabilities.
 
 ### Clientes compatibles
 
@@ -175,17 +221,19 @@ Modos disponibles: `gentleman` (detallado, pedagogico), `neutral` (factual),
 - Windsurf: `.windsurf/mcp.json` + `.windsurfrules`
 - VS Code / Roo / Cline: `.vscode/mcp.json` y `.vscode/cline_mcp_settings.json`
 - Zed: `.zed/settings.json`
-- Cualquier IA/IDE con MCP: `.mcp.json` y `.antigravity/ai_manifest.json`
+- OpenCode: `opencode.json`
+- Cualquier IA/IDE con MCP: `.mcp.json` y `.antigravity/nexus-client.json`
 
 ### SDK
 
 {chr(10).join(sdk_blocks) if sdk_blocks else "_Ningun SDK configurado para este tipo de proyecto._"}
 
-### Memoria
+### Memoria y reglas
 
-- Memoria MCP: `antigravity-memory` (mem0)
+- Memoria MCP: se descubre como conector del broker; no es un servidor separado.
 - Memoria de proyecto: `ESTADO_PROYECTO.md`
-- Reglas compartidas: `.claude/rules/` y `.antigravity/rules.md`
+- Reglas efectivas: manifiesto Nexus, reglas globales editables y reglas locales
+  del proyecto. Las reglas locales tienen precedencia cuando son mas estrictas.
 
 {end}"""
     ok = update_markdown_section(target_dir / "CLAUDE.md", start, end, section)
@@ -202,18 +250,56 @@ def update_agents_md(target_dir: Path) -> bool:
 
 ## Integracion Antigravity
 
-- Runtime local: `.agent/` contiene agentes, skills, workflows, core y servidores MCP.
-- Claude Code: usa `.claude/settings.json` en modo ligero y resuelve capacidades por MCP.
-- Codex: usa `AGENTS.md` del repo y, si el inyector detecta Codex, sincroniza skills curadas, skills propias de Antigravity y comandos portables como `finalize` en `~/.codex/skills`.
-- MiniMax: si detectamos Claude Code o Codex, el inyector puede integrar también las skills oficiales de `MiniMax-AI/skills`.
-- MCP universal: revisa `.mcp.json`, `.cursor/mcp.json`, `.windsurf/mcp.json`, `.vscode/mcp.json` y `.zed/settings.json`.
-- Memoria: `antigravity-memory` (mem0) y la memoria del proyecto en `ESTADO_PROYECTO.md`.
-- Reglas compartidas: `RULES.md`, `WORKFLOW_RULES.md`, `.antigravity/rules.md`.
+- Nexus es el plano de control compartido. Lee
+  `.antigravity/nexus-client.json` y descubre el contrato vigente en
+  `GET /v1/nexus/manifest`.
+- Usa un solo servidor MCP, `antigravity`. Empieza con
+  `antigravity_search`, continua con `antigravity_describe` y ejecuta con
+  `antigravity_run_skill`, `antigravity_run_agent` o `antigravity_call`.
+- Agentes, skills, memoria y conectores permanecen centralizados en Nexus y se
+  cargan bajo demanda. No copies el catalogo completo al proyecto; un bundle
+  offline requiere opt-in explicito.
+- Claude Code, Codex, OpenCode, Cursor, Windsurf, VS Code, Zed, Continue y Gemini
+  usan el mismo adaptador aunque cambie el transporte local/web.
+- Nunca guardes credenciales en archivos generados. Resuelve solo la referencia
+  de credencial declarada por el adaptador.
+- Conserva todo el contenido y reglas del proyecto fuera de los marcadores
+  administrados por Antigravity.
+- Memoria de proyecto: `ESTADO_PROYECTO.md`. Reglas locales:
+  `RULES.md`, `WORKFLOW_RULES.md` y `.antigravity/rules.md`.
 
 {end}"""
     ok = update_markdown_section(target_dir / "AGENTS.md", start, end, section)
     if ok:
         logger.info("✅ [AGENTS.md] Integracion actualizada")
+    return ok
+
+
+def update_gemini_md(target_dir: Path) -> bool:
+    """Add the Gemini-facing ecosystem contract without replacing user rules."""
+
+    start = "<!-- ANTIGRAVITY-GEMINI-START -->"
+    end = "<!-- ANTIGRAVITY-GEMINI-END -->"
+    section = f"""{start}
+
+## Integración Antigravity
+
+Este workspace está conectado al ecosistema Antigravity mediante el broker MCP
+`antigravity` y su adaptador `.antigravity/nexus-client.json`.
+
+1. Descubrí primero la capacidad con `antigravity_search`.
+2. Inspeccioná su contrato con `antigravity_describe`.
+3. Ejecutá con `antigravity_run_skill`, `antigravity_run_agent` o
+   `antigravity_call`.
+
+Los agentes, skills, memoria y conectores permanecen centralizados en Nexus y
+se cargan bajo demanda. No copies el catálogo ni guardes credenciales en este
+archivo. Conservá intacto todo el contenido fuera de estos marcadores.
+
+{end}"""
+    ok = update_markdown_section(target_dir / "GEMINI.md", start, end, section)
+    if ok:
+        logger.info("✅ [Gemini] GEMINI.md actualizado sin reemplazar reglas locales")
     return ok
 
 
@@ -230,7 +316,7 @@ def generate_ide_rules(target_dir: Path, repo_root: Path) -> None:
         agents_dir = repo_root / ".agent" / "agents"
     num_agents = 0
     if agents_dir.exists():
-        num_agents = sum(1 for d in agents_dir.iterdir() if d.is_dir() and d.name != "_deprecated")
+        num_agents = sum(1 for d in agents_dir.iterdir() if _is_agent_dir(d))
 
     # Count skills
     skills_dir = target_dir / ".agent" / "skills"
@@ -238,9 +324,7 @@ def generate_ide_rules(target_dir: Path, repo_root: Path) -> None:
         skills_dir = repo_root / ".agent" / "skills"
     num_skills = 0
     if skills_dir.exists():
-        num_skills = sum(
-            1 for d in skills_dir.iterdir() if d.is_dir() and not d.name.startswith("_")
-        )
+        num_skills = sum(1 for d in skills_dir.iterdir() if _is_skill_dir(d))
 
     # Read gateway URL from config, falling back to default
     gateway_url = DEFAULT_GATEWAY_URL
@@ -256,11 +340,7 @@ def generate_ide_rules(target_dir: Path, repo_root: Path) -> None:
             except Exception:
                 pass
 
-    mcp_servers_list = (
-        "antigravity, antigravity-agents, antigravity-skills, "
-        "antigravity-observations, antigravity-intelligence, "
-        "antigravity-ui, antigravity-memory"
-    )
+    mcp_servers_list = ", ".join(_read_mcp_servers(target_dir, repo_root)) or "(ninguno)"
 
     rules_content = f"""# Antigravity Ecosystem Rules
 
@@ -271,12 +351,27 @@ with {num_agents} active agents and {num_skills} skills.
 
 - Local gateway: `{gateway_url}` (localhost:4747)
 - Active MCP servers: {mcp_servers_list}
+- Client adapter: `.antigravity/nexus-client.json`
+- Live contract: `GET /v1/nexus/manifest`
+- Local and web transports share this versioned discovery contract.
 
 ## Agent Protocol
 
-1. Read `.agent/agents/<name>/SYSTEM_PROMPT.md` before delegating tasks.
-2. Use the MCP server `antigravity-agents` to invoke agents via the gateway.
-3. Use `antigravity-skills` to load modular skills on demand.
+The `antigravity` server is a **broker**: one entry point exposing six meta-tools.
+The granular `antigravity-*` servers no longer exist — do not try to call them.
+
+1. `antigravity_search` — always start here; find the capability by free text.
+2. `antigravity_describe` — inspect the signature/params of what search returned.
+3. `antigravity_run_skill` / `antigravity_run_agent` — execute a skill or an agent.
+4. `antigravity_call` — one-off connectors (brain, mem0, watcher, …).
+5. `antigravity_status` — health of broker and gateway.
+
+Agents, skills, memory and connectors stay in Nexus and are loaded on demand.
+Do not bulk-copy the catalog into this workspace; offline bundles are explicit
+opt-in. Never place a gateway token in generated rules or MCP configuration.
+
+Each agent ships two directive files: `IDENTITY.md` (identity, tier, capabilities —
+parsed by discovery) and `SYSTEM_PROMPT.md` (the executor prompt).
 
 ## Key Directories
 
@@ -302,24 +397,16 @@ with {num_agents} active agents and {num_skills} skills.
     _TAG_END = "<!-- ANTIGRAVITY-RULES-END -->"
     wrapped_content = f"{_TAG_START}\n{rules_content}\n{_TAG_END}"
     for rule_file in rule_files:
-        try:
-            if rule_file.exists():
-                existing = rule_file.read_text(encoding="utf-8")
-                if _TAG_START in existing and _TAG_END in existing:
-                    start_idx = existing.index(_TAG_START)
-                    end_idx = existing.index(_TAG_END) + len(_TAG_END)
-                    new_text = existing[:start_idx] + wrapped_content + existing[end_idx:]
-                else:
-                    new_text = existing + f"\n---\n{wrapped_content}"
-            else:
-                new_text = wrapped_content
-            rule_file.write_text(new_text, encoding="utf-8")
+        if update_markdown_section(
+            rule_file,
+            _TAG_START,
+            _TAG_END,
+            wrapped_content,
+        ):
             logger.info(
                 f"✅ [Reglas] {rule_file.name} generado "
                 f"({num_agents} agentes, {num_skills} skills, gateway={gateway_url})"
             )
-        except Exception as exc:
-            logger.error(f"❌ [Reglas] No se pudo escribir {rule_file.name}: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +423,7 @@ def install_copilot_instructions(target_dir: Path, repo_root: Path) -> bool:
 
     if agents_dir.exists():
         for agent_dir in sorted(agents_dir.iterdir()):
-            if not agent_dir.is_dir() or agent_dir.name == "_deprecated":
+            if not _is_agent_dir(agent_dir):
                 continue
             cfg_path = agent_dir / "agent.json"
             if cfg_path.exists():
@@ -365,6 +452,10 @@ def install_copilot_instructions(target_dir: Path, repo_root: Path) -> bool:
             except Exception:
                 pass
 
+    copilot_servers_list = (
+        ", ".join(f"`{name}`" for name in _read_mcp_servers(target_dir, repo_root)) or "(ninguno)"
+    )
+
     # Build tier sections
     tier_lines: list[str] = []
     for tier_num in sorted(tiers.keys()):
@@ -389,10 +480,18 @@ and a modular MCP runtime. Installed by Nexus on {datetime.now().strftime("%Y-%m
 ## Gateway & MCP Servers
 
 - Local gateway: `{gateway_url}` (port 4747)
-- Core servers: `antigravity`, `antigravity-agents`, `antigravity-skills`,
-  `antigravity-observations`, `antigravity-intelligence`, `antigravity-ui`
-- Memory: `antigravity-memory` (mem0)
-- Dev tools: `context7`, `git`, `filesystem`
+- Registered servers (from `.mcp.json`): {copilot_servers_list}
+- Universal adapter: `.antigravity/nexus-client.json`
+- Live contract: `GET /v1/nexus/manifest`
+- `antigravity` is a **broker**, not one server per capability: everything is
+  reached through six meta-tools (`antigravity_search`, `antigravity_describe`,
+  `antigravity_run_skill`, `antigravity_run_agent`, `antigravity_call`,
+  `antigravity_status`). Memory (mem0) and Brain are connectors of
+  `antigravity_call`, not standalone servers.
+- Agents and skills stay in Nexus and are loaded on demand. Do not bulk-copy
+  the catalog unless the user explicitly requests an offline bundle.
+- Resolve credentials only through the adapter reference; never write a token
+  into this file or generated MCP configuration.
 
 ## Agent Tiers
 {agent_section}
@@ -401,20 +500,19 @@ and a modular MCP runtime. Installed by Nexus on {datetime.now().strftime("%Y-%m
 
 - `.mcp.json` — MCP server config (auto-generated, all IDEs)
 - `.antigravity/config.json` — ecosystem config (gateway, version, policy)
-- `.antigravity/ai_manifest.json` — machine-readable manifest for AI tools
+- `.antigravity/nexus-client.json` — versioned discovery adapter for all clients
 - `.antigravity/rules.md` — project-specific rules
 - `ESTADO_PROYECTO.md` — project memory (read before starting work)
-- `.agent/agents/` — all agents (read `SYSTEM_PROMPT.md` per agent)
+- `.agent/agents/` — all agents (each has `IDENTITY.md` + `SYSTEM_PROMPT.md`)
 - `.agent/skills/` — modular skills library
 
 ## Workflow
 
-1. For complex tasks, delegate to the appropriate agent via MCP `antigravity-agents`.
-2. For skill-based work, use `antigravity-skills` to load the relevant skill.
+1. Find the capability first: `antigravity_search`, then `antigravity_describe`.
+2. Execute with `antigravity_run_agent` (complex tasks) or `antigravity_run_skill`.
 3. Read `ESTADO_PROYECTO.md` before starting any session.
 4. Respect constraints in `.antigravity/rules.md` and `.claude/rules/`.
-<!-- ANTIGRAVITY-END -->
-"""
+<!-- ANTIGRAVITY-END -->"""
 
     github_dir = target_dir / ".github"
     ensure_dir(github_dir)
@@ -422,17 +520,13 @@ and a modular MCP runtime. Installed by Nexus on {datetime.now().strftime("%Y-%m
     _TAG_START = "<!-- ANTIGRAVITY-START -->"
     _TAG_END = "<!-- ANTIGRAVITY-END -->"
     try:
-        if out_path.exists():
-            existing = out_path.read_text(encoding="utf-8")
-            if _TAG_START in existing and _TAG_END in existing:
-                start_idx = existing.index(_TAG_START)
-                end_idx = existing.index(_TAG_END) + len(_TAG_END)
-                final_content = existing[:start_idx] + content + existing[end_idx:]
-            else:
-                final_content = existing + f"\n---\n{content}"
-        else:
-            final_content = content
-        out_path.write_text(final_content, encoding="utf-8")
+        if not update_markdown_section(
+            out_path,
+            _TAG_START,
+            _TAG_END,
+            content,
+        ):
+            return False
         logger.info("✅ [Copilot] .github/copilot-instructions.md generado")
         return True
     except Exception as exc:

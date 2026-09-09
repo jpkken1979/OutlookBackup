@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -43,6 +44,11 @@ _DEFAULT_TTL_SECONDS = 86_400  # 24h
 # Timeout del fetch a /v1/models (segundos). Corto: si el provider no responde,
 # caemos al fallback sin penalizar el switch.
 _FETCH_TIMEOUT_SECONDS = 2.5
+
+# Fuente oficial de catálogo de OpenRouter. ``sort=newest`` hace que el primer
+# modelo sea el más reciente publicado por el proveedor, no una aproximación por
+# nombre/version.
+_OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models?sort=newest"
 
 # Endpoints candidatos de discovery de modelos por provider. Se prueban EN ORDEN y
 # gana el primero que devuelva una lista parseable. No asumimos que el host de
@@ -214,13 +220,37 @@ def _read_cache() -> dict[str, object]:
 
 
 def _write_cache(cache: dict[str, object]) -> None:
-    """Persiste el cache de modelos (crea el directorio padre si falta)."""
+    """Persiste el cache de modelos mediante reemplazo atómico.
+
+    La lectura puede ocurrir desde el gateway, Nexus o el CLI mientras termina un
+    refresh. Escribir primero en el mismo directorio y luego reemplazar evita que
+    un lector vea JSON truncado si el proceso se interrumpe entre ambas operaciones.
+    """
     path = cache_path()
+    temporary_path: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(cache, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary.write(json.dumps(cache, indent=2, ensure_ascii=False) + "\n")
+            temporary.flush()
+            os.fsync(temporary.fileno())
+            temporary_path = Path(temporary.name)
+        os.replace(temporary_path, path)
     except OSError as exc:  # pragma: no cover - IO best-effort
         logger.warning("No se pudo escribir el cache de modelos en %s: %s", path, exc)
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:  # pragma: no cover - cleanup best-effort
+                pass
 
 
 def _ttl_seconds() -> int:
@@ -280,14 +310,18 @@ def _candidate_urls(provider_id: str, base_url: str) -> list[str]:
 
 def _http_get_json(url: str, api_key: str, timeout: float) -> object | None:
     """GET autenticado que devuelve el JSON parseado, o ``None`` ante cualquier fallo."""
+    headers = {
+        "Accept": "application/json",
+        "anthropic-version": "2023-06-01",
+    }
+    # Algunos catálogos públicos (OpenRouter / OpenCode) se pueden consultar sin
+    # key. No enviamos ``Bearer `` vacío porque ciertos upstreams lo rechazan.
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+        headers["x-api-key"] = api_key
     req = urllib.request.Request(  # noqa: S310 - URLs fijas de providers, no input de usuario
         url,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "x-api-key": api_key,
-            "Accept": "application/json",
-            "anthropic-version": "2023-06-01",
-        },
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
@@ -444,6 +478,47 @@ def fetch_remote_models(
     return []
 
 
+def fetch_openrouter_models(
+    api_key: str = "",
+    timeout: float = _FETCH_TIMEOUT_SECONDS,
+) -> list[tuple[str, bool]]:
+    """Lee el catálogo oficial actual de OpenRouter con su clasificación free.
+
+    A diferencia de un ``/v1/models`` genérico, OpenRouter publica el coste real
+    de prompt/completion y permite ordenar por fecha. Conservamos exactamente ese
+    orden para que ``Auto`` elija el modelo más reciente, mientras que el switch
+    de modelos gratuitos se apoya en un dato verificable, no en una suposición.
+
+    Args:
+        api_key: Key opcional de OpenRouter. El catálogo es público, pero se usa
+            si está disponible para instalaciones que lo exijan.
+        timeout: Tiempo máximo de red.
+
+    Returns:
+        Pares ``(model_id, is_free)`` newest-first; lista vacía ante un fallo.
+    """
+    payload = _http_get_json(_OPENROUTER_MODELS_URL, api_key, timeout)
+    raw = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(raw, list):
+        return []
+
+    # Evita usar models.dev como fuente de disponibilidad: aquí solo reutilizamos
+    # su clasificador puro de pricing/id, que no hace I/O ni cambia el catálogo.
+    from core.models_dev import model_is_free
+
+    seen: set[str] = set()
+    out: list[tuple[str, bool]] = []
+    for item in raw:
+        if not isinstance(item, dict) or item.get("status") == "deprecated":
+            continue
+        model_id = item.get("id")
+        if not isinstance(model_id, str) or not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        out.append((model_id, model_is_free(model_id, item)))
+    return out
+
+
 # ── API publica ──────────────────────────────────────────────────────────────
 
 
@@ -519,6 +594,7 @@ def resolve_models(
     api_key: str | None = None,
     family: str = "",
     allow_fetch: bool = True,
+    force_refresh: bool = False,
 ) -> list[str]:
     """Resuelve la lista de modelos de un provider (dinamica, no hardcodeada).
 
@@ -536,6 +612,8 @@ def resolve_models(
         family: Prefijo de familia para filtrar/ordenar.
         allow_fetch: ``False`` para contextos no bloqueantes (overview/UI):
             usa solo cache o estatica, jamas sale a la red.
+        force_refresh: Ignora una entrada fresca del cache. Solo debe usarse en
+            una acción explícita de actualización, nunca en polling de UI.
 
     Returns:
         Ids ordenados newest-first; la lista conocida si no hay nada mejor.
@@ -545,10 +623,20 @@ def resolve_models(
     # 1. Cache fresco compartido (lo escribe cualquiera de las dos cascadas).
     cache = _read_cache()
     entry = cache.get(pid)
-    if isinstance(entry, dict) and _cache_fresh(entry):
+    if not force_refresh and isinstance(entry, dict) and _cache_fresh(entry):
         cached = entry.get("models")
         if isinstance(cached, list) and cached:
-            ids = _display_ids(cached, family)
+            # Los catálogos enriquecidos oficiales guardan ``{id, free}`` en
+            # orden newest-first. Preservamos ese orden en vez de volver a
+            # inferir antigüedad por el nombre (especialmente importante para
+            # OpenRouter, cuyos IDs mezclan familias distintas).
+            if not family and all(
+                isinstance(item, dict) and isinstance(item.get("id"), str) and "free" in item
+                for item in cached
+            ):
+                ids = list(dict.fromkeys(str(item["id"]) for item in cached))
+            else:
+                ids = _display_ids(cached, family)
             if ids:
                 return ids
 
@@ -574,18 +662,39 @@ def resolve_models(
     return _display_ids(list(known_models), family) or list(known_models)
 
 
+def cached_free_model_ids(provider_id: str) -> set[str]:
+    """Devuelve los modelos marcados como gratuitos en el cache enriquecido.
+
+    La lectura es tolerante para seguir aceptando caches antiguos que solo tenían
+    strings. Los sufijos ``:free``/``-free`` se clasifican además en la capa de
+    presentación; aquí se preserva la señal de pricing real persistida al refrescar.
+    """
+    entry = _read_cache().get(provider_id.strip().lower())
+    models = entry.get("models") if isinstance(entry, dict) else None
+    if not isinstance(models, list):
+        return set()
+    return {
+        item["id"]
+        for item in models
+        if isinstance(item, dict)
+        and item.get("free") is True
+        and isinstance(item.get("id"), str)
+        and item["id"]
+    }
+
+
 def write_provider_models_cache(provider_id: str, entries: list[tuple[str, bool]]) -> list[str]:
     """Persiste la lista enriquecida (id + flag free) de un provider en el cache.
 
     Escribe el shape ``{"best", "models": [{"id","free"}], "ts"}`` para ``provider_id``
     haciendo merge sobre el cache compartido (no pisa otros providers). ``best`` = primer
-    modelo free, o el primer id si ninguno es free. Lo consume la capa Rust de Nexus para
-    poblar el dropdown (free-primero) y el badge "free". El shape de ``models`` sigue
+    modelo publicado por la fuente (newest-first), sin favorecer uno pago o gratuito.
+    Lo consume la capa Rust de Nexus para poblar el dropdown y el badge "free". El shape de ``models`` sigue
     siendo releible por ``resolve_models`` (``_normalize_entries`` tolera dicts con ``id``).
 
     Args:
         provider_id: Id del provider (``openrouter``, ``opencode``).
-        entries: Lista ``(model_id, is_free)`` ya ordenada free-primero por el caller.
+        entries: Lista ``(model_id, is_free)`` ya ordenada newest-first por el caller.
 
     Returns:
         Los ids escritos, en el orden recibido.
@@ -593,8 +702,7 @@ def write_provider_models_cache(provider_id: str, entries: list[tuple[str, bool]
     pid = provider_id.strip().lower()
     cache = _read_cache()
     ids = [mid for mid, _ in entries]
-    free_ids = [mid for mid, free in entries if free]
-    best = free_ids[0] if free_ids else (ids[0] if ids else "")
+    best = ids[0] if ids else ""
     cache[pid] = {
         "best": best,
         "models": [{"id": mid, "free": bool(free)} for mid, free in entries],

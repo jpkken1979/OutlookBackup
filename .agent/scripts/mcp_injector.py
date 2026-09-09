@@ -26,7 +26,15 @@ from pathlib import Path
 from typing import Any
 
 from mcp_injector.cli_v2 import is_bundle_command, run as run_bundle_cli
+from mcp_injector.constants import INJECTION_RULE_TEMPLATE_EXCLUDES
 from mcp_injector.io_utils import merge_tree as _canonical_merge_tree
+from mcp_injector.markdown_update import (
+    generate_ide_rules as _canonical_generate_ide_rules,
+    install_copilot_instructions as _canonical_install_copilot_instructions,
+    update_agents_md as _canonical_update_agents_md,
+    update_claude_md as _canonical_update_claude_md,
+    update_gemini_md as _canonical_update_gemini_md,
+)
 
 try:
     from app_intelligence_pipeline import quick_analyze, save_profile, write_app_knowledge
@@ -45,6 +53,7 @@ try:
         update_hooks_only,
         _run_post_inject_hook,
         inspect_installation,
+        build_injection_scope,
         summarize_reinjection_targets,
         build_human_dry_run_summary,
         apply_injection_improvements,
@@ -223,7 +232,6 @@ PORTABLE_AGENT_DIRS = [
 CLAUDE_DIRS = ["hooks", "rules", "commands"]
 # Archivos de .claude/rules/ que NO deben inyectarse en proyectos externos:
 # son específicos de OpenAntigravity (estado del ecosistema, arquitectura interna).
-# La identidad del usuario viaja via user-identity.md en las templates.
 RULES_EXCLUDE: frozenset[str] = frozenset({"AI_MEMORY.md"})
 ANTIGRAVITY_FILES = ["rules.md", "AI_MEMORY_README.md"]
 LEGACY_CLAUDE_DIRS = ["agents", "skills", "memory-engine"]
@@ -1145,32 +1153,10 @@ def update_markdown_section(
     end_marker: str,
     section: str,
 ) -> bool:
-    """Inserta o reemplaza una seccion delimitada por marcadores."""
-    existing = ""
-    if path.exists():
-        try:
-            existing = path.read_text(encoding="utf-8")
-        except Exception as exc:
-            logger.error(f"❌ [Docs] Error leyendo {path}: {exc}")
-            return False
+    """Delegate managed document writes to the byte-preserving implementation."""
+    from mcp_injector.markdown_update import update_markdown_section as _canonical
 
-    if start_marker in existing and end_marker in existing:
-        start_idx = existing.index(start_marker)
-        end_idx = existing.index(end_marker) + len(end_marker)
-        prefix = existing[:start_idx].rstrip()
-        new_content = f"{prefix}\n\n{section}\n" if prefix else f"{section}\n"
-        if end_idx < len(existing):
-            new_content += existing[end_idx:].lstrip("\n")
-    else:
-        separator = "\n\n---\n\n" if existing.strip() else ""
-        new_content = existing.rstrip() + separator + section + "\n"
-
-    try:
-        path.write_text(new_content, encoding="utf-8")
-        return True
-    except Exception as exc:
-        logger.error(f"❌ [Docs] Error escribiendo {path}: {exc}")
-        return False
+    return _canonical(path, start_marker, end_marker, section)
 
 
 def update_claude_md(target_dir: Path, project_type: str) -> bool:
@@ -1210,8 +1196,9 @@ Instalado por Nexus el {datetime.now().strftime("%Y-%m-%d")}.
 
 El estilo de comunicacion de la IA se adapta segun el modo de persona.
 Modos disponibles: `gentleman` (detallado, pedagogico), `neutral` (factual),
-`conciso` (minimalista). Configurar via `ANTIGRAVITY_PERSONA` env var o
-`.antigravity/config.json`. Ver `.claude/rules/persona.md` para detalles.
+`conciso` (minimalista). Configurar el runtime via `ANTIGRAVITY_PERSONA`.
+`personaConfig` en `.antigravity/config.json` es metadata del adaptador y no
+reemplaza la variable de entorno. Ver `.claude/rules/persona.md` para detalles.
 
 ### Runtime MCP-first
 
@@ -1912,24 +1899,16 @@ with {num_agents} active agents and {num_skills} skills.
     _TAG_END = "<!-- ANTIGRAVITY-RULES-END -->"
     wrapped_content = f"{_TAG_START}\n{rules_content}\n{_TAG_END}"
     for rule_file in rule_files:
-        try:
-            if rule_file.exists():
-                existing = rule_file.read_text(encoding="utf-8")
-                if _TAG_START in existing and _TAG_END in existing:
-                    start_idx = existing.index(_TAG_START)
-                    end_idx = existing.index(_TAG_END) + len(_TAG_END)
-                    new_text = existing[:start_idx] + wrapped_content + existing[end_idx:]
-                else:
-                    new_text = existing + f"\n---\n{wrapped_content}"
-            else:
-                new_text = wrapped_content
-            rule_file.write_text(new_text, encoding="utf-8")
+        if update_markdown_section(
+            rule_file,
+            _TAG_START,
+            _TAG_END,
+            wrapped_content,
+        ):
             logger.info(
                 f"✅ [Reglas] {rule_file.name} generado "
                 f"({num_agents} agentes, {num_skills} skills, gateway={gateway_url})"
             )
-        except Exception as exc:
-            logger.error(f"❌ [Reglas] No se pudo escribir {rule_file.name}: {exc}")
 
 
 def install_copilot_instructions(target_dir: Path, repo_root: Path) -> bool:
@@ -2045,6 +2024,15 @@ and a modular MCP runtime. Installed by Nexus on {datetime.now().strftime("%Y-%m
     except Exception as exc:
         logger.error(f"❌ [Copilot] No se pudo escribir copilot-instructions.md: {exc}")
         return False
+
+
+# The monolithic entry point keeps the legacy definitions above for backwards
+# compatible imports. Runtime calls resolve to the canonical byte-preserving
+# package functions so every client receives the same Nexus contract.
+update_claude_md = _canonical_update_claude_md
+update_agents_md = _canonical_update_agents_md
+generate_ide_rules = _canonical_generate_ide_rules
+install_copilot_instructions = _canonical_install_copilot_instructions
 
 
 # Regex: extrae paths de scripts locales (.py/.sh) referenciados en un command de hook.
@@ -2380,14 +2368,11 @@ def parse_markdown_sections(content: str) -> dict[str, str]:
 
 
 def install_gemini_config(target_dir: Path, repo_root: Path) -> bool:
-    """Copia GEMINI.md y genera .gemini/settings.json para Gemini CLI."""
-    # Copy GEMINI.md from .agent/rules/
-    gemini_src = repo_root / ".agent" / "rules" / "GEMINI.md"
-    if gemini_src.exists():
-        if copy_file(gemini_src, target_dir / "GEMINI.md"):
-            logger.info("✅ [Gemini] GEMINI.md copiado al raíz del proyecto")
-    else:
-        logger.warning("⚠️  [Gemini] No se encontró .agent/rules/GEMINI.md — se omite copia")
+    """Add Gemini integration and generate its MCP settings safely."""
+    # GEMINI.md is a project instruction file, not a disposable generated
+    # artifact.  Update only the marked ecosystem block so a target's own
+    # instructions survive reinjection byte-for-byte outside that block.
+    rules_ok = _canonical_update_gemini_md(target_dir)
 
     # Create .gemini/settings.json
     gemini_dir = target_dir / ".gemini"
@@ -2417,7 +2402,7 @@ def install_gemini_config(target_dir: Path, repo_root: Path) -> bool:
             pass
     if write_json_file(settings_path, settings):
         logger.info("✅ [Gemini] .gemini/settings.json generado")
-        return True
+        return rules_ok
     logger.error("❌ [Gemini] Fallo la configuracion de .gemini/settings.json")
     return False
 
@@ -2611,7 +2596,7 @@ def deploy_rules(
         filename = tpl_file.name
 
         # Skip internal documentation
-        if filename == "README.md":
+        if filename in INJECTION_RULE_TEMPLATE_EXCLUDES:
             continue
 
         # Determine destination

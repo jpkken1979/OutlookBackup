@@ -159,7 +159,7 @@ class MemoryReplay:
         self.projects: dict[str, ProjectMemory] = {}
         self._load_all_projects()
 
-    def _load_all_projects(self):
+    def _load_all_projects(self) -> None:
         """Cargar todos los proyectos almacenados."""
         for file in self.storage_path.glob("*.json"):
             try:
@@ -189,7 +189,7 @@ class MemoryReplay:
             updated_at=data.get("updated_at", datetime.now().isoformat()),
         )
 
-    def _save_project(self, project: ProjectMemory):
+    def _save_project(self, project: ProjectMemory) -> None:
         """Guardar proyecto a disco."""
         file_path = self.storage_path / f"{project.project_id}.json"
         file_path.write_text(json.dumps(project.to_dict(), indent=2, ensure_ascii=False))
@@ -272,7 +272,7 @@ class MemoryReplay:
 
         return None
 
-    def add_decision(self, project_id: str = None, decision: Decision = None, **kwargs):
+    def add_decision(self, project_id: str = None, decision: Decision = None, **kwargs) -> None:
         """Agregar decision a un proyecto existente."""
         target_id = self._find_project_id(project_id, kwargs.get("project_name"))
 
@@ -304,7 +304,7 @@ class MemoryReplay:
             return self.projects[target_id].decisions
         return []
 
-    def add_pattern(self, project_id: str = None, pattern: Pattern = None, **kwargs):
+    def add_pattern(self, project_id: str = None, pattern: Pattern = None, **kwargs) -> None:
         """Agregar patron a un proyecto existente."""
         target_id = self._find_project_id(project_id, kwargs.get("project_name"))
 
@@ -335,7 +335,7 @@ class MemoryReplay:
             return self.projects[target_id].patterns
         return []
 
-    def add_error(self, project_id: str, error: ErrorRecord):
+    def add_error(self, project_id: str, error: ErrorRecord) -> None:
         """Agregar error a un proyecto existente."""
         if project_id not in self.projects:
             raise ValueError(f"Proyecto {project_id} no encontrado")
@@ -461,6 +461,8 @@ class MemoryReplay:
             elif days_ago < 90:
                 score += 0.05
         except (ValueError, TypeError):
+            # ponytail: updated_at malformado/ausente — se omite el bonus de
+            # recencia, el resto de los factores del score sigue calculándose.
             pass
 
         # Factor 5: Densidad de conocimiento (0-0.10)

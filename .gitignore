@@ -113,8 +113,6 @@ GEMINI.md
 !.agent/brain/**/*.db
 !.agent/scripts/
 !.agent/scripts/**/*.py
-!.agent/scripts/**/*.ps1
-!.agent/scripts/**/*.sh
 !.agent/mcp/
 !.agent/mcp/**/*.py
 !.agent/core/

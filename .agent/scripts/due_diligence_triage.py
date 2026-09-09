@@ -11,6 +11,8 @@ git. Uso:
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -47,6 +49,22 @@ def detect_family(name: str) -> str | None:
 _SIGNAL_FILES = ("README.md", "CLAUDE.md", "package.json", "pyproject.toml")
 
 
+def find_git_executable() -> str | None:
+    """Locate Git from PATH or its standard Windows installation directories."""
+    discovered = shutil.which("git")
+    if discovered:
+        return discovered
+
+    if os.name != "nt":
+        return None
+
+    candidates = [
+        Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Git" / "cmd" / "git.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Git" / "cmd" / "git.exe",
+    ]
+    return next((str(candidate) for candidate in candidates if candidate.is_file()), None)
+
+
 def has_project_signals(repo_path: Path) -> bool:
     """True si la carpeta tiene al menos un archivo senal de proyecto real."""
     return any((repo_path / filename).exists() for filename in _SIGNAL_FILES)
@@ -75,9 +93,13 @@ def get_last_commit_date(repo_path: Path) -> str | None:
     entre miembros de una misma familia de nombres duplicados que comparten
     el mismo dia de actividad (ej. tras una sincronizacion masiva).
     """
+    git_executable = find_git_executable()
+    if git_executable is None:
+        return None
+
     try:
         result = subprocess.run(
-            ["git", "-C", str(repo_path), "log", "-1", "--format=%cI"],
+            [git_executable, "-C", str(repo_path), "log", "-1", "--format=%cI"],
             capture_output=True,
             text=True,
             timeout=10,

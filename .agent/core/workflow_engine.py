@@ -55,6 +55,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from core.workflow_contracts import GateResult, redact_text, redact_value
+
 logger = logging.getLogger("antigravity.workflow_engine")
 
 
@@ -105,6 +107,7 @@ class EventType(Enum):
     ERROR = "error"
     PAUSED = "paused"
     RESUMED = "resumed"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -165,9 +168,20 @@ class StateGraph:
     Las edges definen la transición entre nodos.
     """
 
-    def __init__(self, name: str, description: str = "") -> None:
+    def __init__(
+        self,
+        name: str,
+        description: str = "",
+        *,
+        version: int = 1,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+            raise ValueError("La versión del grafo debe ser un entero positivo")
         self.name = name
         self.description = description
+        self.version = version
+        self.metadata = metadata or {}
         self._nodes: dict[str, GraphNode] = {}
         self._edges: list[GraphEdge] = []
         self._entry_point: str | None = None
@@ -302,6 +316,8 @@ class StateGraph:
         return {
             "name": self.name,
             "description": self.description,
+            "version": self.version,
+            "metadata": redact_value(self.metadata),
             "entry_point": self._entry_point,
             "finish_points": list(self._finish_points),
             "nodes": [
@@ -339,6 +355,7 @@ class Checkpoint:
     state: dict[str, Any]
     step: int
     status: WorkflowStatus
+    graph_version: int = 1
     events: list[dict[str, Any]] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -349,6 +366,7 @@ class Checkpoint:
         return {
             "workflow_id": self.workflow_id,
             "graph_name": self.graph_name,
+            "graph_version": self.graph_version,
             "current_node": self.current_node,
             "state": self.state,
             "step": self.step,
@@ -422,11 +440,332 @@ class WorkflowEngine:
     # --------------------------------------------------------
     # Ejecución
     # --------------------------------------------------------
+    def _check_idempotent_replay(
+        self, workflow_id: str, graph: StateGraph
+    ) -> dict[str, Any] | None:
+        """Busca un checkpoint existente para reusar via idempotency key.
+
+        Args:
+            workflow_id: Idempotency key provisto por el llamador.
+            graph: Grafo contra el que se ejecutaria el workflow.
+
+        Returns:
+            El resultado cacheado si el workflow_id ya corrio contra el mismo
+            grafo, o None si no hay nada que reusar.
+
+        Raises:
+            ValueError: si el workflow_id existente pertenece a otro grafo.
+        """
+        existing = self._checkpoints.get(workflow_id) or self._load_checkpoint(workflow_id)
+        if existing is None:
+            return None
+        if existing.graph_name != graph.name:
+            raise ValueError("El idempotency key ya pertenece a otro grafo")
+        return self._checkpoint_result(existing, replayed=True)
+
+    @staticmethod
+    def _init_or_resume_checkpoint(
+        wf_id: str,
+        graph: StateGraph,
+        state: dict[str, Any],
+        resume_checkpoint: Checkpoint | None,
+    ) -> tuple[Checkpoint, str | None, int, bool]:
+        """Construye un checkpoint nuevo o retoma uno existente.
+
+        Args:
+            wf_id: Id efectivo del workflow.
+            graph: Grafo resuelto a ejecutar.
+            state: Estado inicial (usado solo si se crea un checkpoint nuevo).
+            resume_checkpoint: Checkpoint a retomar, si el llamado es un resume.
+
+        Returns:
+            Tupla (checkpoint, current_node, step, resuming).
+
+        Raises:
+            ValueError: si el checkpoint a retomar es de otra version del grafo.
+        """
+        if resume_checkpoint is not None:
+            checkpoint = resume_checkpoint
+            if checkpoint.graph_version != graph.version:
+                raise ValueError("La versión del workflow cambió; inicia una ejecución nueva")
+            checkpoint.status = WorkflowStatus.RUNNING
+            checkpoint.error = None
+            return checkpoint, checkpoint.current_node, checkpoint.step, True
+        checkpoint = Checkpoint(
+            workflow_id=wf_id,
+            graph_name=graph.name,
+            graph_version=graph.version,
+            current_node=graph._entry_point or "",
+            state=state,
+            step=0,
+            status=WorkflowStatus.RUNNING,
+        )
+        return checkpoint, graph._entry_point, 0, False
+
+    async def _maybe_pause_before_node(
+        self,
+        node: GraphNode,
+        checkpoint: Checkpoint,
+        state: dict[str, Any],
+        wf_id: str,
+        graph: StateGraph,
+        current_node: str,
+    ) -> dict[str, Any] | None:
+        """Pausa el workflow antes de un nodo human-in-the-loop, si corresponde.
+
+        No pausa si ya hay human_input disponible (viene de `resume()`).
+
+        Returns:
+            El resultado del checkpoint si se pauso, o None para continuar.
+        """
+        has_human_input = checkpoint.human_input is not None or "__human_input__" in state
+        if not (node.interrupt_before and not has_human_input):
+            return None
+        checkpoint.status = WorkflowStatus.PAUSED
+        checkpoint.current_node = current_node
+        await self._emit(
+            WorkflowEvent(
+                event_type=EventType.PAUSED,
+                workflow_id=wf_id,
+                node=current_node,
+                data={
+                    "reason": "interrupt_before",
+                    "state_keys": sorted(state),
+                    "verdict": self._state_verdict(state),
+                    "next_action": self._state_next_action(state),
+                    "graph_version": graph.version,
+                },
+            )
+        )
+        self._save_checkpoint(checkpoint)
+        return self._checkpoint_result(checkpoint)
+
+    async def _run_node_step(
+        self,
+        node: GraphNode,
+        state: dict[str, Any],
+        checkpoint: Checkpoint,
+        wf_id: str,
+        current_node: str,
+        step: int,
+        graph: StateGraph,
+    ) -> tuple[dict[str, Any], int]:
+        """Ejecuta un nodo, emite sus eventos y guarda el checkpoint resultante.
+
+        Returns:
+            Tupla (nuevo_state, nuevo_step).
+        """
+        step += 1
+        await self._emit(
+            WorkflowEvent(
+                event_type=EventType.NODE_START,
+                workflow_id=wf_id,
+                node=current_node,
+                data={"step": step, "graph_version": graph.version},
+            )
+        )
+
+        node_start = time.time()
+
+        # Inyectar human_input si existe
+        if checkpoint.human_input:
+            state["__human_input__"] = checkpoint.human_input
+            checkpoint.human_input = None
+
+        state = await self._execute_node(node, state)
+        state.pop("__human_input__", None)
+        state = redact_value(state)
+        node_duration = time.time() - node_start
+        self._metrics["nodes_executed"] += 1
+
+        await self._emit(
+            WorkflowEvent(
+                event_type=EventType.NODE_END,
+                workflow_id=wf_id,
+                node=current_node,
+                data={
+                    "step": step,
+                    "duration": node_duration,
+                    "verdict": self._state_verdict(state),
+                    "graph_version": graph.version,
+                },
+            )
+        )
+
+        checkpoint.current_node = current_node
+        checkpoint.state = state
+        checkpoint.step = step
+        checkpoint.updated_at = time.time()
+        self._save_checkpoint(checkpoint)
+
+        await self._emit(
+            WorkflowEvent(
+                event_type=EventType.CHECKPOINT,
+                workflow_id=wf_id,
+                node=current_node,
+                data={"step": step, "graph_version": graph.version},
+            )
+        )
+        return state, step
+
+    async def _advance_to_next_node(
+        self,
+        graph: StateGraph,
+        current_node: str,
+        state: dict[str, Any],
+        wf_id: str,
+    ) -> str:
+        """Resuelve y emite la transicion hacia el proximo nodo del grafo.
+
+        Returns:
+            El id del proximo nodo, o END si el nodo actual no tiene sucesores.
+        """
+        edges = self._outgoing_edges_or_end(graph, current_node)
+        if not edges:
+            return END
+        next_node = await self._resolve_next(edges, state)
+        await self._emit(
+            WorkflowEvent(
+                event_type=EventType.EDGE_TRAVERSED,
+                workflow_id=wf_id,
+                node=current_node,
+                data={"next": next_node, "graph_version": graph.version},
+            )
+        )
+        return next_node
+
+    async def _finalize_workflow_success(
+        self,
+        checkpoint: Checkpoint,
+        wf_id: str,
+        graph: StateGraph,
+        state: dict[str, Any],
+        step: int,
+        start_time: float,
+    ) -> dict[str, Any]:
+        """Marca el workflow como completado, emite el evento final y persiste."""
+        duration = time.time() - start_time
+        checkpoint.status = WorkflowStatus.COMPLETED
+        checkpoint.updated_at = time.time()
+        self._metrics["workflows_completed"] += 1
+        self._metrics["total_execution_time"] += duration
+
+        await self._emit(
+            WorkflowEvent(
+                event_type=EventType.WORKFLOW_END,
+                workflow_id=wf_id,
+                data={
+                    "status": "completed",
+                    "steps": step,
+                    "duration": duration,
+                    "verdict": self._state_verdict(state),
+                    "graph_version": graph.version,
+                },
+            )
+        )
+        state.pop("__human_input__", None)
+        checkpoint.state = state
+        self._save_checkpoint(checkpoint)
+
+        return {
+            "workflow_id": wf_id,
+            "status": "completed",
+            "current_node": checkpoint.current_node,
+            "final_state": state,
+            "steps": step,
+            "duration_seconds": round(duration, 3),
+            "graph": graph.name,
+        }
+
+    async def _record_workflow_failure(
+        self,
+        exc: Exception,
+        checkpoint: Checkpoint,
+        wf_id: str,
+        current_node: str | None,
+        step: int,
+        start_time: float,
+        graph: StateGraph,
+    ) -> None:
+        """Registra el fallo del workflow: checkpoint, metricas, evento y log."""
+        duration = time.time() - start_time
+        checkpoint.status = WorkflowStatus.FAILED
+        checkpoint.error = redact_text(str(exc))
+        checkpoint.updated_at = time.time()
+        self._save_checkpoint(checkpoint)
+        self._metrics["workflows_failed"] += 1
+        self._metrics["total_execution_time"] += duration
+
+        await self._emit(
+            WorkflowEvent(
+                event_type=EventType.ERROR,
+                workflow_id=wf_id,
+                node=current_node,
+                data={
+                    "error": redact_text(str(exc)),
+                    "step": step,
+                    "graph_version": graph.version,
+                },
+            )
+        )
+        self._save_checkpoint(checkpoint)
+
+        logger.error("Workflow '%s' fallido en paso %d: %s", wf_id, step, exc)
+
+    async def _run_workflow_loop(
+        self,
+        graph: StateGraph,
+        checkpoint: Checkpoint,
+        wf_id: str,
+        state: dict[str, Any],
+        current_node: str | None,
+        step: int,
+        start_time: float,
+    ) -> dict[str, Any]:
+        """Corre el bucle principal del workflow hasta terminar, pausar o fallar.
+
+        Encapsula el manejo de errores: si un nodo lanza, se registra el fallo
+        (checkpoint, metricas, evento) antes de volver a lanzar la excepcion.
+        """
+        try:
+            while current_node and current_node != END and step < MAX_STEPS:
+                if checkpoint.status == WorkflowStatus.CANCELLED:
+                    return self._checkpoint_result(checkpoint)
+                node = graph._nodes.get(current_node)
+                if node is None:
+                    raise RuntimeError(f"Nodo '{current_node}' no encontrado")
+
+                paused_result = await self._maybe_pause_before_node(
+                    node, checkpoint, state, wf_id, graph, current_node
+                )
+                if paused_result is not None:
+                    return paused_result
+
+                state, step = await self._run_node_step(
+                    node, state, checkpoint, wf_id, current_node, step, graph
+                )
+                current_node = await self._advance_to_next_node(graph, current_node, state, wf_id)
+
+            if step >= MAX_STEPS:
+                raise RuntimeError(f"Workflow excedió {MAX_STEPS} pasos (posible loop infinito)")
+
+            return await self._finalize_workflow_success(
+                checkpoint, wf_id, graph, state, step, start_time
+            )
+
+        except Exception as e:
+            await self._record_workflow_failure(
+                e, checkpoint, wf_id, current_node, step, start_time, graph
+            )
+            raise
+
     async def execute(
         self,
         graph: StateGraph | str,
         initial_state: dict[str, Any] | None = None,
         workflow_id: str | None = None,
+        *,
+        _resume_checkpoint: Checkpoint | None = None,
     ) -> dict[str, Any]:
         """
         Ejecuta un workflow completo.
@@ -442,184 +781,35 @@ class WorkflowEngine:
         graph = self._resolve_graph(graph)
 
         wf_id = workflow_id or f"wf-{uuid.uuid4().hex[:12]}"
+        if _resume_checkpoint is None and workflow_id:
+            replay = self._check_idempotent_replay(workflow_id, graph)
+            if replay is not None:
+                return replay
+
         state = dict(initial_state or {})
         start_time = time.time()
 
-        # Crear checkpoint inicial
-        checkpoint = Checkpoint(
-            workflow_id=wf_id,
-            graph_name=graph.name,
-            current_node=graph._entry_point or "",
-            state=state,
-            step=0,
-            status=WorkflowStatus.RUNNING,
+        checkpoint, current_node, step, resuming = self._init_or_resume_checkpoint(
+            wf_id, graph, state, _resume_checkpoint
         )
         self._checkpoints[wf_id] = checkpoint
-        self._metrics["workflows_started"] += 1
-
-        await self._emit(
-            WorkflowEvent(
-                event_type=EventType.WORKFLOW_START,
-                workflow_id=wf_id,
-                data={"graph": graph.name, "initial_state_keys": list(state.keys())},
-            )
-        )
-
-        current_node = graph._entry_point
-        step = 0
-
-        try:
-            while current_node and current_node != END and step < MAX_STEPS:
-                node = graph._nodes.get(current_node)
-                if node is None:
-                    raise RuntimeError(f"Nodo '{current_node}' no encontrado")
-
-                # Human-in-the-loop: pausar si interrupt_before
-                # No pausar si ya hay human_input (viene de resume())
-                has_human_input = checkpoint.human_input is not None or "__human_input__" in state
-                if node.interrupt_before and not has_human_input:
-                    checkpoint.status = WorkflowStatus.PAUSED
-                    checkpoint.current_node = current_node
-                    self._save_checkpoint(checkpoint)
-                    await self._emit(
-                        WorkflowEvent(
-                            event_type=EventType.PAUSED,
-                            workflow_id=wf_id,
-                            node=current_node,
-                            data={"reason": "interrupt_before", "state": state},
-                        )
-                    )
-                    return {
-                        "workflow_id": wf_id,
-                        "status": "paused",
-                        "current_node": current_node,
-                        "state": state,
-                        "step": step,
-                        "message": f"Pausado antes de '{current_node}'. Usa resume() con human_input.",
-                    }
-
-                # Ejecutar nodo
-                step += 1
-                await self._emit(
-                    WorkflowEvent(
-                        event_type=EventType.NODE_START,
-                        workflow_id=wf_id,
-                        node=current_node,
-                        data={"step": step},
-                    )
-                )
-
-                node_start = time.time()
-
-                # Inyectar human_input si existe
-                if checkpoint.human_input:
-                    state["__human_input__"] = checkpoint.human_input
-                    checkpoint.human_input = None
-
-                state = await self._execute_node(node, state)
-                node_duration = time.time() - node_start
-                self._metrics["nodes_executed"] += 1
-
-                await self._emit(
-                    WorkflowEvent(
-                        event_type=EventType.NODE_END,
-                        workflow_id=wf_id,
-                        node=current_node,
-                        data={"step": step, "duration": node_duration},
-                    )
-                )
-
-                # Checkpoint
-                checkpoint.current_node = current_node
-                checkpoint.state = state
-                checkpoint.step = step
-                checkpoint.updated_at = time.time()
-                self._save_checkpoint(checkpoint)
-
-                await self._emit(
-                    WorkflowEvent(
-                        event_type=EventType.CHECKPOINT,
-                        workflow_id=wf_id,
-                        node=current_node,
-                        data={"step": step},
-                    )
-                )
-
-                # Determinar siguiente nodo
-                edges = self._outgoing_edges_or_end(graph, current_node)
-                if not edges:
-                    current_node = END
-                    continue
-
-                # Resolver siguiente nodo
-                next_node = await self._resolve_next(edges, state)
-
-                await self._emit(
-                    WorkflowEvent(
-                        event_type=EventType.EDGE_TRAVERSED,
-                        workflow_id=wf_id,
-                        node=current_node,
-                        data={"next": next_node},
-                    )
-                )
-
-                current_node = next_node
-
-            if step >= MAX_STEPS:
-                raise RuntimeError(f"Workflow excedió {MAX_STEPS} pasos (posible loop infinito)")
-
-            # Completado
-            duration = time.time() - start_time
-            checkpoint.status = WorkflowStatus.COMPLETED
-            checkpoint.updated_at = time.time()
-            self._save_checkpoint(checkpoint)
-            self._metrics["workflows_completed"] += 1
-            self._metrics["total_execution_time"] += duration
-
+        if not resuming:
+            self._metrics["workflows_started"] += 1
             await self._emit(
                 WorkflowEvent(
-                    event_type=EventType.WORKFLOW_END,
+                    event_type=EventType.WORKFLOW_START,
                     workflow_id=wf_id,
                     data={
-                        "status": "completed",
-                        "steps": step,
-                        "duration": duration,
+                        "graph": graph.name,
+                        "graph_version": graph.version,
+                        "initial_state_keys": list(state.keys()),
                     },
                 )
             )
 
-            # Limpiar __human_input__ del estado final
-            state.pop("__human_input__", None)
-
-            return {
-                "workflow_id": wf_id,
-                "status": "completed",
-                "final_state": state,
-                "steps": step,
-                "duration_seconds": round(duration, 3),
-                "graph": graph.name,
-            }
-
-        except Exception as e:
-            duration = time.time() - start_time
-            checkpoint.status = WorkflowStatus.FAILED
-            checkpoint.error = str(e)
-            checkpoint.updated_at = time.time()
-            self._save_checkpoint(checkpoint)
-            self._metrics["workflows_failed"] += 1
-            self._metrics["total_execution_time"] += duration
-
-            await self._emit(
-                WorkflowEvent(
-                    event_type=EventType.ERROR,
-                    workflow_id=wf_id,
-                    node=current_node,
-                    data={"error": str(e), "step": step},
-                )
-            )
-
-            logger.error("Workflow '%s' fallido en paso %d: %s", wf_id, step, e)
-            raise
+        return await self._run_workflow_loop(
+            graph, checkpoint, wf_id, state, current_node, step, start_time
+        )
 
     def _resolve_graph(self, graph: StateGraph | str) -> StateGraph:
         """Resuelve y valida el grafo a ejecutar.
@@ -647,6 +837,48 @@ class WorkflowEngine:
             raise ValueError(f"Grafo inválido: {'; '.join(errors)}")
 
         return graph
+
+    @staticmethod
+    def _state_verdict(state: dict[str, Any]) -> str | None:
+        payload = state.get("gate_result")
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return GateResult.from_dict(payload).verdict.value
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _state_next_action(state: dict[str, Any]) -> str | None:
+        payload = state.get("gate_result")
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return GateResult.from_dict(payload).next_action
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _checkpoint_result(
+        checkpoint: Checkpoint,
+        *,
+        replayed: bool = False,
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "workflow_id": checkpoint.workflow_id,
+            "status": checkpoint.status.value,
+            "current_node": checkpoint.current_node,
+            "state": redact_value(checkpoint.state),
+            "steps": checkpoint.step,
+            "graph": checkpoint.graph_name,
+            "graph_version": checkpoint.graph_version,
+            "replayed": replayed,
+        }
+        if checkpoint.status == WorkflowStatus.COMPLETED:
+            result["final_state"] = result["state"]
+        if checkpoint.error:
+            result["error"] = redact_text(checkpoint.error)
+        return result
 
     def _outgoing_edges_or_end(self, graph: StateGraph, current_node: str) -> list[GraphEdge]:
         """Obtiene las edges salientes de un nodo para determinar el siguiente.
@@ -693,26 +925,28 @@ class WorkflowEngine:
         if graph is None:
             raise ValueError(f"Grafo '{checkpoint.graph_name}' no registrado")
 
-        # Inyectar human_input en el estado para que el nodo lo reciba
-        resumed_state = dict(checkpoint.state)
-        if human_input:
-            resumed_state["__human_input__"] = human_input
-        checkpoint.human_input = human_input
+        checkpoint.human_input = redact_value(human_input or {})
         checkpoint.status = WorkflowStatus.RUNNING
+        checkpoint.updated_at = time.time()
 
         await self._emit(
             WorkflowEvent(
                 event_type=EventType.RESUMED,
                 workflow_id=workflow_id,
                 node=checkpoint.current_node,
-                data={"human_input_keys": list((human_input or {}).keys())},
+                data={
+                    "human_input_keys": list((human_input or {}).keys()),
+                    "graph_version": graph.version,
+                },
             )
         )
+        self._save_checkpoint(checkpoint)
 
         return await self.execute(
             graph,
-            initial_state=resumed_state,
+            initial_state=dict(checkpoint.state),
             workflow_id=workflow_id,
+            _resume_checkpoint=checkpoint,
         )
 
     # --------------------------------------------------------
@@ -782,6 +1016,7 @@ class WorkflowEngine:
 
     async def _emit(self, event: WorkflowEvent) -> None:
         """Emite un evento a todos los listeners y al bus."""
+        event.data = redact_value(event.data)
         # Almacenar en checkpoint
         checkpoint = self._checkpoints.get(event.workflow_id)
         if checkpoint:
@@ -818,10 +1053,13 @@ class WorkflowEngine:
             file_path = self._checkpoint_dir / f"{checkpoint.workflow_id}.json"
             data = checkpoint.to_dict()
             data["events"] = checkpoint.events[-50:]  # Últimos 50 eventos
-            file_path.write_text(
+            data["human_input"] = redact_value(checkpoint.human_input)
+            temporary = file_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+            temporary.write_text(
                 json.dumps(data, indent=2, default=str),
                 encoding="utf-8",
             )
+            temporary.replace(file_path)
         except Exception as e:
             logger.debug("Error guardando checkpoint: %s", e)
 
@@ -835,6 +1073,7 @@ class WorkflowEngine:
             checkpoint = Checkpoint(
                 workflow_id=data["workflow_id"],
                 graph_name=data["graph_name"],
+                graph_version=data.get("graph_version", 1),
                 current_node=data["current_node"],
                 state=data["state"],
                 step=data["step"],
@@ -843,6 +1082,7 @@ class WorkflowEngine:
                 created_at=data.get("created_at", 0),
                 updated_at=data.get("updated_at", 0),
                 error=data.get("error"),
+                human_input=data.get("human_input"),
             )
             self._checkpoints[workflow_id] = checkpoint
             return checkpoint
@@ -884,8 +1124,10 @@ class WorkflowEngine:
             try:
                 ws = WorkflowStatus(status)
                 workflows = [w for w in workflows if w.status == ws]
-            except ValueError:
-                pass
+            except ValueError as e:
+                logger.warning(
+                    "Filtro status=%r inválido, se listan todos los workflows: %s", status, e
+                )
 
         workflows.sort(key=lambda w: w.updated_at, reverse=True)
         return [w.to_dict() for w in workflows[:limit]]
@@ -894,11 +1136,26 @@ class WorkflowEngine:
         """Cancela un workflow en ejecución o pausado."""
         cp = self._checkpoints.get(workflow_id)
         if cp is None:
+            cp = self._load_checkpoint(workflow_id)
+        if cp is None:
             return False
+        if cp.status == WorkflowStatus.CANCELLED:
+            return True
         if cp.status in (WorkflowStatus.COMPLETED, WorkflowStatus.FAILED):
             return False
         cp.status = WorkflowStatus.CANCELLED
         cp.updated_at = time.time()
+        cp.events.append(
+            WorkflowEvent(
+                event_type=EventType.CANCELLED,
+                workflow_id=workflow_id,
+                node=cp.current_node,
+                data={
+                    "graph_version": cp.graph_version,
+                    "verdict": self._state_verdict(cp.state),
+                },
+            ).to_dict()
+        )
         self._save_checkpoint(cp)
         return True
 
@@ -1025,5 +1282,9 @@ def get_workflow_engine(bus: Any = None) -> WorkflowEngine:
         _engine_instance = WorkflowEngine(bus=bus)
         # Registrar workflows pre-definidos
         _engine_instance.register_graph(build_review_workflow())
+        from core.quality_gate_workflows import build_quality_gate_graphs
+
+        for graph in build_quality_gate_graphs():
+            _engine_instance.register_graph(graph)
         logger.info("WorkflowEngine inicializado con workflows pre-definidos")
     return _engine_instance

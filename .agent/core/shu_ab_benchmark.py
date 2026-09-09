@@ -1,7 +1,7 @@
 import csv
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import IntEnum
 from pathlib import Path
 
@@ -64,6 +64,14 @@ class BenchmarkData(BaseModel):
             raise ValueError("quality must be in [1, 10]")
         return v
 
+    @field_validator("timestamp")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        """Normalize persisted legacy timestamps to timezone-aware UTC."""
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
     def model_dump_json(self, **kwargs) -> str:
         """Override to ensure ISO format for timestamp."""
         d = self.model_dump(**kwargs)
@@ -118,7 +126,7 @@ class ShuABBenchmark:
             success=success,
             errors=errors_count,
             quality=quality_score,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
         )
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -140,7 +148,7 @@ class ShuABBenchmark:
         if not self.benchmarks_file.exists():
             return []
 
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(UTC) - timedelta(days=days)
         benchmarks = []
 
         try:

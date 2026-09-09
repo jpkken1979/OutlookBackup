@@ -101,7 +101,7 @@ class OfflineMode:
 
         self._load_state()
 
-    def _load_state(self):
+    def _load_state(self) -> None:
         """Cargar estado persistido"""
         # Cargar cache index
         if self.cache_index_file.exists():
@@ -109,18 +109,18 @@ class OfflineMode:
                 data = json.loads(self.cache_index_file.read_text(encoding="utf-8"))
                 for key, item in data.items():
                     self._response_cache[key] = CachedResponse(**item)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo cargar cache_index.json: %s", e)
 
         # Cargar queue
         if self.queue_file.exists():
             try:
                 data = json.loads(self.queue_file.read_text(encoding="utf-8"))
                 self._task_queue = [QueuedTask(**item) for item in data]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo cargar task_queue.json: %s", e)
 
-    def _save_state(self):
+    def _save_state(self) -> None:
         """Guardar estado"""
         # Guardar cache index
         cache_data = {
@@ -176,6 +176,8 @@ class OfflineMode:
                 if result == 0:
                     successful += 1
             except OSError:
+                # ponytail: connection failure IS the expected signal here —
+                # it just means this endpoint counts as unreachable below.
                 pass
 
         self._last_check = now
@@ -245,7 +247,7 @@ class OfflineMode:
 
     def cache_llm_response(
         self, prompt: str, response: str, model: str = "unknown", ttl_hours: int = 24
-    ):
+    ) -> None:
         """Cachear respuesta de LLM"""
         prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:32]
 
@@ -371,7 +373,7 @@ class OfflineMode:
             "results": results,
         }
 
-    def register_handler(self, task_type: str, handler: Callable):
+    def register_handler(self, task_type: str, handler: Callable) -> None:
         """Registrar handler para tipo de tarea"""
         self._offline_handlers[task_type] = handler
 
@@ -396,7 +398,8 @@ class OfflineMode:
                 self.cache_llm_response(prompt, response)
                 return {"response": response, "source": "online", "status": status.value}
             except Exception:
-                # Fallback si falla
+                # ponytail: online_func falló — cae al bloque offline de abajo,
+                # que es el fallback intencional de este método.
                 pass
 
         # Modo offline
@@ -404,8 +407,8 @@ class OfflineMode:
             try:
                 response = offline_func(prompt)
                 return {"response": response, "source": "offline_fallback", "status": status.value}
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("offline_func también falló, sin respuesta disponible: %s", e)
 
         # Sin opciones
         return {
@@ -429,7 +432,7 @@ class OfflineMode:
             "capabilities": [c.value for c in self.get_available_capabilities()],
         }
 
-    def clear_cache(self):
+    def clear_cache(self) -> None:
         """Limpiar cache"""
         with self._lock:
             self._response_cache.clear()
@@ -438,7 +441,7 @@ class OfflineMode:
                 f.unlink()
             self._save_state()
 
-    def clear_queue(self):
+    def clear_queue(self) -> None:
         """Limpiar cola de tareas"""
         with self._lock:
             self._task_queue.clear()
@@ -463,11 +466,13 @@ def get_offline_mode() -> OfflineMode:
 
 
 # Decorador para funciones con fallback offline
-def with_offline_fallback(cache_ttl: int = 24, queue_on_fail: bool = True):
+def with_offline_fallback(
+    cache_ttl: int = 24, queue_on_fail: bool = True
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorador para agregar soporte offline a funciones"""
 
-    def decorator(func):
-        def wrapper(*args, **kwargs):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             om = get_offline_mode()
 
             # Crear key para cache

@@ -616,7 +616,7 @@ def get_active_reflection(level: ReflectionLevel = ReflectionLevel.STANDARD) -> 
 # =============================================================================
 
 
-async def demo():
+async def demo() -> None:
     """Demonstrate active reflection."""
     reflection = ActiveReflection(
         level=ReflectionLevel.STANDARD,

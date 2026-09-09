@@ -10,6 +10,7 @@ Permite que los agentes:
 """
 
 import json
+import logging
 import os
 import random
 from dataclasses import dataclass, field
@@ -17,6 +18,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class EvolutionStrategy(Enum):
@@ -121,31 +124,31 @@ class AgentEvolution:
 
         self._load_state()
 
-    def _load_state(self):
+    def _load_state(self) -> None:
         """Cargar estado persistido"""
         if self.genomes_file.exists():
             try:
                 data = json.loads(self.genomes_file.read_text(encoding="utf-8"))
                 for agent_id, genome_data in data.items():
                     self.genomes[agent_id] = AgentGenome(**genome_data)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo cargar genomes_file: %s", e)
 
         if self.metrics_file.exists():
             try:
                 data = json.loads(self.metrics_file.read_text(encoding="utf-8"))
                 self.metrics = [PerformanceMetric(**m) for m in data[-1000:]]  # Últimas 1000
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo cargar metrics_file: %s", e)
 
         if self.history_file.exists():
             try:
                 data = json.loads(self.history_file.read_text(encoding="utf-8"))
                 self.history = [EvolutionEvent(**e) for e in data[-500:]]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo cargar history_file: %s", e)
 
-    def _save_state(self):
+    def _save_state(self) -> None:
         """Guardar estado"""
         # Guardar genomes
         genomes_data = {
@@ -210,7 +213,7 @@ class AgentEvolution:
         quality_score: float,
         user_feedback: str | None = None,
         context: dict | None = None,
-    ):
+    ) -> None:
         """Registrar rendimiento de un agente"""
         metric = PerformanceMetric(
             agent_id=agent_id,
@@ -240,7 +243,7 @@ class AgentEvolution:
         self._update_fitness(agent_id)
         self._save_state()
 
-    def _update_fitness(self, agent_id: str):
+    def _update_fitness(self, agent_id: str) -> None:
         """Actualizar fitness score basado en métricas recientes"""
         genome = self.genomes[agent_id]
 
@@ -326,7 +329,7 @@ class AgentEvolution:
 
         return new_genome
 
-    def adapt(self, agent_id: str, feedback: str, context: dict[str, Any]):
+    def adapt(self, agent_id: str, feedback: str, context: dict[str, Any]) -> None:
         """Adaptar agente basándose en feedback"""
         genome = self.get_or_create_genome(agent_id)
 
@@ -445,7 +448,7 @@ class AgentEvolution:
 
         return optimal
 
-    def _record_event(self, event_type: str, agent_id: str, details: dict):
+    def _record_event(self, event_type: str, agent_id: str, details: dict) -> None:
         """Registrar evento de evolución"""
         event = EvolutionEvent(event_type=event_type, agent_id=agent_id, details=details)
         self.history.append(event)

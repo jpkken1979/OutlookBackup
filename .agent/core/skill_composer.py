@@ -19,8 +19,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 # SkillRegistry will be imported lazily to avoid circular dependencies
+if TYPE_CHECKING:
+    from skill_registry import SkillRegistry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -179,7 +182,7 @@ class SkillComposer:
         self.skill_executors: dict[str, Callable] = {}  # Skill name -> executor
         self._registry = None  # Lazy-loaded
 
-    def _get_registry(self):
+    def _get_registry(self) -> "SkillRegistry | None":
         """Get or initialize SkillRegistry lazily."""
         if self._registry is None:
             if not self.skills_path.exists():
@@ -217,7 +220,7 @@ class SkillComposer:
         return self._registry if self._registry is not False else None
 
     @property
-    def registry(self):
+    def registry(self) -> "SkillRegistry | None":
         """Get SkillRegistry instance (lazy-loaded)."""
         return self._get_registry()
 
@@ -255,7 +258,7 @@ class SkillComposer:
 
         return result
 
-    def register_executor(self, skill_name: str, executor: Callable):
+    def register_executor(self, skill_name: str, executor: Callable) -> None:
         """Register an executor function for a skill."""
         self.skill_executors[skill_name] = executor
 
@@ -680,11 +683,11 @@ def get_skill_composer(skills_path: Path | None = None) -> SkillComposer:
 # Example usage
 if __name__ == "__main__":
 
-    async def demo():
+    async def demo() -> None:
         composer = get_skill_composer()
 
         # Register mock executors
-        def mock_executor(input_data, context):
+        def mock_executor(input_data: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
             return {"success": True, "output": {"processed": True}}
 
         composer.register_executor("testing-patterns", mock_executor)

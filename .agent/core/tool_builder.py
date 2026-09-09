@@ -1187,9 +1187,10 @@ def handle_{tool.name}({param_list}) -> dict:
     Returns:
         Resultado de la operación.
     \"\"\"
-    # TODO: implementar lógica de {tool.name}
+    # Scaffold deliberado: implementa y prueba esta integración antes de activarla.
     return {{
-        "status": "ok",
+        "status": "not_implemented",
+        "error": "Tool handler scaffold requires implementation",
         "tool": "{tool.name}",
         "params": locals(),
     }}
@@ -1247,13 +1248,12 @@ def main() -> None:
     """Entry point del agente."""
     logger.info("Agent %s started", "{config.id}")
 
-    # TODO: integrar con el orchestrator del ecosistema
-    # Por ahora expone la interfaz de tools
+    # Diagnóstico del scaffold; no afirma que los handlers estén operativos.
     print(json.dumps({{
         "agent": "{config.id}",
         "name": "{config.name}",
         "tools": {[t.name for t in config.tools]},
-        "status": "ready",
+        "status": "scaffold",
     }}, indent=2))
 
 

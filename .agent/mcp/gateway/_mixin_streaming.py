@@ -158,6 +158,41 @@ def _ip_is_blocked(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str |
     return None
 
 
+async def _resolve_and_check_dns(hostname: str) -> None:
+    """Resuelve un hostname via DNS y valida cada IP resultante contra SSRF.
+
+    Extraido de ``_validate_upstream_url`` para bajar su complejidad ciclomatica;
+    el orden de evaluacion (resolver, chequear vacio, iterar IP por IP) queda
+    identico al original — solo se movio de lugar, no se reordeno.
+
+    Args:
+        hostname: Nombre de host ya en minusculas; se asume que NO es una IP
+            literal (ese caso lo maneja el caller antes de llamar aca).
+
+    Raises:
+        ValueError: si el host no resuelve, la resolucion trae una IP
+            invalida, o alguna IP resultante esta bloqueada.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await loop.getaddrinfo(hostname, None)
+    except OSError:
+        raise ValueError("baseUrl: host no resoluble")
+    if not infos:
+        raise ValueError("baseUrl: host no resoluble")
+    for info in infos:
+        # info[4] es el sockaddr; [0] la IP. IPv6 puede traer scope (fe80::1%eth0).
+        ip_str = str(info[4][0]).split("%")[0]
+        try:
+            addr = ipaddress.ip_address(ip_str)
+        except ValueError:
+            # Una IP no parseable es sospechosa: fail-closed.
+            raise ValueError("baseUrl: resolucion DNS invalida")
+        err = _ip_is_blocked(addr)
+        if err:
+            raise ValueError(err)
+
+
 async def _validate_upstream_url(url: str) -> str:
     """Valida la baseUrl de un upstream LLM para prevenir SSRF.
 
@@ -216,25 +251,7 @@ async def _validate_upstream_url(url: str) -> str:
         return url
 
     # Caso 2: el host es un nombre — resolver TODAS sus IPs y validarlas.
-    loop = asyncio.get_running_loop()
-    try:
-        infos = await loop.getaddrinfo(hostname, None)
-    except OSError:
-        raise ValueError("baseUrl: host no resoluble")
-    if not infos:
-        raise ValueError("baseUrl: host no resoluble")
-    for info in infos:
-        # info[4] es el sockaddr; [0] la IP. IPv6 puede traer scope (fe80::1%eth0).
-        ip_str = str(info[4][0]).split("%")[0]
-        try:
-            addr = ipaddress.ip_address(ip_str)
-        except ValueError:
-            # Una IP no parseable es sospechosa: fail-closed.
-            raise ValueError("baseUrl: resolucion DNS invalida")
-        err = _ip_is_blocked(addr)
-        if err:
-            raise ValueError(err)
-
+    await _resolve_and_check_dns(hostname)
     return url
 
 

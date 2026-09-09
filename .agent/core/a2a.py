@@ -561,13 +561,13 @@ class AgentMessageBus:
         self._message_queue: asyncio.Queue = asyncio.Queue()
         self._running = False
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the message bus processor."""
         self._running = True
         asyncio.create_task(self._process_queue())
         logger.info("AgentMessageBus started")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop the message bus."""
         self._running = False
         logger.info("AgentMessageBus stopped")
@@ -708,7 +708,7 @@ class AgentMessageBus:
                 except Exception as e:
                     logger.warning(f"Wildcard callback error: {e}")
 
-    async def _process_queue(self):
+    async def _process_queue(self) -> None:
         """Process queued messages."""
         while self._running:
             try:

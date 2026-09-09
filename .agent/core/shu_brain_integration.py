@@ -21,7 +21,7 @@ def _resolve_brain_dir() -> Path:
 
 
 class ShuBrainIntegrator:
-    def __init__(self, brain_dir=None, app_id=_APP_ID):
+    def __init__(self, brain_dir: str | Path | None = None, app_id: str = _APP_ID):
         self._brain_dir = Path(brain_dir) if brain_dir is not None else _resolve_brain_dir()
         self._app_id = app_id
         self._brain: Any = None

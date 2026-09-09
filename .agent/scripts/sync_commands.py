@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import shutil
 import sys
 import time
@@ -82,6 +83,7 @@ def _wants_all_commands(ide: str) -> bool:
     """
     return bool(IDE_CONFIGS.get(ide, {}).get("all_commands"))
 
+
 # Comandos críticos para sincronizar (los más importantes)
 CRITICAL_COMMANDS: list[str] = [
     "jp.md",
@@ -92,7 +94,6 @@ CRITICAL_COMMANDS: list[str] = [
     "recall.md",
     "session-summary.md",
     "sdd.md",
-    "finalize.md",
     "git-pushing.md",
     "search.md",
     "findings.md",
@@ -109,13 +110,47 @@ CRITICAL_SKILLS: list[str] = [
     "jpread",
     "autonomous-executor",
     "brain-network",
+    "source-command-finalize",
+    "finalize",
 ]
+
+
+def _has_canonical_command_skill(source_dir: Path, command_name: str) -> bool:
+    """Return whether a versioned custom skill owns this command name.
+
+    A hand-maintained skill is richer than the generated command adapter. Exporting
+    both gives Codex two catalog entries for the same workflow and lets a later sync
+    overwrite the canonical contract.
+    """
+    repo_root = source_dir.parent.parent
+    return (repo_root / ".agent" / "skills-custom" / command_name / "SKILL.md").is_file()
+
+
+def _source_skill_dirs(source_skills_dir: Path) -> list[Path]:
+    """Return canonical and custom versioned repo skill directories."""
+    return [
+        source_skills_dir,
+        source_skills_dir.parent / "skills-custom",
+    ]
+
+
+def _should_sync_auxiliary_files(
+    selected_skills: set[str] | None,
+    selected_commands: set[str] | None,
+) -> bool:
+    """Only sync shared auxiliary files during an unfiltered full sync."""
+    return selected_skills is None and selected_commands is None
 
 
 def _build_command_skill_markdown(command_name: str, command_content: str) -> str:
     """Convierte un slash command en una skill portable para IDEs sin slash parser."""
     title = command_name.replace("-", " ").strip() or command_name
+    safe_name = re.sub(r"[^a-z0-9]+", "-", command_name.lower()).strip("-")
     return (
+        "---\n"
+        f"name: antigravity-cmd-{safe_name}\n"
+        f'description: "Ejecuta el comando /{command_name} del ecosistema Antigravity."\n'
+        "---\n\n"
         f"# {title}\n\n"
         f"Skill generada desde .claude/commands/{command_name}.md para IDEs sin slash commands.\n\n"
         "Usa esta skill cuando el usuario pida el comando exacto o un flujo equivalente.\n\n"
@@ -129,6 +164,7 @@ def _export_commands_as_skills(
     source_dir: Path,
     target_skills_dir: Path,
     dry_run: bool = False,
+    include_names: set[str] | None = None,
 ) -> dict[str, int]:
     """Exporta slash commands como skills para IDEs sin soporte nativo de comandos."""
     synced = 0
@@ -140,11 +176,22 @@ def _export_commands_as_skills(
 
     sync_all = _wants_all_commands(ide)
     for cmd_file in source_dir.glob("*.md"):
+        if include_names is not None and cmd_file.stem not in include_names:
+            skipped += 1
+            continue
         if not sync_all and cmd_file.name not in CRITICAL_COMMANDS:
             skipped += 1
             continue
 
         command_name = cmd_file.stem
+        if _has_canonical_command_skill(source_dir, command_name):
+            logger.info(
+                "↷ Skip command adapter (%s): canonical skill '%s' exists",
+                ide,
+                command_name,
+            )
+            skipped += 1
+            continue
         skill_dir_name = f"antigravity-cmd-{command_name}"
         skill_dir = target_skills_dir / skill_dir_name
         skill_file = skill_dir / "SKILL.md"
@@ -186,6 +233,7 @@ def sync_commands_to_ide(
     ide: str,
     source_dir: Path,
     dry_run: bool = False,
+    include_names: set[str] | None = None,
 ) -> dict[str, int]:
     """Sincroniza commands a un IDE específico.
 
@@ -218,6 +266,7 @@ def sync_commands_to_ide(
             source_dir,
             resolved_skills_dir,
             dry_run=dry_run,
+            include_names=include_names,
         )
 
     # Resolver path
@@ -237,6 +286,9 @@ def sync_commands_to_ide(
     # Sincronizar commands
     sync_all = _wants_all_commands(ide)
     for cmd_file in source_dir.glob("*.md"):
+        if include_names is not None and cmd_file.stem not in include_names:
+            skipped += 1
+            continue
         if not sync_all and cmd_file.name not in CRITICAL_COMMANDS:
             skipped += 1
             continue
@@ -263,6 +315,7 @@ def sync_skills_to_ide(
     ide: str,
     source_skills_dir: Path,
     dry_run: bool = False,
+    include_names: set[str] | None = None,
 ) -> dict[str, int]:
     """Sincroniza skills a un IDE específico.
 
@@ -293,10 +346,7 @@ def sync_skills_to_ide(
     # Los skills viven en `.agent/`, no en `.claude/`: hasta 2026-07-26 este
     # source apuntaba a `.claude/skills`, un directorio que no existe, asi que
     # sync_skills_to_ide nunca copio un solo skill real a ningun IDE.
-    skill_dirs = [source_skills_dir]
-    custom_dir = source_skills_dir.parent / "skills-custom"
-    if custom_dir != source_skills_dir:
-        skill_dirs.append(custom_dir)
+    skill_dirs = _source_skill_dirs(source_skills_dir)
 
     for skill_dir in skill_dirs:
         if not skill_dir.exists():
@@ -304,6 +354,10 @@ def sync_skills_to_ide(
 
         for skill_path in skill_dir.iterdir():
             if not skill_path.is_dir():
+                continue
+
+            if include_names is not None and skill_path.name not in include_names:
+                skipped += 1
                 continue
 
             # Los skills base (`.agent/skills/`, 800+) NO se copian: se consumen
@@ -445,6 +499,20 @@ def main() -> int:
         action="store_true",
         help="Solo sincronizar commands (no skills)",
     )
+    parser.add_argument(
+        "--skill",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Sincronizar solo este skill (repetible)",
+    )
+    parser.add_argument(
+        "--command",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Sincronizar solo este command, sin extension (repetible)",
+    )
     args = parser.parse_args()
 
     # Paths
@@ -470,22 +538,37 @@ def main() -> int:
         logger.info("[DRY RUN MODE]")
 
     total = {"synced": 0, "skipped": 0, "failed": 0}
+    selected_skills = set(args.skill) or None
+    selected_commands = set(args.command) or None
 
     for ide in ides:
         logger.info("\n=== Sincronizando %s ===", ide)
 
         if not args.skills_only:
-            result = sync_commands_to_ide(ide, commands_dir, args.dry_run)
+            result = sync_commands_to_ide(
+                ide,
+                commands_dir,
+                args.dry_run,
+                include_names=selected_commands,
+            )
             for k, v in result.items():
                 total[k] += v
 
         if not args.commands_only:
-            result = sync_skills_to_ide(ide, skills_dir, args.dry_run)
+            result = sync_skills_to_ide(
+                ide,
+                skills_dir,
+                args.dry_run,
+                include_names=selected_skills,
+            )
             for k, v in result.items():
                 total[k] += v
 
         # Sync .cursorrules para Cursor
-        if cursorrules.exists():
+        if cursorrules.exists() and _should_sync_auxiliary_files(
+            selected_skills,
+            selected_commands,
+        ):
             sync_cursorrules(ide, cursorrules, args.dry_run)
 
     logger.info("\n=== Resumen ===")

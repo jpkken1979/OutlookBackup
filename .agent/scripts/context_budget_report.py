@@ -38,6 +38,13 @@ def _load_mcp_injector():
 mcp_injector = _load_mcp_injector()
 
 
+def _configure_stdout() -> None:
+    """Make CLI help and JSON output independent from the Windows code page."""
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def publish_metric_to_estado(
     estado_path: Path,
     report: dict[str, object],
@@ -101,6 +108,7 @@ def _render_estado_metric_block(
 
 
 async def _main() -> int:
+    _configure_stdout()
     parser = argparse.ArgumentParser(description="Mide ahorro de contexto/tokens aproximados.")
     parser.add_argument("task", help="Tarea usada para construir el contexto.")
     parser.add_argument(

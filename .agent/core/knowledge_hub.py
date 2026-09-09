@@ -144,7 +144,7 @@ class KnowledgeHub:
         self._lock = asyncio.Lock()
         self._load_from_disk()
 
-    def _load_from_disk(self):
+    def _load_from_disk(self) -> None:
         """Load knowledge from persistent storage."""
         knowledge_file = self.storage_path / "knowledge.json"
         if knowledge_file.exists():
@@ -159,7 +159,7 @@ class KnowledgeHub:
             except Exception as e:
                 logger.error(f"Error loading knowledge: {e}")
 
-    def _save_to_disk(self):
+    def _save_to_disk(self) -> None:
         """Save knowledge to persistent storage."""
         knowledge_file = self.storage_path / "knowledge.json"
         try:
@@ -172,7 +172,7 @@ class KnowledgeHub:
         except Exception as e:
             logger.error(f"Error saving knowledge: {e}")
 
-    def _index_entry(self, entry: KnowledgeEntry):
+    def _index_entry(self, entry: KnowledgeEntry) -> None:
         """Index an entry for fast lookup."""
         # Tag index
         for tag in entry.tags:
@@ -488,7 +488,7 @@ def get_knowledge_hub(storage_path: Path | None = None) -> KnowledgeHub:
 # Example usage
 if __name__ == "__main__":
 
-    async def demo():
+    async def demo() -> None:
         hub = get_knowledge_hub()
 
         # Contribute knowledge

@@ -269,7 +269,7 @@ class DynamicTeamOrchestrator:
         self._initialize_default_agents()
         logger.info("DynamicTeamOrchestrator initialized")
 
-    def _initialize_default_agents(self):
+    def _initialize_default_agents(self) -> None:
         """Initialize default agent capabilities."""
         default_agents = [
             AgentCapability(
@@ -330,7 +330,7 @@ class DynamicTeamOrchestrator:
         hash_input = f"{prefix}{datetime.now().isoformat()}"
         return f"{prefix}_{hashlib.md5(hash_input.encode(), usedforsecurity=False).hexdigest()[:8]}"
 
-    def register_agent(self, capability: AgentCapability):
+    def register_agent(self, capability: AgentCapability) -> None:
         """Register an agent's capabilities."""
         self.KNOWN_AGENTS[capability.agent_name] = capability
 
@@ -343,7 +343,7 @@ class DynamicTeamOrchestrator:
 
         logger.debug(f"Registered agent: {capability.agent_name}")
 
-    def register_executor(self, agent_name: str, executor: Callable):
+    def register_executor(self, agent_name: str, executor: Callable) -> None:
         """Register an executor function for an agent."""
         self._agent_executors[agent_name] = executor
 
@@ -749,7 +749,7 @@ def get_team_orchestrator(storage_path: Path | None = None) -> DynamicTeamOrches
 # =============================================================================
 
 
-async def demo():
+async def demo() -> None:
     """Demonstrate dynamic team orchestration."""
     orchestrator = DynamicTeamOrchestrator()
 

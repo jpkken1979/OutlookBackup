@@ -51,6 +51,13 @@ MAX_TAGS_PER_NODE = 12
 MIN_CONTENT_CHARS = 300
 CONTEXT_MAX_CHARS = 3500
 CONTENT_SCAN_CHARS = 5000  # Cantidad de chars iniciales para detectar tags
+BRAIN_NODE_TO_REPO_PREFIX = "../../../"
+
+_MARKDOWN_INLINE_LINK_RE = re.compile(
+    r"(?P<prefix>!?\[[^\]]*\]\()"
+    r"(?P<target><[^>]+>|[^\s)]+)"
+    r"(?P<suffix>(?:\s+[\"'][^\"']*[\"'])?\))"
+)
 
 # Whitelist de patterns (glob) — relativos a REPO_ROOT
 WHITELIST_PATTERNS: list[str] = [
@@ -493,6 +500,50 @@ def _compute_sha(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
 
+def _rewrite_local_markdown_links(body: str, source_path: Path) -> str:
+    """Reescribe links locales para que sigan resolviendo dentro del Brain.
+
+    El crawler copia un preview del documento a ``.agent/brain/{concepts,sessions}``.
+    Un link relativo válido en ``docs/`` deja de apuntar al mismo destino desde esa
+    nueva ubicación. Sólo se reescriben targets existentes dentro del repositorio;
+    URLs, anchors, placeholders y referencias ausentes se preservan literalmente.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        wrapped_target = match.group("target")
+        angled = wrapped_target.startswith("<") and wrapped_target.endswith(">")
+        target = wrapped_target[1:-1] if angled else wrapped_target
+
+        if (
+            not target
+            or target.startswith(("#", "/", "\\", "~"))
+            or re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target)
+            or any(char in target for char in "{}$*|")
+        ):
+            return match.group(0)
+
+        path_part, separator, fragment = target.partition("#")
+        path_part, query_separator, query = path_part.partition("?")
+        candidate = (source_path.parent / path_part).resolve()
+        try:
+            repo_relative = candidate.relative_to(REPO_ROOT.resolve())
+        except ValueError:
+            return match.group(0)
+        if not candidate.exists():
+            return match.group(0)
+
+        rewritten = f"{BRAIN_NODE_TO_REPO_PREFIX}{repo_relative.as_posix()}"
+        if query_separator:
+            rewritten += f"?{query}"
+        if separator:
+            rewritten += f"#{fragment}"
+        if angled:
+            rewritten = f"<{rewritten}>"
+        return f"{match.group('prefix')}{rewritten}{match.group('suffix')}"
+
+    return _MARKDOWN_INLINE_LINK_RE.sub(replace, body)
+
+
 def _parse_source_notes(source_notes: str) -> dict[str, str]:
     """Parsea el campo source_notes a un dict.
 
@@ -632,7 +683,8 @@ def scan_file(abs_path: Path) -> ScanResult | None:
     node_type = _infer_node_type(filename)
     sha256 = _compute_sha(raw)
 
-    context = f"Archivo: {rel_path}\n\n{body[:CONTEXT_MAX_CHARS]}"
+    body_preview = _rewrite_local_markdown_links(body[:CONTEXT_MAX_CHARS], abs_path)
+    context = f"Archivo: {rel_path}\n\n{body_preview}"
 
     return ScanResult(
         rel_path=rel_path,
@@ -675,6 +727,48 @@ def build_existing_index(brain: Brain) -> dict[str, tuple[str, str]]:
             existing[rel] = (node.slug, sha)
 
     return existing
+
+
+def repair_crawler_node_links(brain: Brain, *, apply: bool) -> tuple[int, int]:
+    """Repara links locales en nodos ya generados por este crawler.
+
+    Los nodos antiguos copiaban literalmente links relativos a la fuente. Este
+    pase vuelve a resolverlos desde ``sources[0]`` y sólo escribe nodos cuyo
+    contexto realmente cambia. No depende de la whitelist actual porque también
+    debe poder reparar fuentes que fueron válidas en una versión anterior.
+
+    Returns:
+        Tupla ``(scanned, changed)``.
+    """
+    scanned = 0
+    changed = 0
+    for node_path in brain._all_node_files():  # type: ignore[attr-defined]
+        try:
+            content = node_path.read_text(encoding="utf-8")
+            node = BrainNode.from_frontmatter(content, node_path)
+        except (ValueError, OSError):
+            continue
+        if node.app_origin != APP_ORIGIN or not node.sources:
+            continue
+        source_rel = node.sources[0]
+        if not _is_safe_relative_repo_path(source_rel):
+            continue
+        source_path = (REPO_ROOT / source_rel).resolve()
+        try:
+            source_path.relative_to(REPO_ROOT.resolve())
+        except ValueError:
+            continue
+        scanned += 1
+        # Trabajar sobre el Markdown completo. El preview de una fuente puede
+        # contener headings ``##`` propios; BrainNode los interpreta como
+        # secciones, por lo que reserializar sólo ``node.context`` perdería texto.
+        rewritten = _rewrite_local_markdown_links(content, source_path)
+        if rewritten == content:
+            continue
+        changed += 1
+        if apply:
+            node_path.write_text(rewritten, encoding="utf-8")
+    return scanned, changed
 
 
 def _is_safe_relative_repo_path(path_str: str) -> bool:
@@ -828,6 +922,11 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Saltar la pasada de cleanup que archiva nodos huerfanos.",
     )
+    parser.add_argument(
+        "--repair-links",
+        action="store_true",
+        help="Reparar links relativos de nodos existentes y terminar.",
+    )
     return parser.parse_args()
 
 
@@ -864,6 +963,15 @@ def main() -> int:
     brain = Brain(BRAIN_DIR, app_id=APP_ORIGIN)
     existing = build_existing_index(brain)
     logger.info("[repo-crawler] nodos previos del crawler: %d", len(existing))
+
+    if args.repair_links:
+        scanned, changed = repair_crawler_node_links(brain, apply=args.apply)
+        print("\n[repo-crawler] link repair")
+        print(f"  nodos revisados: {scanned}")
+        print(f"  nodos a cambiar: {changed}")
+        if changed and not args.apply:
+            print("  dry-run: usa --apply --repair-links para escribir")
+        return 0
 
     candidates = find_candidate_files(filter_path=args.path)
     logger.info("[repo-crawler] archivos candidatos: %d", len(candidates))

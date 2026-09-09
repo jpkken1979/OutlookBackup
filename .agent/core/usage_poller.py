@@ -137,6 +137,17 @@ def parse_claude_windows(payload: dict) -> tuple[float | None, float | None]:
     return five_pct, seven_pct
 
 
+def _window_reset_at(window: dict | None) -> str | None:
+    """Return the reset instant from a quota window using known field aliases."""
+    if not isinstance(window, dict):
+        return None
+    for key in ("resets_at", "resetsAt", "reset_at", "resetAt"):
+        value = window.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def parse_claude_used_percent(payload: dict) -> float | None:
     """Extrae el % usado de la ventana ``five_hour`` (back-compat; reusa ``parse_claude_windows``).
 
@@ -307,6 +318,8 @@ def _parse_epoch_seconds(value: object) -> float | None:
             num = float(text)
             return num / 1000.0 if num >= 1e12 else num
         except ValueError:
+            # ponytail: no es un número (string ISO probablemente) — se
+            # intenta el parseo ISO-8601 a continuación.
             pass
         try:
             return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
@@ -420,10 +433,17 @@ async def fetch_claude(session: aiohttp.ClientSession) -> None:
         for win, pct in (("five_hour", used_five), ("seven_day", used_seven))
         if pct is not None
     ]
+    resets_at: str | None = None
     if candidates:
         window, used = max(candidates, key=lambda c: c[1])
         remaining: float | None = round(100.0 - used, 4)
         error: str | None = None
+        selected_window = (
+            _extract_window(payload, _CLAUDE_FIVE_HOUR_KEYS)
+            if window == "five_hour"
+            else _extract_window(payload, _CLAUDE_SEVEN_DAY_KEYS)
+        )
+        resets_at = _window_reset_at(selected_window)
     else:
         window, used, remaining = "five_hour", None, None
         error = "respuesta sin ventana five_hour/seven_day"
@@ -431,6 +451,7 @@ async def fetch_claude(session: aiohttp.ClientSession) -> None:
         "claude",
         remaining_percent=remaining,
         used_percent=used,
+        resets_at=resets_at,
         window=window,
         source="poll",
         error=error,

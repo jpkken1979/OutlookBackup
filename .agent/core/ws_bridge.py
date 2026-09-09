@@ -237,6 +237,8 @@ class WebSocketBridge:
                         client.messages_sent += 1
                         recipients += 1
                     except asyncio.QueueFull:
+                        # ponytail: consumer lento/atascado — se descarta el
+                        # evento para ese cliente en vez de bloquear el broadcast.
                         pass
 
         self._metrics["total_events_broadcast"] += 1

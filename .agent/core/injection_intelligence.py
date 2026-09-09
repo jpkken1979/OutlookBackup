@@ -405,6 +405,8 @@ def _estimate_size(target: Path) -> str:
                 if count >= 500:
                     return "large"
     except PermissionError:
+        # ponytail: some subdirectory wasn't readable — keep the partial count
+        # gathered so far, it's only used for a rough size classification.
         pass
 
     if count < 100:

@@ -258,11 +258,11 @@ class SmartCache:
 
         return count
 
-    def register_invalidator(self, func: Callable[[str, CacheEntry], bool]):
+    def register_invalidator(self, func: Callable[[str, CacheEntry], bool]) -> None:
         """Registrar función de invalidación personalizada"""
         self._invalidators.append(func)
 
-    def _ensure_space(self, needed_bytes: int):
+    def _ensure_space(self, needed_bytes: int) -> None:
         """Asegurar espacio disponible, eliminando entradas viejas si es necesario"""
         current_size = sum(e.size_bytes for e in self._cache.values())
 
@@ -305,7 +305,7 @@ class SmartCache:
 
             return self._stats
 
-    def _persist_cache(self):
+    def _persist_cache(self) -> None:
         """Persistir cache a disco"""
         cache_file = self.cache_dir / "cache_data.json"
 
@@ -338,7 +338,7 @@ class SmartCache:
 
         cache_file.write_text(json.dumps(data, indent=2))
 
-    def _load_cache(self):
+    def _load_cache(self) -> None:
         """Cargar cache desde disco"""
         cache_file = self.cache_dir / "cache_data.json"
 
@@ -372,7 +372,7 @@ class SmartCache:
             logger.warning("Failed to load persisted cache, starting empty")
             pass  # Si falla, empezar con cache vacío
 
-    def clear(self):
+    def clear(self) -> None:
         """Limpiar todo el cache"""
         with self._lock:
             self._cache.clear()
@@ -381,7 +381,7 @@ class SmartCache:
             if cache_file.exists():
                 cache_file.unlink()
 
-    def warm_up(self, entries: list[dict]):
+    def warm_up(self, entries: list[dict]) -> None:
         """Pre-cargar entradas en el cache"""
         for entry in entries:
             self.set(
@@ -416,11 +416,11 @@ def cached(
     ttl: int | None = None,
     tags: list[str] | None = None,
     key_func: Callable | None = None,
-):
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorador para cachear resultados de funciones"""
 
-    def decorator(func):
-        def wrapper(*args, **kwargs):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             cache = get_smart_cache()
 
             # Generar identificador
@@ -524,7 +524,7 @@ if __name__ == "__main__":
 
         # Test decorator
         @cached(namespace="test_func", ttl=60)
-        def expensive_function(x):
+        def expensive_function(x: int) -> int:
             return x * 2
 
         result1 = expensive_function(5)

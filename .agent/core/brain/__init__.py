@@ -38,11 +38,14 @@ from .constants import (
 from .core import Brain, _add_related_in_frontmatter
 from .models import BrainNode, LintIssue, LintReport
 from .text import (
+    derive_topic_key,
     _expand_keywords,
     _extract_keywords,
     _parse_sections,
     _score_match,
     _smart_score,
+    normalize_semantic_content,
+    semantic_content_hash,
     scrub_surrogates,
 )
 
@@ -67,5 +70,8 @@ __all__ = [
     "_score_match",
     "_expand_keywords",
     "_smart_score",
+    "normalize_semantic_content",
+    "semantic_content_hash",
+    "derive_topic_key",
     "scrub_surrogates",
 ]

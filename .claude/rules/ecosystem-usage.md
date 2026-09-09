@@ -10,11 +10,13 @@ Aplica a todas las sesiones en este repositorio.
 
 ## Orden de uso
 
-1. MCP tools del ecosistema:
-   - `antigravity-skills`
-   - `antigravity-agents`
-   - `antigravity-intelligence`
-   - `context7`
+1. MCP: el broker `antigravity` es la UNICA entrada (`.mcp.json`). Sus seis
+   meta-tools, en este orden:
+   - `antigravity_search` — empezar siempre aca, busca la capacidad por texto libre
+   - `antigravity_describe` — ver firma/params de lo que encontro el search
+   - `antigravity_run_skill` / `antigravity_run_agent` — ejecutar
+   - `antigravity_call` — connectors puntuales (brain, mem0, watcher, context7…)
+   - `antigravity_status` — salud del broker y del gateway
 2. CLI directo solo si MCP no cubre el caso:
    - `python .agent/scripts/invoke-agent.py`
 3. Lectura directa de archivos solo como fallback:
@@ -23,16 +25,18 @@ Aplica a todas las sesiones en este repositorio.
 
 ## Resolución compartida
 
-- Si la app tiene skill/agente local por MCP, usar eso primero.
-- Si no existe localmente o el catálogo local no alcanza, consultar `antigravity-remote`.
-- `antigravity-remote` es la biblioteca compartida del ecosistema y debe servir como fallback entre apps y entornos cloud.
-- No copiar skills/agentes al proyecto solo para hacer discovery; el discovery compartido va por MCP remoto.
+- Si la app tiene skill/agente local, usarlo primero — `antigravity_search` ya
+  resuelve con precedencia proyecto > usuario > bundle.
+- El fallback remoto lo resuelve el propio broker contra el gateway; ya no hay un
+  server `antigravity-remote` aparte que registrar.
+- No copiar skills/agentes al proyecto solo para hacer discovery: las 43 apps del
+  monorepo comparten el mismo broker en `:4747/mcp` (migradas 2026-07-28).
 
 ## Evitar
 
 - Cargar cientos de skills al contexto base.
-- Duplicar agentes locales de Claude si ya existe servidor MCP equivalente.
-- Duplicar skills/agentes dentro de cada app cuando basta con discovery por `antigravity-remote`.
+- Duplicar agentes locales de Claude si el broker ya los expone.
+- Duplicar skills/agentes dentro de cada app: alcanza con el discovery del broker.
 - Repetir inventarios largos dentro de `CLAUDE.md` o reglas.
 
 ## Regla práctica

@@ -11,6 +11,7 @@ Implementa patrones de inteligencia colectiva:
 """
 
 import json
+import logging
 import random
 import threading
 from collections.abc import Callable
@@ -19,6 +20,8 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class SwarmAlgorithm(Enum):
@@ -97,7 +100,7 @@ class SwarmIntelligence:
         self._lock = threading.Lock()
         self._load_state()
 
-    def _load_state(self):
+    def _load_state(self) -> None:
         """Cargar estado persistido"""
         state_file = self.data_dir / "swarm_state.json"
         if state_file.exists():
@@ -106,10 +109,10 @@ class SwarmIntelligence:
                 self.pheromone_matrix = data.get("pheromone_matrix", {})
                 self.global_best_fitness = data.get("global_best_fitness", 0.0)
                 self.global_best_position = data.get("global_best_position", {})
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo cargar swarm_state.json: %s", e)
 
-    def _save_state(self):
+    def _save_state(self) -> None:
         """Guardar estado"""
         state_file = self.data_dir / "swarm_state.json"
         data = {
@@ -121,7 +124,7 @@ class SwarmIntelligence:
 
     # ==================== ANT COLONY OPTIMIZATION ====================
 
-    def init_pheromone(self, nodes: list[str], initial_value: float = 0.1):
+    def init_pheromone(self, nodes: list[str], initial_value: float = 0.1) -> None:
         """Inicializar matriz de feromonas"""
         with self._lock:
             for node_a in nodes:
@@ -168,7 +171,7 @@ class SwarmIntelligence:
 
         return probabilities[-1][0]
 
-    def deposit_pheromone(self, path: AntPath):
+    def deposit_pheromone(self, path: AntPath) -> None:
         """Depositar feromona en un camino"""
         if not path.path or len(path.path) < 2:
             return
@@ -188,7 +191,7 @@ class SwarmIntelligence:
 
             self._save_state()
 
-    def evaporate_pheromone(self):
+    def evaporate_pheromone(self) -> None:
         """Evaporar feromonas (decay)"""
         with self._lock:
             for node_a in self.pheromone_matrix:
@@ -271,7 +274,9 @@ class SwarmIntelligence:
         self.particles[particle_id] = particle
         return particle
 
-    def update_particle(self, particle_id: str, fitness_func: Callable[[dict[str, float]], float]):
+    def update_particle(
+        self, particle_id: str, fitness_func: Callable[[dict[str, float]], float]
+    ) -> None:
         """Actualizar posición y velocidad de partícula"""
         particle = self.particles.get(particle_id)
         if not particle:
@@ -482,7 +487,7 @@ class SwarmIntelligence:
             ),
         }
 
-    def clear(self):
+    def clear(self) -> None:
         """Limpiar estado del enjambre"""
         self.pheromone_matrix = {}
         self.particles = {}
@@ -544,7 +549,7 @@ if __name__ == "__main__":
         # Test PSO
         dimensions = ["x", "y"]
 
-        def simple_fitness(pos):
+        def simple_fitness(pos: dict[str, float]) -> float:
             return 1 - (pos["x"] ** 2 + pos["y"] ** 2)
 
         best_pos, best_fit = swarm.pso_optimize(
@@ -554,7 +559,7 @@ if __name__ == "__main__":
         print(f"✓ PSO optimization works (best fitness: {best_fit:.3f})")
 
         # Test consensus
-        def dummy_vote(voter, question, options):
+        def dummy_vote(voter: str, question: str, options: list[str]) -> str:
             return random.choice(options)
 
         decision = swarm.propose_decision(
@@ -571,7 +576,7 @@ if __name__ == "__main__":
         # Test Bee Algorithm
         search_space = list(range(100))
 
-        def bee_fitness(x):
+        def bee_fitness(x: int) -> int:
             return -abs(x - 42)  # Optimal at 42
 
         best_site, best_fit = swarm.bee_search(search_space, bee_fitness)

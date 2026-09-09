@@ -46,7 +46,7 @@ class SkillOrchestrator:
         self._skill_paths: dict[str, Path] = {}
         self._load_skill_patterns()
 
-    def _load_skill_patterns(self):
+    def _load_skill_patterns(self) -> None:
         """Load trigger patterns for each skill.
 
         Loads hardcoded patterns for known skills, then dynamically discovers
@@ -78,7 +78,7 @@ class SkillOrchestrator:
 
         logger.info(f"Loaded patterns for {len(self.skill_patterns)} skills")
 
-    def _load_patterns_from_skill_metadata(self, directory: Path):
+    def _load_patterns_from_skill_metadata(self, directory: Path) -> None:
         """Scan a directory for SKILL.md files and extract trigger patterns.
 
         Reads YAML frontmatter from each SKILL.md, parses the 'Triggers:' section
@@ -133,7 +133,7 @@ class SkillOrchestrator:
                 if isinstance(desc_val, str):
                     return desc_val
         except yaml.YAMLError:
-            # YAML fails when description has unquoted colons (e.g. "Triggers: foo").
+            # ponytail: YAML fails when description has unquoted colons (e.g. "Triggers: foo").
             # Fall back to regex extraction from raw frontmatter text.
             pass
 
@@ -319,7 +319,7 @@ class SkillOrchestrator:
 # =============================================================================
 
 
-def integrate_with_orchestrator():
+def integrate_with_orchestrator() -> None:
     """
     Integration function to be called by orchestrator.
 

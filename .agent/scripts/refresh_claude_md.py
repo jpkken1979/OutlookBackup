@@ -219,15 +219,50 @@ def render_counts(c: Counts) -> str:
     )
 
 
-def replace_block(text: str, name: str, new_content: str) -> tuple[str, bool]:
-    """Reemplaza bloque entre marcadores y devuelve (texto, hubo_cambio)."""
+def render_readme_pillars(c: Counts) -> str:
+    """Renderiza el bloque AUTO:readme_pillars del README."""
+    return (
+        f"- **Agentes** (`.agent/agents/`) — {c.agents} agentes especializados por tiers.\n"
+        f"- **Skills** (`.agent/skills/` + `skills-custom/`) — {c.skills_base} base + "
+        f"{c.skills_custom} custom reutilizables.\n"
+        f"- **Hooks** (`.claude/hooks/`, `.agent/hooks/`) — automatizan memoria, índices,\n"
+        f"  convenciones y cierre de sesión.\n"
+        f"- **Broker MCP** (`:4747`) — un único servidor registrado, `antigravity`, expone\n"
+        f"  seis meta-tools (`antigravity_search`,\n"
+        f"  `antigravity_describe`, `antigravity_run_skill`, `antigravity_run_agent`,\n"
+        f"  `antigravity_call`, `antigravity_status`). Los servidores granulares se\n"
+        f"  consolidaron el 2026-07-27 y no deben reintroducirse.\n"
+        f"- **Brain Network** (`.agent/brain/`) — {c.brain_nodes} nodos con referencias\n"
+        f"  cruzadas y decay temporal para recordar decisiones, bugs y patrones."
+    )
+
+
+def render_readme_badges(v: Versions) -> str:
+    """Renderiza el badge de version de Nexus del README."""
+    return f"![Nexus](https://img.shields.io/badge/nexus-{v.nexus}-blue.svg)"
+
+
+def replace_block(
+    text: str, name: str, new_content: str, *, filename: str = "CLAUDE.md"
+) -> tuple[str, bool]:
+    """Reemplaza bloque entre marcadores y devuelve (texto, hubo_cambio).
+
+    Args:
+        text: Contenido completo del archivo.
+        name: Nombre del bloque (sin el prefijo `AUTO:`).
+        new_content: Contenido a escribir entre los marcadores.
+        filename: Solo para el mensaje de warning si falta el marcador.
+
+    Returns:
+        Tupla (texto resultante, si hubo cambio).
+    """
     open_tag = MARKER_OPEN.format(name=name)
     close_tag = MARKER_CLOSE.format(name=name)
     pattern = re.compile(re.escape(open_tag) + r"(.*?)" + re.escape(close_tag), re.DOTALL)
     replacement = f"{open_tag}\n{new_content}\n{close_tag}"
     new_text, n = pattern.subn(replacement, text, count=1)
     if n == 0:
-        logger.warning("Marcador '%s' no encontrado en CLAUDE.md", name)
+        logger.warning("Marcador '%s' no encontrado en %s", name, filename)
         return text, False
     return new_text, new_text != text
 
@@ -293,58 +328,63 @@ def main() -> int:
         versions.bot,
     )
 
-    text = claude_md.read_text(encoding="utf-8")
-    original = text
+    # (archivo, [(nombre_bloque, contenido)]). Agregar un target nuevo es una
+    # linea mas aca: el loop de abajo se encarga de leer, diffear y escribir.
+    targets: list[tuple[Path, list[tuple[str, str]]]] = [
+        (
+            claude_md,
+            [
+                ("versions", render_versions(versions)),
+                ("counts", render_counts(counts)),
+            ],
+        ),
+        (brain_readme_md, [("brain_count", f"**{counts.brain_nodes} nodos")]),
+        (
+            args.root / "README.md",
+            [
+                ("readme_badges", render_readme_badges(versions)),
+                ("readme_pillars", render_readme_pillars(counts)),
+            ],
+        ),
+    ]
 
-    text, _ = replace_block(text, "versions", render_versions(versions))
-    text, _ = replace_block(text, "counts", render_counts(counts))
+    pending: list[tuple[Path, str, str]] = []  # (path, original, nuevo)
+    for path, blocks in targets:
+        if not path.is_file():
+            continue
+        original = path.read_text(encoding="utf-8")
+        text = original
+        for name, content in blocks:
+            text, _ = replace_block(text, name, content, filename=path.name)
+        if text != original:
+            pending.append((path, original, text))
 
-    # Actualizar BRAIN_README.md si existe
-    brain_text = None
-    brain_original = None
-    if brain_readme_md.is_file():
-        brain_text = brain_readme_md.read_text(encoding="utf-8")
-        brain_original = brain_text
-        brain_text, _ = replace_block(brain_text, "brain_count", f"**{counts.brain_nodes} nodos")
-
-    changed_any = (text != original) or (brain_text and brain_text != brain_original)
-
-    if not changed_any:
+    if not pending:
         logger.info("Sin cambios — archivos ya sincronizados.")
         return 0
 
     if args.apply:
-        if text != original:
-            claude_md.write_text(text, encoding="utf-8")
-            logger.info("✓ CLAUDE.md actualizado.")
-        if brain_text and brain_text != brain_original:
-            brain_readme_md.write_text(brain_text, encoding="utf-8")
-            logger.info("✓ BRAIN_README.md actualizado.")
-    else:
-        logger.info("Cambios detectados (dry-run). Usa --apply para escribir.")
-        if text != original:
-            diff = unified_diff(
+        for path, _, text in pending:
+            path.write_text(text, encoding="utf-8")
+            logger.info("✓ %s actualizado.", path.name)
+        return 0
+
+    logger.info("Cambios detectados (dry-run). Usa --apply para escribir.")
+    for path, original, text in pending:
+        sys.stdout.writelines(
+            unified_diff(
                 original.splitlines(keepends=True),
                 text.splitlines(keepends=True),
-                fromfile="CLAUDE.md (actual)",
-                tofile="CLAUDE.md (refrescado)",
+                fromfile=f"{path.name} (actual)",
+                tofile=f"{path.name} (refrescado)",
                 n=2,
             )
-            sys.stdout.writelines(diff)
-        if brain_text and brain_text != brain_original:
-            diff = unified_diff(
-                brain_original.splitlines(keepends=True),
-                brain_text.splitlines(keepends=True),
-                fromfile="BRAIN_README.md (actual)",
-                tofile="BRAIN_README.md (refrescado)",
-                n=2,
-            )
-            sys.stdout.writelines(diff)
-        if args.check:
-            logger.error(
-                "Archivos AUTO tienen drift. Corre: py .agent/scripts/refresh_claude_md.py --apply"
-            )
-            return 1
+        )
+    if args.check:
+        logger.error(
+            "Archivos AUTO tienen drift. Corre: py .agent/scripts/refresh_claude_md.py --apply"
+        )
+        return 1
 
     return 0
 

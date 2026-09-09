@@ -7,6 +7,7 @@ Servidor MCP que expone la red de inteligencia distribuida del ecosistema.
 Tools:
 - brain_ingest: Ingestar conocimiento en un brain de app
 - brain_query: Buscar conocimiento en uno o todos los brains
+- brain_timeline: Listar revisiones resumidas de un tema
 - brain_node_read: Leer un nodo especifico
 - brain_node_list: Listar nodos con filtros
 - brain_lint: Auditoria de salud de un brain
@@ -138,6 +139,7 @@ def handle_brain_ingest(params: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "success": True,
+        "deduplicated": node.deduplicated,
         "slug": node.slug,
         "node_id": node.node_id,
         "app_id": app_id or "nexus-mother",
@@ -182,12 +184,49 @@ def handle_brain_query(params: dict[str, Any]) -> dict[str, Any]:
                 "area": r.node.area,
                 "tags": r.node.tags,
                 "date": r.node.date,
-                "context": r.node.context[:500] if r.node.context else "",
+                "status": r.node.status,
+                "version": r.node.version,
+                "topic_key": r.node.topic_key,
+                "superseded_by": r.node.superseded_by,
                 "relevance": round(r.relevance_score, 2),
                 "app_origin": r.node.app_origin,
             }
             for r in results
         ],
+    }
+
+
+def handle_brain_timeline(params: dict[str, Any]) -> dict[str, Any]:
+    """Lista revisiones resumidas de un slug o topic."""
+    slug = str(params.get("slug", "")).strip()
+    topic_key = str(params.get("topic_key", "")).strip()
+    if not slug and not topic_key:
+        return {"error": "slug o topic_key es requerido"}
+    try:
+        limit = int(params.get("limit", 20))
+    except (TypeError, ValueError):
+        return {"error": "limit debe ser un entero entre 1 y 100"}
+    if not 1 <= limit <= 100:
+        return {"error": "limit debe estar entre 1 y 100"}
+
+    app_id = str(params.get("app_id", "")).strip()
+    network = _ensure_network()
+    brain = network.get_app_brain(app_id) if app_id and app_id != "nexus-mother" else network.mother
+    if not brain:
+        return {"error": f"App '{app_id}' no registrada"}
+    try:
+        items = brain.timeline(
+            slug=slug or None,
+            topic_key=topic_key or None,
+            limit=limit,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        return {"error": str(exc)}
+    return {
+        "success": True,
+        "topic_key": items[0]["topic_key"] if items else topic_key,
+        "count": len(items),
+        "items": items,
     }
 
 
@@ -545,6 +584,7 @@ def handle_brain_conflicts(params: dict[str, Any]) -> dict[str, Any]:
 TOOLS: dict[str, Any] = {
     "brain_ingest": handle_brain_ingest,
     "brain_query": handle_brain_query,
+    "brain_timeline": handle_brain_timeline,
     "brain_node_read": handle_brain_node_read,
     "brain_node_list": handle_brain_node_list,
     "brain_lint": handle_brain_lint,
@@ -630,6 +670,30 @@ TOOL_SCHEMAS: dict[str, Any] = {
             },
         },
         "required": ["slug"],
+    },
+    "brain_timeline": {
+        "type": "object",
+        "properties": {
+            "slug": {
+                "type": "string",
+                "description": "Slug desde el cual resolver el tema",
+            },
+            "topic_key": {
+                "type": "string",
+                "description": "Clave temática explícita",
+            },
+            "app_id": {
+                "type": "string",
+                "description": "Brain donde buscar (vacio = Mother Brain)",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Máximo de revisiones resumidas (default: 20)",
+            },
+        },
+        "anyOf": [{"required": ["slug"]}, {"required": ["topic_key"]}],
     },
     "brain_node_list": {
         "type": "object",
@@ -764,6 +828,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "brain_query": (
         "Buscar conocimiento en toda la red de brains. "
         "Busca en el Mother Brain + todos los app brains registrados."
+    ),
+    "brain_timeline": (
+        "Listar el historial resumido de un tema. No devuelve cuerpos; "
+        "usar brain_node_read para abrir un nodo."
     ),
     "brain_node_read": "Leer un nodo completo por su slug.",
     "brain_node_list": "Listar nodos de un brain con filtros opcionales.",

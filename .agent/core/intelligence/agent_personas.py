@@ -601,7 +601,7 @@ def format_with_persona(content: str, persona_name: str = None) -> str:
 # =============================================================================
 
 
-def main():
+def main() -> None:
     """CLI entry point."""
     import argparse
 

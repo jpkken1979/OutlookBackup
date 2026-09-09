@@ -91,6 +91,8 @@ def _state_lock() -> Generator[None, None, None]:
                     try:
                         lock_path.unlink()
                     except OSError:
+                        # ponytail: otro proceso ya lo borró (race benigna);
+                        # el loop reintenta abajo de todas formas.
                         pass
                     continue
             except OSError:
@@ -156,7 +158,8 @@ def set_active(provider: str, model: str) -> dict:
     """Escribe el backend activo de forma atomica (cambio deliberado).
 
     Sobreescribe el state completo, por lo que LIMPIA cualquier bloque `fallback`
-    previo: un switch explicito de backend resetea el historial de rescates.
+    previo: un switch explicito de backend resetea el historial de rescates y abre
+    el circuito breaker para que el provider manual vuelva a probarse de inmediato.
 
     Args:
         provider: id del backend (claude | zai | ...).
@@ -168,6 +171,7 @@ def set_active(provider: str, model: str) -> dict:
     with _state_lock():
         payload = {"provider": provider, "model": model}
         _atomic_write(state_path(), payload)
+    reset_provider_circuit(provider)
     return payload
 
 
@@ -382,7 +386,7 @@ def _clamp_sample_rate(value: object) -> int:
         numerico (tolerante a state corrupto o ausente).
     """
     try:
-        if not isinstance(value, (str, bytes, bytearray, float, int)):
+        if not isinstance(value, str | bytes | bytearray | float | int):
             return SHADOW_DEFAULT_SAMPLE_RATE
         rate = int(value)
     except (TypeError, ValueError):
@@ -471,7 +475,9 @@ def get_failover() -> dict:
     """Devuelve el estado persistido del auto-failover automático.
 
     Returns:
-        Dict ``{"enabled": bool}``; deshabilitado si el archivo falta o esta corrupto.
+        Dict con ``enabled`` y, cuando existen, ``cascade``, ``auto_return`` y
+        ``recovery_threshold_pct``. Deshabilitado si el archivo falta o esta
+        corrupto.
     """
     try:
         data = json.loads(failover_path().read_text(encoding="utf-8"))
@@ -479,19 +485,56 @@ def get_failover() -> dict:
         return {"enabled": False}
     if not isinstance(data, dict):
         return {"enabled": False}
-    return {"enabled": bool(data.get("enabled"))}
+    result: dict = {"enabled": bool(data.get("enabled"))}
+    raw_cascade = data.get("cascade")
+    if isinstance(raw_cascade, list):
+        seen: set[str] = set()
+        cascade: list[str] = []
+        for item in raw_cascade:
+            provider = str(item).strip().lower()
+            if provider and provider not in seen:
+                seen.add(provider)
+                cascade.append(provider)
+        if cascade:
+            result["cascade"] = cascade
+    if isinstance(data.get("auto_return"), bool):
+        result["auto_return"] = data["auto_return"]
+    recovery = data.get("recovery_threshold_pct")
+    if isinstance(recovery, int | float) and not isinstance(recovery, bool):
+        result["recovery_threshold_pct"] = max(0.0, min(float(recovery), 100.0))
+    return result
 
 
-def set_failover(enabled: bool) -> dict:
+def set_failover(enabled: bool, cascade: list[str] | tuple[str, ...] | None = None) -> dict:
     """Activa o desactiva el auto-failover de forma atomica (Nexus lo prende en caliente).
 
     Args:
         enabled: ``True`` para activar la rotacion automatica en cascada.
+        cascade: Orden opcional de providers. Si se omite, preserva el orden
+            persistido para que apagar/encender no borre la preferencia del usuario.
 
     Returns:
         El estado persistido.
     """
+    current = get_failover()
     payload = {"enabled": bool(enabled), "at": _utc_now_iso()}
+    for preference in ("auto_return", "recovery_threshold_pct"):
+        if preference in current:
+            payload[preference] = current[preference]
+    effective_cascade = cascade
+    if effective_cascade is None:
+        saved = current.get("cascade")
+        effective_cascade = saved if isinstance(saved, list) else None
+    if effective_cascade:
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for item in effective_cascade:
+            provider = str(item).strip().lower()
+            if provider and provider not in seen:
+                seen.add(provider)
+                normalized.append(provider)
+        if normalized:
+            payload["cascade"] = normalized
     _atomic_write(failover_path(), payload)
     return payload
 
@@ -543,6 +586,91 @@ def get_circuit() -> dict[str, dict]:
     return state
 
 
+# Knobs del breaker. Viven aca —y no en `_mixin_proxy`— porque son la unica fuente
+# de verdad para los DOS lados que deciden con el circuito: el proxy (hot path, con
+# el streak en memoria) y el router (`routing_authority`, que solo ve este archivo).
+# Estaban duplicados, y por eso un mismo provider podia verse abierto para uno y
+# cerrado para el otro.
+CIRCUIT_ENV = "ANTIGRAVITY_PROXY_CIRCUIT"
+CIRCUIT_THRESHOLD_ENV = "ANTIGRAVITY_PROXY_CIRCUIT_THRESHOLD"
+CIRCUIT_COOLDOWN_ENV = "ANTIGRAVITY_PROXY_CIRCUIT_COOLDOWN_S"
+DEFAULT_CIRCUIT_THRESHOLD = 3
+DEFAULT_CIRCUIT_COOLDOWN_S = 60.0
+
+
+def circuit_enabled() -> bool:
+    """Indica si el circuit breaker esta activo (default si; kill switch por env).
+
+    Returns:
+        False solo si la env var trae un valor explicito de apagado.
+    """
+    raw = os.environ.get(CIRCUIT_ENV, "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def circuit_threshold() -> int:
+    """Fallos consecutivos necesarios para abrir el circuito.
+
+    Returns:
+        Umbral saneado al rango 1..20.
+    """
+    raw = os.environ.get(CIRCUIT_THRESHOLD_ENV, str(DEFAULT_CIRCUIT_THRESHOLD))
+    try:
+        parsed = int(raw)
+    except ValueError:
+        parsed = DEFAULT_CIRCUIT_THRESHOLD
+    return max(1, min(parsed, 20))
+
+
+def circuit_cooldown_s() -> float:
+    """Segundos con el circuito abierto antes de permitir un probe (half-open).
+
+    Returns:
+        Cooldown saneado al rango 0..3600 segundos.
+    """
+    raw = os.environ.get(CIRCUIT_COOLDOWN_ENV, str(DEFAULT_CIRCUIT_COOLDOWN_S))
+    try:
+        parsed = float(raw)
+    except ValueError:
+        parsed = DEFAULT_CIRCUIT_COOLDOWN_S
+    return max(0.0, min(parsed, 3600.0))
+
+
+def circuit_open(provider: str, state: dict[str, dict] | None = None) -> bool:
+    """True si el circuito del provider esta abierto segun el estado persistido.
+
+    Misma semantica que `_mixin_proxy._circuit_open()` —incluida la exencion de
+    `claude`, que es el destino de rescate y nunca se saltea— pero derivada del
+    archivo en vez de la memoria del gateway.
+
+    El estado persistido NO guarda un flag `open`: guarda `streak` y
+    `last_failure_epoch`, y la apertura se calcula contra el umbral y el cooldown.
+    Leer un `open` inexistente daba siempre False, que es como el router dejo de
+    filtrar providers caidos.
+
+    Args:
+        provider: Id del provider a evaluar.
+        state: Estado ya leido, para no releer el archivo dentro de un loop.
+            Si es None se lee con `get_circuit()`.
+
+    Returns:
+        True si hay que saltear ese provider.
+    """
+    if provider == "claude" or not circuit_enabled():
+        return False
+    entry = (state if state is not None else get_circuit()).get(provider)
+    if not entry:
+        return False
+    try:
+        streak = int(entry.get("streak", 0))
+        last_failure = float(entry.get("last_failure_epoch") or entry.get("last_failure") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    if streak < circuit_threshold():
+        return False
+    return (time.time() - last_failure) < circuit_cooldown_s()
+
+
 def save_circuit(state: dict[str, dict]) -> None:
     """Persiste el estado del breaker de forma atomica.
 
@@ -557,7 +685,18 @@ def clear_circuit() -> None:
     try:
         circuit_path().unlink()
     except OSError:
+        # ponytail: el objetivo es "sin estado persistido" — si el archivo ya
+        # no existe (o no se puede borrar) el resultado final es el mismo.
         pass
+
+
+def reset_provider_circuit(provider: str) -> None:
+    """Borra el estado persistido del breaker de un provider especifico."""
+    pid = provider.strip().lower()
+    circuits = get_circuit()
+    if pid in circuits:
+        circuits.pop(pid, None)
+        save_circuit(circuits)
 
 
 # ── Eventos de auto-recovery (ring persistente) ──────────────────────────────
@@ -603,6 +742,8 @@ def record_recovery_event(event: str, provider: str | None = None, detail: str =
         )
         _atomic_write(events_path(), events[-RECOVERY_EVENTS_MAX:])
     except OSError:
+        # ponytail: ver docstring — este ring corre en el camino de error del
+        # proxy y jamas debe agregar fallos propios (I/O se ignora a propósito).
         pass
 
 
@@ -631,6 +772,8 @@ def clear_recovery_events() -> None:
     try:
         events_path().unlink()
     except OSError:
+        # ponytail: el objetivo es "sin eventos persistidos" — si el archivo
+        # ya no existe (o no se puede borrar) el resultado final es el mismo.
         pass
 
 

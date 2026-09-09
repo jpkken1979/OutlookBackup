@@ -235,7 +235,7 @@ class SkillMarketplace:
 
         self._load_registry()
 
-    def _get_skill_registry(self):
+    def _get_skill_registry(self) -> Any:
         """Get or initialize SkillRegistry lazily."""
         if self._skill_registry is None:
             try:
@@ -255,11 +255,11 @@ class SkillMarketplace:
         return self._skill_registry if self._skill_registry is not False else None
 
     @property
-    def skill_registry(self):
+    def skill_registry(self) -> Any:
         """Get SkillRegistry instance (lazy-loaded)."""
         return self._get_skill_registry()
 
-    def _load_registry(self):
+    def _load_registry(self) -> None:
         """Cargar registro de skills."""
         registry_file = self.registry_path / "index.json"
 
@@ -296,7 +296,7 @@ class SkillMarketplace:
             rating=data.get("rating", 0.0),
         )
 
-    def _save_registry(self):
+    def _save_registry(self) -> None:
         """Guardar registro a disco."""
         registry_file = self.registry_path / "index.json"
 
@@ -731,8 +731,8 @@ class SkillMarketplace:
         if usage_file.exists():
             try:
                 usage_stats = json.loads(usage_file.read_text(encoding="utf-8"))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo cargar usage_stats.json: %s", e)
 
         recommendations: list[dict] = []
         for skill_name in candidates:

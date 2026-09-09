@@ -17,7 +17,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.formatting.rule import CellIsRule, FormulaRule
 from openpyxl.chart import BarChart, LineChart, Reference
 
-from excel_engine.types import CellFormat
+from ..types import CellFormat
 
 logger = logging.getLogger(__name__)
 

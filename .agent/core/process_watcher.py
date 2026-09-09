@@ -36,6 +36,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -251,7 +252,7 @@ class ProcessWatcher:
             conn.commit()
 
     @contextmanager
-    def _conn(self):
+    def _conn(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(
             str(self.state_path),
             isolation_level=None,
@@ -630,6 +631,8 @@ class ProcessWatcher:
             try:
                 stream.close()
             except Exception:
+                # ponytail: cleanup best-effort tras el warning ya logueado
+                # arriba; un fallo cerrando el stream no aporta info nueva.
                 pass
             if stream_name == "stdout":
                 active.finished_stdout.set()
@@ -661,7 +664,10 @@ class ProcessWatcher:
                 # kill() todavia no termino de setear metadata; ayudamos acá.
                 active.exit_code = exit_code
                 active.ended_at = int(time.time())
-        self._persist_final_state(active)
+            # Persist while the in-memory state is still locked. Otherwise a
+            # concurrent status() can observe "exited" before a new watcher
+            # reading the same database sees the final transition.
+            self._persist_final_state(active)
         logger.info(
             "watch %s termino: state=%s exit_code=%s matches=%d",
             active.watch_id,
@@ -882,6 +888,8 @@ class ProcessWatcher:
         try:
             patterns = json.loads(row["patterns_json"] or "[]")
         except json.JSONDecodeError:
+            # ponytail: patterns_json corrupto en la DB — se muestra el status
+            # con lista de patterns vacía en vez de romper la consulta.
             pass
         return {
             "watch_id": row["watch_id"],

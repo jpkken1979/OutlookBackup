@@ -26,11 +26,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.agent_memory_manager import AgentMemoryManager
 from core.agent_skill_manager import AgentSkillManager
 from core.agent_tool_manager import AgentToolManager
 from core.intelligence_layer import IntelligenceLayer
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("antigravity.agent")
 
 
-def _import_sibling_module(name: str):
+def _import_sibling_module(name: str) -> ModuleType:
     """Lazy-import a sibling module from the core package.
 
     Args:
@@ -156,7 +156,6 @@ class AntigravityAgent(ABC):
 
         # Initialize managers
         self.tool_manager = AgentToolManager(self)
-        self.memory_manager = AgentMemoryManager(self)
         self.skill_manager = AgentSkillManager(self)
 
         # Intelligence Layer (v4.1.0)
@@ -211,20 +210,43 @@ class AntigravityAgent(ABC):
         return self.skill_manager._run_skill_script(script_path)
 
     # =========================================================================
-    # MEMORY ACCESS (delegated to AgentMemoryManager)
+    # MEMORY ACCESS
     # =========================================================================
 
     def remember(self, key: str, value: Any) -> None:
-        """Store something in agent's memory (delegated)."""
-        self.memory_manager.remember(key, value)
+        """Store a value in the injected synchronous memory backend."""
+        if self.memory and hasattr(self.memory, "store"):
+            self.memory.store(
+                "agent_memory",
+                {"key": key, "value": value, "agent": self.identity.name},
+            )
+            logger.debug("Stored memory: %s", key)
 
     def recall(self, key: str) -> Any | None:
-        """Recall something from agent's memory (delegated)."""
-        return self.memory_manager.recall(key)
+        """Recall a value from the injected synchronous memory backend."""
+        if self.memory and hasattr(self.memory, "retrieve"):
+            results = self.memory.retrieve("agent_memory", query=key)
+            for result in results:
+                if result.get("data", {}).get("key") == key:
+                    logger.debug("Recalled memory: %s for %s", key, self.identity.name)
+                    return result["data"].get("value")
+        logger.debug("Memory miss: %s for %s", key, self.identity.name)
+        return None
 
     def get_relevant_context(self, query: str, limit: int = 5) -> list[str]:
-        """Get relevant context from vector memory (delegated)."""
-        return self.memory_manager.get_relevant_context(query, limit)
+        """Get relevant context from the injected synchronous memory backend."""
+        if self.memory and hasattr(self.memory, "search"):
+            results = self.memory.search(query, limit=limit)
+            context = [result.get("content", "") for result in results]
+            logger.debug(
+                "Retrieved %s context items for query '%s' by %s",
+                len(context),
+                query,
+                self.identity.name,
+            )
+            return context
+        logger.debug("No memory backend available for %s", self.identity.name)
+        return []
 
     # =========================================================================
     # INTELLIGENCE LAYER (v4.1.0)
@@ -852,7 +874,7 @@ class SimpleAgent(AntigravityAgent):
 # =============================================================================
 
 
-def main():
+def main() -> None:
     """Test agent base class."""
 
     def run_async(coroutine: Any) -> Any:

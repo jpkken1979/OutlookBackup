@@ -856,15 +856,30 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def main() -> None:
-    """Bucle principal: lee JSONRPC por stdin, responde por stdout."""
-    # Los pipes stdio en Windows heredan la codepage del locale (cp932 en JP),
-    # pero el protocolo MCP habla UTF-8: sin esto, el JSON entrante con no-ASCII
-    # llega con surrogates sueltos y la respuesta puede fallar al escribirse.
+def _reconfigure_stdio_utf8() -> None:
+    """Reconfigura stdin/stdout a UTF-8.
+
+    Los pipes stdio en Windows heredan la codepage del locale (cp932 en JP),
+    pero el protocolo MCP habla UTF-8: sin esto, el JSON entrante con no-ASCII
+    llega con surrogates sueltos y la respuesta puede fallar al escribirse.
+    """
     if hasattr(sys.stdin, "reconfigure"):
         sys.stdin.reconfigure(encoding="utf-8", errors="replace")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+
+def _dispatch_and_respond(request: dict[str, Any]) -> None:
+    """Despacha un request JSONRPC ya parseado y escribe la respuesta si corresponde."""
+    response = handle_request(request)
+    if response is not None:
+        sys.stdout.write(json.dumps(response) + "\n")
+        sys.stdout.flush()
+
+
+def main() -> None:
+    """Bucle principal: lee JSONRPC por stdin, responde por stdout."""
+    _reconfigure_stdio_utf8()
 
     _request_count = 0
     _error_count = 0
@@ -883,10 +898,7 @@ def main() -> None:
                 continue
             request = json.loads(stripped)
             _request_count += 1
-            response = handle_request(request)
-            if response is not None:
-                sys.stdout.write(json.dumps(response) + "\n")
-                sys.stdout.flush()
+            _dispatch_and_respond(request)
         except json.JSONDecodeError as e:
             _error_count += 1
             sys.stderr.write(f"[ecosystem-server] JSON parse error: {e}\n")

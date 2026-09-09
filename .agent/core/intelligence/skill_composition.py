@@ -453,8 +453,8 @@ class SkillComposer:
                                     outputs=[],
                                     tags=[name],
                                 )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("No se pudo cargar SKILL.md de %s: %s", skill_dir, e)
 
     def register_skill(self, skill: SkillInfo) -> None:
         """Register a skill."""

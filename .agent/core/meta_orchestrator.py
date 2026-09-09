@@ -168,7 +168,7 @@ class MetaOrchestrator:
         self.patterns: dict[str, dict] = {}  # Learned patterns
         self._load_history()
 
-    def _load_history(self):
+    def _load_history(self) -> None:
         """Load historical assessments."""
         history_file = self.history_path / "assessments.json"
         if history_file.exists():
@@ -180,7 +180,7 @@ class MetaOrchestrator:
             except Exception as e:
                 logger.error(f"Error loading history: {e}")
 
-    def _save_history(self):
+    def _save_history(self) -> None:
         """Save assessments to disk."""
         history_file = self.history_path / "assessments.json"
         try:
@@ -583,7 +583,7 @@ def get_meta_orchestrator() -> MetaOrchestrator:
 # Example usage
 if __name__ == "__main__":
 
-    async def demo():
+    async def demo() -> None:
         meta = get_meta_orchestrator()
 
         # Create a plan

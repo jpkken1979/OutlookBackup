@@ -17,7 +17,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
 
 from .aiohttp_transport import AiohttpMcpTransport
-from .models import BrokerEnvelope, ConnectorStatus, OperationClass
+from .models import BrokerEnvelope, OperationClass
 from .registry import ConnectorRegistry
 from .runtime import ConnectorRuntimeError, LazyConnectorRuntime
 from .state import BrokerState
@@ -62,6 +62,44 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _parsed_json_dict(text: str) -> dict[str, Any] | None:
+    """Intenta parsear `text` como JSON y devolverlo solo si el resultado es un dict."""
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _normalize_dict_tool_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Normaliza el resultado de `mcp.call_tool` cuando llega como dict."""
+    structured = result.get("structuredContent") or result.get("structured_content")
+    if isinstance(structured, dict):
+        return _json_safe(structured)
+    content = result.get("content")
+    if isinstance(content, list) and len(content) == 1:
+        item = _json_safe(content[0])
+        if isinstance(item, dict) and isinstance(item.get("text"), str):
+            parsed = _parsed_json_dict(item["text"])
+            if parsed is not None:
+                return parsed
+    return _json_safe(result)
+
+
+def _normalize_list_tool_result(safe_result: list[Any]) -> dict[str, Any]:
+    """Normaliza el resultado de `mcp.call_tool` cuando llega como lista de contenido."""
+    for candidate in reversed(safe_result):
+        if isinstance(candidate, dict) and isinstance(candidate.get("status"), str):
+            return candidate
+    if len(safe_result) == 1:
+        content = safe_result[0]
+        if isinstance(content, dict) and isinstance(content.get("text"), str):
+            parsed = _parsed_json_dict(content["text"])
+            if parsed is not None:
+                return parsed
+    return {"status": "OK", "content": safe_result}
 
 
 def _safe_error_message(error: Exception) -> str:
@@ -141,37 +179,10 @@ class AntigravityMcpBroker:
             raise ValueError(f"Unknown Antigravity meta-tool: {name}")
         result = await self.mcp.call_tool(name, arguments or {})
         if isinstance(result, dict):
-            structured = result.get("structuredContent") or result.get("structured_content")
-            if isinstance(structured, dict):
-                return _json_safe(structured)
-            content = result.get("content")
-            if isinstance(content, list) and len(content) == 1:
-                item = _json_safe(content[0])
-                if isinstance(item, dict) and isinstance(item.get("text"), str):
-                    try:
-                        parsed = json.loads(item["text"])
-                    except json.JSONDecodeError:
-                        pass
-                    else:
-                        if isinstance(parsed, dict):
-                            return parsed
-            return _json_safe(result)
-
+            return _normalize_dict_tool_result(result)
         safe_result = _json_safe(result)
         if isinstance(safe_result, list):
-            for candidate in reversed(safe_result):
-                if isinstance(candidate, dict) and isinstance(candidate.get("status"), str):
-                    return candidate
-            if len(safe_result) == 1:
-                content = safe_result[0]
-                if isinstance(content, dict) and isinstance(content.get("text"), str):
-                    try:
-                        parsed = json.loads(content["text"])
-                    except json.JSONDecodeError:
-                        pass
-                    else:
-                        if isinstance(parsed, dict):
-                            return parsed
+            return _normalize_list_tool_result(safe_result)
         return {"status": "OK", "content": safe_result}
 
     def _envelope(
@@ -183,7 +194,7 @@ class AntigravityMcpBroker:
         retryable: bool = False,
         approval_id: str | None = None,
         error: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> BrokerEnvelope:
         return BrokerEnvelope(
             trace_id=trace_id,
             status=status,
@@ -191,14 +202,14 @@ class AntigravityMcpBroker:
             retryable=retryable,
             approval_id=approval_id,
             error=error,
-        ).model_dump(mode="json")
+        )
 
     async def _recorded(
         self,
         action: str,
         target: str | None,
         callback: Any,
-    ) -> dict[str, Any]:
+    ) -> BrokerEnvelope:
         trace_id = f"trc_{uuid.uuid4().hex}"
         started = time.perf_counter()
         try:
@@ -247,11 +258,25 @@ class AntigravityMcpBroker:
         return agents
 
     async def _skills(self) -> list[dict[str, Any]]:
-        loop = asyncio.get_running_loop()
-        skills = await loop.run_in_executor(
-            self.gateway._thread_pool,
-            lambda: self.gateway._scan_skills(include_external=True),
-        )
+        # Reutiliza el mismo catálogo cacheado que /v1/skills. Antes cada
+        # búsqueda/describe del broker volvía a abrir ~1000 SKILL.md aunque el
+        # gateway ya tuviera una instantánea válida. POST /v1/skills/reload
+        # invalida esta clave y conserva el refresh explícito.
+        cache_key = "all_skills_with_external"
+        cache = getattr(self.gateway, "cache", None)
+        skills = cache.get(cache_key) if cache is not None else None
+        if skills is None:
+            loader = getattr(self.gateway, "_load_skills_list", None)
+            if callable(loader):
+                skills = await loader(include_external=True)
+            else:
+                loop = asyncio.get_running_loop()
+                skills = await loop.run_in_executor(
+                    getattr(self.gateway, "_thread_pool", None),
+                    lambda: self.gateway._scan_skills(include_external=True),
+                )
+            if cache is not None:
+                cache.set(cache_key, skills)
         return [{**skill, "kind": "skill"} for skill in skills]
 
     @staticmethod
@@ -267,118 +292,263 @@ class AntigravityMcpBroker:
             return ""
         return ""
 
+    @staticmethod
+    def _search_score(item: dict[str, Any], normalized: str) -> tuple[int, str]:
+        """Puntua un candidato de busqueda por coincidencia de nombre/descripcion."""
+        name = str(item.get("name", "")).lower()
+        description = str(item.get("description", "")).lower()
+        if not normalized:
+            relevance = 1
+        elif name == normalized:
+            relevance = 100
+        elif name.startswith(normalized):
+            relevance = 70
+        elif normalized in name:
+            relevance = 50
+        elif normalized in description:
+            relevance = 20
+        else:
+            relevance = 0
+        return relevance, name
+
+    async def _search_execute(
+        self,
+        query: str,
+        requested_kinds: set[str],
+        limit: int,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Ejecuta la logica real de `antigravity_search` (fuera de la tool registrada)."""
+        normalized = query.strip().lower()
+        candidates: list[dict[str, Any]] = []
+        if "agent" in requested_kinds:
+            candidates.extend(self._agents())
+        if "skill" in requested_kinds:
+            candidates.extend(await self._skills())
+        if "connector" in requested_kinds:
+            candidates.extend(
+                {**connector, "name": connector["id"], "kind": "connector"}
+                for connector in self.registry.safe_catalog()
+            )
+        ranked = [
+            (self._search_score(item, normalized), item)
+            for item in candidates
+            if not normalized or self._search_score(item, normalized)[0] > 0
+        ]
+        ranked.sort(key=lambda pair: (-pair[0][0], pair[0][1]))
+        # Techo 500 + offset: con ~1000 skills, el clamp anterior de 100 sin
+        # offset dejaba ~90% del catalogo inalcanzable via search (bug 2026-08-10)
+        safe_limit = min(max(limit, 1), 500)
+        safe_offset = max(offset, 0)
+        results = [item for _, item in ranked[safe_offset : safe_offset + safe_limit]]
+        return {
+            "status": "OK",
+            "content": {
+                "query": query,
+                "total": len(ranked),
+                "offset": safe_offset,
+                "limit": safe_limit,
+                "results": results,
+            },
+        }
+
+    async def _describe_execute(self, kind: str, name: str) -> dict[str, Any]:
+        """Ejecuta la logica real de `antigravity_describe`."""
+        normalized_kind = kind.lower()
+        if normalized_kind == "agent":
+            item = next((item for item in self._agents() if item["name"] == name), None)
+        elif normalized_kind == "skill":
+            item = next((item for item in await self._skills() if item["name"] == name), None)
+            if item:
+                skill_path = self._resolve_skill_path(name)
+                item = {
+                    **item,
+                    "content": (
+                        skill_path.read_text(encoding="utf-8", errors="replace")
+                        if skill_path
+                        else ""
+                    ),
+                }
+        elif normalized_kind == "connector":
+            connector = self.registry.get(name)
+            item = None
+            if connector:
+                item = {
+                    **connector.model_dump(mode="json"),
+                    "status": self.registry.status(connector).value,
+                    "missing_secrets": self.registry.required_secrets_missing(connector),
+                }
+                item["auth"].pop("header_from_env", None)
+        else:
+            return {"status": "ERROR", "error": "kind must be agent, skill or connector"}
+        if item is None:
+            return {"status": "NOT_FOUND", "error": f"{kind} '{name}' was not found"}
+        return {"status": "OK", "content": item}
+
+    async def _resolve_call_approval(
+        self,
+        connector: str,
+        operation: str,
+        operation_class: OperationClass,
+        safe_arguments: dict[str, Any],
+        approval_id: str | None,
+        ctx: Context | None,
+    ) -> dict[str, Any] | None:
+        """Resuelve el flujo de aprobacion para una operacion no-READ de un connector.
+
+        Returns:
+            ``None`` si la operacion ya quedo aprobada (con `approval_id` valido o via
+            elicitacion); un dict ``APPROVAL_REQUIRED`` si todavia falta aprobacion.
+        """
+        approved = False
+        if approval_id:
+            approved = self.state.consume_approval(
+                approval_id, connector, operation, safe_arguments
+            )
+        if approved:
+            return None
+        approval = self.state.request_approval(
+            connector, operation, operation_class, safe_arguments
+        )
+        if ctx is not None and self._supports_elicitation(ctx):
+            decision = await ctx.elicit(
+                (
+                    f"Allow one {operation_class.value} operation "
+                    f"'{operation}' on connector '{connector}'?"
+                ),
+                ApprovalDecision,
+            )
+            if decision.action == "accept" and decision.data is not None and decision.data.approve:
+                self.state.resolve_approval(approval.approval_id, approved=True)
+                approved = self.state.consume_approval(
+                    approval.approval_id, connector, operation, safe_arguments
+                )
+        if approved:
+            return None
+        return {
+            "status": "APPROVAL_REQUIRED",
+            "approval_id": approval.approval_id,
+            "content": {
+                "connector": connector,
+                "operation": operation,
+                "operation_class": operation_class.value,
+            },
+        }
+
+    async def _call_execute(
+        self,
+        connector: str,
+        operation: str,
+        safe_arguments: dict[str, Any],
+        approval_id: str | None,
+        ctx: Context | None,
+    ) -> dict[str, Any]:
+        """Ejecuta la logica real de `antigravity_call`."""
+        manifest = self.registry.get(connector)
+        if manifest is None:
+            return {"status": "NOT_FOUND", "error": f"Connector '{connector}' was not found"}
+        operation_class = self.registry.classify_operation(manifest, operation, safe_arguments)
+        if operation_class != OperationClass.READ:
+            approval_response = await self._resolve_call_approval(
+                connector, operation, operation_class, safe_arguments, approval_id, ctx
+            )
+            if approval_response is not None:
+                return approval_response
+        try:
+            result = await self.runtime.call(manifest, operation, safe_arguments)
+        except ConnectorRuntimeError as exc:
+            return {"status": exc.status.value, "retryable": exc.retryable, "error": str(exc)}
+        if ctx is not None:
+            await ctx.session.send_tool_list_changed()
+            await ctx.session.send_resource_list_changed()
+        return {"status": "OK", "content": result}
+
+    async def _status_for_connector(
+        self,
+        connector: str,
+        probe: bool,
+        ctx: Context | None,
+    ) -> dict[str, Any]:
+        """Resuelve `antigravity_status` cuando se pide un connector puntual."""
+        manifest = self.registry.get(connector)
+        if manifest is None:
+            return {"status": "NOT_FOUND", "error": f"Connector '{connector}' was not found"}
+        if not probe:
+            return {
+                "status": "OK",
+                "content": next(
+                    item for item in self.registry.safe_catalog() if item["id"] == connector
+                ),
+            }
+        try:
+            result = await self.runtime.probe(manifest)
+        except ConnectorRuntimeError as exc:
+            return {"status": exc.status.value, "retryable": exc.retryable, "error": str(exc)}
+        if ctx is not None:
+            await ctx.session.send_tool_list_changed()
+            await ctx.session.send_resource_list_changed()
+        return {"status": "OK", "content": result}
+
+    async def _status_execute(
+        self,
+        connector: str | None,
+        probe: bool,
+        ctx: Context | None,
+    ) -> dict[str, Any]:
+        """Ejecuta la logica real de `antigravity_status`."""
+        if connector:
+            return await self._status_for_connector(connector, probe, ctx)
+        statuses: dict[str, int] = {}
+        catalog = self.registry.safe_catalog()
+        for item in catalog:
+            statuses[item["status"]] = statuses.get(item["status"], 0) + 1
+        return {
+            "status": "OK",
+            "content": {
+                "broker": "ready",
+                "protocol_version": "2025-11-25",
+                "meta_tools": list(META_TOOL_NAMES),
+                "tool_count": len(META_TOOL_NAMES),
+                "legacy_profile": os.environ.get("ANTIGRAVITY_MCP_LEGACY_TOOLS", "").lower()
+                in {"1", "true", "yes", "on"},
+                "connectors": {"total": len(catalog), "by_status": statuses},
+            },
+        }
+
     def _register_meta_tools(self) -> None:
         @self.mcp.tool(
             name="antigravity_search",
-            description="Search agents, skills and connectors without loading them.",
+            description=(
+                "Search agents, skills and connectors without loading them. "
+                "Ranked results; paginate with limit (max 500) and offset — "
+                "the response includes the real total."
+            ),
             structured_output=True,
         )
         async def antigravity_search(
             query: str,
             kinds: list[str] | None = None,
             limit: int = 20,
-        ) -> dict[str, Any]:
+            offset: int = 0,
+        ) -> BrokerEnvelope:
             requested_kinds = {kind.lower() for kind in (kinds or ["agent", "skill", "connector"])}
-
-            async def execute(trace_id: str) -> dict[str, Any]:
-                del trace_id
-                normalized = query.strip().lower()
-                candidates: list[dict[str, Any]] = []
-                if "agent" in requested_kinds:
-                    candidates.extend(self._agents())
-                if "skill" in requested_kinds:
-                    candidates.extend(await self._skills())
-                if "connector" in requested_kinds:
-                    candidates.extend(
-                        {
-                            **connector,
-                            "name": connector["id"],
-                            "kind": "connector",
-                        }
-                        for connector in self.registry.safe_catalog()
-                    )
-
-                def score(item: dict[str, Any]) -> tuple[int, str]:
-                    name = str(item.get("name", "")).lower()
-                    description = str(item.get("description", "")).lower()
-                    if not normalized:
-                        relevance = 1
-                    elif name == normalized:
-                        relevance = 100
-                    elif name.startswith(normalized):
-                        relevance = 70
-                    elif normalized in name:
-                        relevance = 50
-                    elif normalized in description:
-                        relevance = 20
-                    else:
-                        relevance = 0
-                    return relevance, name
-
-                ranked = [
-                    (score(item), item)
-                    for item in candidates
-                    if not normalized or score(item)[0] > 0
-                ]
-                ranked.sort(key=lambda pair: (-pair[0][0], pair[0][1]))
-                safe_limit = min(max(limit, 1), 100)
-                results = [item for _, item in ranked[:safe_limit]]
-                return {
-                    "status": "OK",
-                    "content": {
-                        "query": query,
-                        "total": len(ranked),
-                        "results": results,
-                    },
-                }
-
-            return await self._recorded("search", query, execute)
+            return await self._recorded(
+                "search",
+                query,
+                lambda _trace_id: self._search_execute(query, requested_kinds, limit, offset),
+            )
 
         @self.mcp.tool(
             name="antigravity_describe",
             description="Describe one agent, skill or connector before using it.",
             structured_output=True,
         )
-        async def antigravity_describe(kind: str, name: str) -> dict[str, Any]:
-            async def execute(trace_id: str) -> dict[str, Any]:
-                del trace_id
-                normalized_kind = kind.lower()
-                if normalized_kind == "agent":
-                    item = next((item for item in self._agents() if item["name"] == name), None)
-                elif normalized_kind == "skill":
-                    item = next(
-                        (item for item in await self._skills() if item["name"] == name), None
-                    )
-                    if item:
-                        skill_path = self._resolve_skill_path(name)
-                        item = {
-                            **item,
-                            "content": (
-                                skill_path.read_text(encoding="utf-8", errors="replace")
-                                if skill_path
-                                else ""
-                            ),
-                        }
-                elif normalized_kind == "connector":
-                    connector = self.registry.get(name)
-                    item = None
-                    if connector:
-                        item = {
-                            **connector.model_dump(mode="json"),
-                            "status": self.registry.status(connector).value,
-                            "missing_secrets": self.registry.required_secrets_missing(connector),
-                        }
-                        item["auth"].pop("header_from_env", None)
-                else:
-                    return {
-                        "status": "ERROR",
-                        "error": "kind must be agent, skill or connector",
-                    }
-                if item is None:
-                    return {"status": "NOT_FOUND", "error": f"{kind} '{name}' was not found"}
-                return {"status": "OK", "content": item}
-
-            return await self._recorded("describe", f"{kind}:{name}", execute)
+        async def antigravity_describe(kind: str, name: str) -> BrokerEnvelope:
+            return await self._recorded(
+                "describe",
+                f"{kind}:{name}",
+                lambda _trace_id: self._describe_execute(kind, name),
+            )
 
         @self.mcp.tool(
             name="antigravity_run_agent",
@@ -389,7 +559,7 @@ class AntigravityMcpBroker:
             name: str,
             task: str,
             timeout_seconds: int = 120,
-        ) -> dict[str, Any]:
+        ) -> BrokerEnvelope:
             return await self._run_agent(name, task, timeout_seconds)
 
         @self.mcp.tool(
@@ -401,7 +571,7 @@ class AntigravityMcpBroker:
             name: str,
             input: str,
             timeout_seconds: int = 120,
-        ) -> dict[str, Any]:
+        ) -> BrokerEnvelope:
             return await self._run_skill(name, input, timeout_seconds)
 
         @self.mcp.tool(
@@ -418,82 +588,15 @@ class AntigravityMcpBroker:
             arguments: dict[str, Any] | None = None,
             approval_id: str | None = None,
             ctx: Context | None = None,
-        ) -> dict[str, Any]:
+        ) -> BrokerEnvelope:
             safe_arguments = arguments or {}
-
-            async def execute(trace_id: str) -> dict[str, Any]:
-                del trace_id
-                manifest = self.registry.get(connector)
-                if manifest is None:
-                    return {
-                        "status": "NOT_FOUND",
-                        "error": f"Connector '{connector}' was not found",
-                    }
-                operation_class = self.registry.classify_operation(
-                    manifest,
-                    operation,
-                    safe_arguments,
-                )
-                if operation_class != OperationClass.READ:
-                    approved = False
-                    if approval_id:
-                        approved = self.state.consume_approval(
-                            approval_id,
-                            connector,
-                            operation,
-                            safe_arguments,
-                        )
-                    if not approved:
-                        approval = self.state.request_approval(
-                            connector,
-                            operation,
-                            operation_class,
-                            safe_arguments,
-                        )
-                        if ctx is not None and self._supports_elicitation(ctx):
-                            decision = await ctx.elicit(
-                                (
-                                    f"Allow one {operation_class.value} operation "
-                                    f"'{operation}' on connector '{connector}'?"
-                                ),
-                                ApprovalDecision,
-                            )
-                            if (
-                                decision.action == "accept"
-                                and decision.data is not None
-                                and decision.data.approve
-                            ):
-                                self.state.resolve_approval(approval.approval_id, approved=True)
-                                approved = self.state.consume_approval(
-                                    approval.approval_id,
-                                    connector,
-                                    operation,
-                                    safe_arguments,
-                                )
-                        if not approved:
-                            return {
-                                "status": "APPROVAL_REQUIRED",
-                                "approval_id": approval.approval_id,
-                                "content": {
-                                    "connector": connector,
-                                    "operation": operation,
-                                    "operation_class": operation_class.value,
-                                },
-                            }
-                try:
-                    result = await self.runtime.call(manifest, operation, safe_arguments)
-                except ConnectorRuntimeError as exc:
-                    return {
-                        "status": exc.status.value,
-                        "retryable": exc.retryable,
-                        "error": str(exc),
-                    }
-                if ctx is not None:
-                    await ctx.session.send_tool_list_changed()
-                    await ctx.session.send_resource_list_changed()
-                return {"status": "OK", "content": result}
-
-            return await self._recorded("connector.call", f"{connector}:{operation}", execute)
+            return await self._recorded(
+                "connector.call",
+                f"{connector}:{operation}",
+                lambda _trace_id: self._call_execute(
+                    connector, operation, safe_arguments, approval_id, ctx
+                ),
+            )
 
         @self.mcp.tool(
             name="antigravity_status",
@@ -504,56 +607,12 @@ class AntigravityMcpBroker:
             connector: str | None = None,
             probe: bool = False,
             ctx: Context | None = None,
-        ) -> dict[str, Any]:
-            async def execute(trace_id: str) -> dict[str, Any]:
-                del trace_id
-                if connector:
-                    manifest = self.registry.get(connector)
-                    if manifest is None:
-                        return {
-                            "status": "NOT_FOUND",
-                            "error": f"Connector '{connector}' was not found",
-                        }
-                    if probe:
-                        try:
-                            result = await self.runtime.probe(manifest)
-                        except ConnectorRuntimeError as exc:
-                            return {
-                                "status": exc.status.value,
-                                "retryable": exc.retryable,
-                                "error": str(exc),
-                            }
-                        if ctx is not None:
-                            await ctx.session.send_tool_list_changed()
-                            await ctx.session.send_resource_list_changed()
-                        return {"status": "OK", "content": result}
-                    return {
-                        "status": "OK",
-                        "content": next(
-                            item for item in self.registry.safe_catalog() if item["id"] == connector
-                        ),
-                    }
-                statuses: dict[str, int] = {}
-                catalog = self.registry.safe_catalog()
-                for item in catalog:
-                    statuses[item["status"]] = statuses.get(item["status"], 0) + 1
-                return {
-                    "status": "OK",
-                    "content": {
-                        "broker": "ready",
-                        "protocol_version": "2025-11-25",
-                        "meta_tools": list(META_TOOL_NAMES),
-                        "tool_count": len(META_TOOL_NAMES),
-                        "legacy_profile": os.environ.get("ANTIGRAVITY_MCP_LEGACY_TOOLS", "").lower()
-                        in {"1", "true", "yes", "on"},
-                        "connectors": {
-                            "total": len(catalog),
-                            "by_status": statuses,
-                        },
-                    },
-                }
-
-            return await self._recorded("status", connector, execute)
+        ) -> BrokerEnvelope:
+            return await self._recorded(
+                "status",
+                connector,
+                lambda _trace_id: self._status_execute(connector, probe, ctx),
+            )
 
     def _register_resources(self) -> None:
         @self.mcp.resource(
@@ -661,7 +720,7 @@ class AntigravityMcpBroker:
         name: str,
         task: str,
         timeout_seconds: int,
-    ) -> dict[str, Any]:
+    ) -> BrokerEnvelope:
         async def execute(trace_id: str) -> dict[str, Any]:
             del trace_id
             if name not in {agent["name"] for agent in self._agents()}:
@@ -694,13 +753,39 @@ class AntigravityMcpBroker:
         name: str,
         user_input: str,
         timeout_seconds: int,
-    ) -> dict[str, Any]:
+    ) -> BrokerEnvelope:
         async def execute(trace_id: str) -> dict[str, Any]:
             del trace_id
             skill_path = self._resolve_skill_path(name)
             if skill_path is None:
                 return {"status": "NOT_FOUND", "error": f"Skill '{name}' was not found"}
             timeout = min(max(timeout_seconds, 1), 600)
+
+            # Script-first (2026-08-10): si el skill tiene scripts/main.py se
+            # ejecuta de forma determinista; delegar el prompt al orchestrator
+            # es solo el fallback para skills prompt-only (evita que el tier
+            # SIMULATED devuelva texto inventado como si fuera la ejecucion).
+            try:
+                script_result = await self.gateway.run_skill_script(
+                    skill_path.parent, user_input, timeout
+                )
+            except TimeoutError:
+                return {
+                    "status": "TIMEOUT",
+                    "retryable": True,
+                    "error": f"Skill script timed out after {timeout} seconds",
+                }
+            if script_result is not None:
+                return {
+                    "status": "OK",
+                    "content": {
+                        "skill": name,
+                        "source": self._skill_source(skill_path),
+                        "mode": "script",
+                        "result": script_result,
+                    },
+                }
+
             executor = self.gateway.executor or await self.gateway.get_executor()
             if executor is None:
                 return {
@@ -725,6 +810,7 @@ class AntigravityMcpBroker:
                 "content": {
                     "skill": name,
                     "source": self._skill_source(skill_path),
+                    "mode": "agent",
                     "result": result,
                 },
             }

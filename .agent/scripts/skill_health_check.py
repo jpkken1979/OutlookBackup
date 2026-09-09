@@ -21,6 +21,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+# Forzar UTF-8 en stdout/stderr para evitar UnicodeEncodeError en consolas
+# Windows que usan cp1252 por defecto.
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in {"utf-8", "utf8"}:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+
 # Configuración de logging
 logging.basicConfig(
     level=logging.INFO,

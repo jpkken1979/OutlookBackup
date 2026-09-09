@@ -34,9 +34,22 @@ import argparse
 import json
 import logging
 import os
+import socket
+import sys
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
+
+# Running this file directly sets ``sys.path[0]`` to ``.agent/core``.  In an
+# environment that also contains an older installed ``core`` package, absolute
+# imports would then resolve to site-packages instead of this worktree.  Put the
+# package parent first before importing any sibling module so the documented CLI
+# always executes the checked-out runtime.
+if __package__ in {None, ""}:
+    agent_dir = str(Path(__file__).resolve().parents[1])
+    if agent_dir not in sys.path:
+        sys.path.insert(0, agent_dir)
 
 from core.provider_catalog import ProviderConfig, build_providers
 
@@ -57,12 +70,15 @@ PROXY_BASE_URL = "http://127.0.0.1:4747/claudeproxy"
 PROVIDER_ENV_KEYS: tuple[str, ...] = (
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
     "ANTHROPIC_MODEL",
     "ANTHROPIC_SMALL_FAST_MODEL",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "API_TIMEOUT_MS",
+    "API_FORCE_IDLE_TIMEOUT",
+    "ENABLE_TOOL_SEARCH",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
 )
 
@@ -128,7 +144,9 @@ def _is_local_url(url: str) -> bool:
     Returns:
         True si es un host local (Ollama/LM Studio), False si es remoto.
     """
-    return any(host in url for host in ("localhost", "127.0.0.1", "0.0.0.0"))
+    # nosec B104: "0.0.0.0" es un literal a COMPARAR contra la URL del provider,
+    # no una direccion de bind — aca no se abre ningun socket.
+    return any(host in url for host in ("localhost", "127.0.0.1", "0.0.0.0"))  # nosec B104
 
 
 # Las tres tuplas de routability se DERIVAN del catalogo (campos `wire`/`routable` de cada
@@ -142,7 +160,7 @@ def _is_local_url(url: str) -> bool:
 # - PROXY_ROUTABLE: todo lo que el proxy puede activar como backend (todos los `routable`).
 #   switch_provider/set_hotswap validan contra esta (NO contra PROXY_COMPATIBLE, reservada
 #   para shadow/class-routing en formato Anthropic). Incluye los OpenAI remotos ruteables
-#   (OpenRouter, OpenCode Zen). NVIDIA queda afuera (routable=False en el catalogo).
+#   declarados en el catalogo y traducidos por ``openai_translator``.
 PROXY_COMPATIBLE: tuple[str, ...] = tuple(
     pid for pid, cfg in PROVIDERS.items() if cfg.routable and cfg.wire == "anthropic"
 )
@@ -152,6 +170,11 @@ OPENAI_LOCAL: tuple[str, ...] = tuple(
     if cfg.routable and cfg.wire == "openai" and _is_local_url(cfg.base_url)
 )
 PROXY_ROUTABLE: tuple[str, ...] = tuple(pid for pid, cfg in PROVIDERS.items() if cfg.routable)
+
+# Estos catálogos declaran únicamente modelos que el proxy actual puede enviar
+# por ``/chat/completions``. El endpoint remoto puede listar otros protocolos;
+# no se permite que un cache, override o modelo manual los reintroduzca.
+STRICT_CHAT_CATALOG_PROVIDERS = frozenset({"opencode"})
 
 
 class ProviderError(ValueError):
@@ -218,7 +241,7 @@ def _discover_local_model(provider_id: str, base_url: str) -> str | None:
 
     try:
         # URL derivada de config interna y siempre localhost; no es input del usuario.
-        with urllib.request.urlopen(url, timeout=3) as resp:  # noqa: S310
+        with urllib.request.urlopen(url, timeout=3) as resp:  # nosec B310
             data = json.loads(resp.read().decode("utf-8"))
     except Exception:  # noqa: BLE001 — best-effort: cualquier fallo cae al fallback
         return None
@@ -243,8 +266,9 @@ def _resolve_model(cfg: ProviderConfig, model: str | None, root: Path) -> str:
 
     Si `model` viene explicito, se respeta tal cual (el provider lo valida). Si no,
     delega en `model_resolver` que elige el mas nuevo (override env -> cache -> fetch
-    /v1/models -> el mas nuevo de la lista conocida). La lista `cfg.models` ya NO es
-    una whitelist bloqueante: un modelo nuevo no listado se acepta, solo se loguea.
+    /v1/models -> el mas nuevo de la lista conocida). La lista `cfg.models` no es una
+    whitelist bloqueante salvo para los catálogos Chat estrictos: allí un modelo nuevo
+    puede requerir otro protocolo y debe usarse desde su cliente nativo.
 
     Args:
         cfg: Configuracion del provider.
@@ -258,6 +282,11 @@ def _resolve_model(cfg: ProviderConfig, model: str | None, root: Path) -> str:
 
     if model and model.strip():
         chosen = model.strip()
+        if cfg.id in STRICT_CHAT_CATALOG_PROVIDERS and chosen not in cfg.models:
+            raise ProviderError(
+                f"Modelo '{chosen}' no está verificado para el adaptador Chat de "
+                f"{cfg.name}. Usá OpenCode directo para modelos Zen/Go con otros protocolos."
+            )
         if cfg.models and chosen not in cfg.models:
             logger.warning(
                 "Modelo '%s' no esta en la lista conocida de %s %s; se acepta igual "
@@ -273,6 +302,24 @@ def _resolve_model(cfg: ProviderConfig, model: str | None, root: Path) -> str:
     # el formato propio de Ollama (/api/tags), por eso se resuelve aparte aca.
     if cfg.id in OPENAI_LOCAL:
         return _discover_local_model(cfg.id, cfg.base_url) or cfg.default_model
+
+    if cfg.id in STRICT_CHAT_CATALOG_PROVIDERS:
+        # No delegar en resolve_default_model: un cache legado o un override de
+        # entorno podría contener un modelo Go Messages y enviarlo por Chat.
+        override = os.environ.get(f"ANTIGRAVITY_{cfg.id.upper()}_MODEL", "").strip()
+        if override:
+            if override in cfg.models:
+                return override
+            logger.warning(
+                "Override de %s ignorado: %s no está verificado para Chat.",
+                cfg.name,
+                override,
+            )
+        cached_or_known = list_models(cfg.id, root=root, allow_fetch=False)
+        return next(
+            (candidate for candidate in cached_or_known if candidate in cfg.models),
+            cfg.default_model,
+        )
 
     api_key = get_api_key_from_env(root, cfg.api_key_env) if cfg.api_key_env else None
     return model_resolver.resolve_default_model(
@@ -346,6 +393,8 @@ def _write_json(path: Path, data: dict) -> None:
             try:
                 os.unlink(tmp)
             except OSError:
+                # ponytail: best-effort cleanup del temporal; si el replace ya
+                # falló, un fallo adicional limpiando no cambia el resultado.
                 pass
 
 
@@ -406,6 +455,8 @@ def get_api_key_from_env(root: Path, key_name: str) -> str | None:
                 if val:
                     return val
     except OSError:
+        # ponytail: .env ilegible/ausente — se cae al env real de abajo,
+        # que es el fallback intencional de esta función.
         pass
     fallback = os.environ.get(key_name, "").strip()
     return fallback or None
@@ -573,7 +624,7 @@ def _strip_all(settings: dict) -> None:
         settings.pop(key, None)
 
 
-def _clear_project_provider_env(root: Path) -> None:
+def _clear_project_provider_env(root: Path) -> bool:
     """Quita SOLO las env vars de provider del settings.local.json del proyecto.
 
     Mejora sobre el Rust (que borraba todo el bloque `env`): preserva variables
@@ -581,11 +632,11 @@ def _clear_project_provider_env(root: Path) -> None:
     """
     path = project_settings_path(root)
     if not path.exists():
-        return
+        return False
     settings = _read_json(path)
     env = settings.get("env")
     if not isinstance(env, dict):
-        return
+        return False
     changed = False
     for key in PROVIDER_ENV_KEYS:
         if key in env:
@@ -593,9 +644,84 @@ def _clear_project_provider_env(root: Path) -> None:
             changed = True
     if changed:
         _write_json(path, settings)
+        _mark_user_command("clear_project_provider_env")
+    return changed
 
 
 # ── API publica ──────────────────────────────────────────────────────────────
+
+
+# Cache de sondeos locales con TTL. Antes se limpiaba entera al inicio de cada
+# get_overview(), asi que `/v1/routing/status` —que llama al overview y ademas lo
+# adjunta— pagaba el connect TCP dos veces por render, y con `localhost` (que en
+# Windows resuelve ::1 y 127.0.0.1) eran hasta seis intentos de 150 ms bloqueando
+# el event loop del gateway. Con TTL el costo se amortiza y el flag sigue siendo
+# fresco para la UI, que pollea cada 15-20s.
+_LOCAL_PROBE_TTL_S = 10.0
+_local_probe_cache: dict[tuple[str, int], tuple[float, bool]] = {}
+
+
+def local_endpoint_available(base_url: str) -> bool:
+    """Indica si el provider esta alcanzable, sondeando solo los locales.
+
+    Para providers remotos siempre devuelve ``True``: saberlo de verdad exigiria
+    una llamada de red por render de la UI. Para los de loopback (ollama,
+    lmstudio, el bridge opencodex) un connect TCP de 150 ms alcanza y evita
+    mentir.
+
+    Antes este flag era ``True`` fijo para todos, asi que el panel ofrecia
+    ``opencodex`` como disponible aunque nada escuchara en :10100 y elegirlo
+    fallaba (verificado 2026-07-28).
+
+    Args:
+        base_url: Base URL del provider tal como esta en el catalogo.
+
+    Returns:
+        True si es remoto o si el puerto local acepta conexiones.
+    """
+    if not base_url:
+        return True
+
+    try:
+        parsed = urllib.parse.urlparse(base_url)
+    except ValueError:
+        return True
+
+    host = (parsed.hostname or "").lower()
+    if host not in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}:  # nosec B104
+        return True
+
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    clave = (host, port)
+    cacheado = _local_probe_cache.get(clave)
+    if cacheado is not None and (time.monotonic() - cacheado[0]) < _LOCAL_PROBE_TTL_S:
+        return cacheado[1]
+
+    try:
+        with socket.create_connection((host, port), timeout=0.15):
+            disponible = True
+    except OSError:
+        disponible = False
+
+    _local_probe_cache[clave] = (time.monotonic(), disponible)
+    return disponible
+
+
+def _proxy_connection_scope(global_settings: dict, project_settings: dict) -> tuple[bool, str]:
+    """Return the effective proxy connection and its Claude settings scope."""
+    global_env = global_settings.get("env")
+    project_env = project_settings.get("env")
+    global_connected = (
+        (global_env if isinstance(global_env, dict) else {}).get("ANTHROPIC_BASE_URL", "") or ""
+    ) == PROXY_BASE_URL
+    project_connected = (
+        (project_env if isinstance(project_env, dict) else {}).get("ANTHROPIC_BASE_URL", "") or ""
+    ) == PROXY_BASE_URL
+    if project_connected:
+        return True, "project"
+    if global_connected:
+        return True, "global"
+    return False, "none"
 
 
 def get_overview(root: Path | None = None) -> dict:
@@ -609,42 +735,84 @@ def get_overview(root: Path | None = None) -> dict:
         providers[], diagnosis, etc.
     """
     root = root or default_root()
-    settings_path = user_settings_path()
-    settings = _read_json(settings_path)
+    global_settings_path = user_settings_path()
+    project_path = project_settings_path(root)
+    global_settings = _read_json(global_settings_path)
+    project_settings = _read_json(project_path)
+
+    # Claude Code aplica settings.local.json sobre settings.json. El overview
+    # historicamente miraba solo el global, por lo que un switch scope=project
+    # funcionaba en el proceso pero Nexus seguia mostrando Claude. Reproducimos
+    # la precedencia efectiva sin mutar ninguno de los dos documentos.
+    global_env = global_settings.get("env")
+    project_env = project_settings.get("env")
+    proxy_connected, proxy_scope = _proxy_connection_scope(global_settings, project_settings)
+    settings = {**global_settings, **project_settings}
+    settings["env"] = {
+        **(global_env if isinstance(global_env, dict) else {}),
+        **(project_env if isinstance(project_env, dict) else {}),
+    }
+    project_has_provider_override = any(
+        key in (project_env if isinstance(project_env, dict) else {}) for key in PROVIDER_ENV_KEYS
+    )
+    settings_path = project_path if project_has_provider_override else global_settings_path
     active, active_model = detect_active(settings)
 
-    env = settings.get("env") or {}
-    proxy_connected = (env.get("ANTHROPIC_BASE_URL", "") or "") == PROXY_BASE_URL
-
     from core import proxy_state as _ps
+    from core.provider_access import (
+        get_openai_access_state,
+        get_opencodex_provider_access_state,
+    )
+    from core import model_resolver, models_dev
 
     fallback = _ps.get_fallback() if proxy_connected else None
     circuit = _ps.get_circuit() if proxy_connected else {}
     recovery_events = _ps.get_recovery_events(limit=5) if proxy_connected else []
-    backup_available = bool(settings.get("_provider_backup_env")) or backup_path().exists()
+    backup_available = bool(global_settings.get("_provider_backup_env")) or backup_path().exists()
 
+    openai_access = get_openai_access_state()
+    bridge_access = {
+        "antigravity": get_opencodex_provider_access_state("google-antigravity"),
+        "github-copilot": get_opencodex_provider_access_state("github-copilot"),
+    }
     providers = []
     for pid, cfg in PROVIDERS.items():
         has_key = True
         if cfg.api_key_env:
             has_key = get_api_key_from_env(root, cfg.api_key_env) is not None
+        elif pid in bridge_access:
+            has_key = bridge_access[pid]["oauth_session_detected"]
+        # El overview se consulta con frecuencia desde Nexus: usa solo caché o
+        # fallback y nunca hace red. Conservamos los flags de gratuidad que el
+        # refresco oficial escribió, más las convenciones explícitas del id.
+        models = list_models(pid, root=root, allow_fetch=False)
+        cached_free = model_resolver.cached_free_model_ids(pid)
         providers.append(
             {
                 "id": cfg.id,
                 "name": cfg.name,
-                "available": True,
+                "available": local_endpoint_available(cfg.base_url),
                 "has_api_key": has_key,
                 # allow_fetch=False: el overview lo consulta la UI en cada
                 # render — usa cache compartido o lista conocida, nunca la red.
-                "models": list_models(pid, root=root, allow_fetch=False),
+                "models": models,
                 "active": pid == active,
                 "active_model": active_model if pid == active else None,
                 "wire": cfg.wire,
                 "routable": cfg.routable,
+                "auth_mode": cfg.auth_mode,
+                "credential_env": cfg.api_key_env,
+                "setup_hint": cfg.setup_hint,
+                "protocol": cfg.protocol,
+                "transport": cfg.transport,
+                "remote_control": cfg.remote_control,
+                "category": cfg.category,
+                "default_visible": cfg.default_visible,
+                "access": (openai_access if pid == "opencodex" else bridge_access.get(pid)),
                 "free_models": [
                     model
-                    for model in list_models(pid, root=root, allow_fetch=False)
-                    if model.endswith(":free")
+                    for model in models
+                    if model in cached_free or models_dev.model_is_free(model)
                 ],
             }
         )
@@ -709,6 +877,7 @@ def get_overview(root: Path | None = None) -> dict:
         "active_provider_name": PROVIDERS[active].name,
         "active_model": active_model,
         "proxy_connected": proxy_connected,
+        "proxy_scope": proxy_scope,
         "needs_restart": False,
         "has_api_key": active != "claude",
         "backup_available": backup_available,
@@ -811,7 +980,7 @@ def switch_provider(
     (passthrough OAuth nativo de Claude Code, sin token en el env).
 
     Args:
-        provider_id: claude | minimax | zai | nvidia | ollama | lmstudio.
+        provider_id: ID declarativo presente en ``PROVIDERS``.
         model: Modelo a usar (default: el del provider).
         root: Raiz del proyecto (default: auto).
         scope: "global" (~/.claude/settings.json, default) o "project"
@@ -836,7 +1005,7 @@ def switch_provider(
     if pid not in PROXY_ROUTABLE:
         raise ProviderError(
             f"{cfg.name} no se puede enrutar por el proxy todavia "
-            f"(formato OpenAI remoto sin bridge de traduccion). "
+            f"(protocolo o transporte sin adaptador de proxy). "
             f"Routables: {list(PROXY_ROUTABLE)}."
         )
 
@@ -871,6 +1040,7 @@ def switch_provider(
             "active_provider_name": cfg.name,
             "active_model": chosen,
             "proxy_connected": True,
+            "proxy_scope": "project",
             "needs_restart": False,
             "settings_path": str(path),
             "diagnosis": (
@@ -928,24 +1098,56 @@ def disable_provider(root: Path | None = None, scope: str = "global") -> dict:
     root = root or default_root()
 
     if scope == "project":
+        from core import proxy_state
+
         _clear_project_provider_env(root)
-        connected = (_read_json(user_settings_path()).get("env") or {}).get(
-            "ANTHROPIC_BASE_URL", ""
-        ) == PROXY_BASE_URL
-        logger.info("Override de provider del proyecto removido")
-        return {
-            "scope": "project",
-            "active_provider": "claude",
-            "active_provider_name": "Claude (Anthropic)",
-            "active_model": "claude-sonnet-4-6",
-            "proxy_connected": connected,
-            "needs_restart": False,
-            "settings_path": str(project_settings_path(root)),
-            "diagnosis": "Override de provider del proyecto removido; hereda el provider global.",
-        }
+        # El backend activo vive en proxy_state y es compartido por los scopes.
+        # Antes solo se quitaba el override local: con un proxy global heredado,
+        # active_provider seguia en z.ai/MiniMax y "Volver a Claude" era un no-op.
+        proxy_state.set_active("claude", "claude-sonnet-4-6")
+        logger.info("Project provider override cleared; Claude selected in proxy state")
+        result = get_overview(root)
+        result["scope"] = "project"
+        result["needs_restart"] = False
+        return result
 
     # Global: Claude via proxy (proxy-always). needs_restart siempre False.
     return _activate_claude_via_proxy(root)
+
+
+def activate_claude_native(root: Path | None = None) -> dict:
+    """Vuelve a Claude OAuth directo, sin proxy, limpiando global y proyecto.
+
+    Esta accion es deliberadamente distinta de ``disable_provider``: el hot-swap
+    normal conserva el proxy para mantener la conversación; el modo nativo quita
+    ``ANTHROPIC_BASE_URL`` de ambos scopes para recuperar las funciones first-party
+    de Claude Code (incluido Remote Control).
+    """
+    from core import proxy_state
+
+    root = root or default_root()
+    settings_path = user_settings_path()
+    settings = _read_json(settings_path)
+    global_changed = _remove_proxy_base_url(settings)
+    for key in ("_active_provider", "_active_model"):
+        settings.pop(key, None)
+    _write_json(settings_path, settings)
+
+    project_changed = _clear_project_provider_env(root)
+    proxy_state.set_active("claude", "claude-sonnet-4-6")
+
+    logger.info(
+        "Claude native OAuth restored; global_changed=%s project_changed=%s",
+        global_changed,
+        project_changed,
+    )
+    result = get_overview(root)
+    result["needs_restart"] = global_changed or project_changed
+    result["diagnosis"] = (
+        "Claude nativo por OAuth, sin proxy en el scope global ni en el proyecto. "
+        "Remote Control disponible."
+    )
+    return result
 
 
 def reset_to_proxy_always(root: Path | None = None) -> dict:
@@ -1012,6 +1214,66 @@ def _is_proxy_connected(settings: dict) -> bool:
     env = settings.get("env") or {}
     base = env.get("ANTHROPIC_BASE_URL", "") or ""
     return base == PROXY_BASE_URL
+
+
+def disconnect_to_native_claude(root: Path | None = None) -> dict:
+    """Desconecta el proxy para hablar directamente con Anthropic.
+
+    Quita SOLO la key ``ANTHROPIC_BASE_URL`` del bloque ``env`` (backup antes,
+    conservando el resto). La sesion queda hablando directo con Anthropic, sin
+    proxy ni failover automatico de providers alternativos.
+
+    Historial: el subcomando CLI ``disconnect`` despachaba al deprecado
+    :func:`disconnect_proxy`, que via :func:`reset_to_proxy_always`
+    RECONECTABA el proxy. Corregido 2026-08-11.
+
+    Remote Control y el proxy pueden coexistir en Claude Code 2.1.225. Esta
+    operacion no habilita ni deshabilita Remote Control: solo sale del camino
+    proxy cuando se quiere Claude nativo puro.
+
+    Args:
+        root: Raiz del proyecto (default: auto).
+
+    Returns:
+        Dict con ``proxy_connected=False``, ``native_claude=True``,
+        ``failover_available=False`` y el estado de reinicio.
+    """
+    root = root or default_root()
+    settings_path = user_settings_path()
+    settings = _read_json(settings_path)
+    env = settings.get("env") or {}
+    was_connected = bool((env.get("ANTHROPIC_BASE_URL") or "").strip())
+
+    if was_connected:
+        backup = backup_path()
+        if not backup.exists():
+            _write_json(backup, settings)
+        env.pop("ANTHROPIC_BASE_URL", None)
+        settings["env"] = env
+        _write_json(settings_path, settings)
+        logger.info("Proxy desconectado: ANTHROPIC_BASE_URL removida de %s", settings_path)
+    else:
+        logger.info("Proxy ya estaba desconectado (ANTHROPIC_BASE_URL ausente)")
+
+    _clear_project_provider_env(root)
+
+    return {
+        "proxy_connected": False,
+        "native_claude": True,
+        "failover_available": False,
+        "needs_restart": was_connected,
+        "diagnosis": (
+            "Proxy desconectado: las sesiones nuevas hablan directo con Anthropic, "
+            "SIN failover automatico de provider "
+            "hasta reconectar (`provider_switch.py connect`). "
+            + ("Reiniciar Claude Code para que tome efecto." if was_connected else "")
+        ),
+    }
+
+
+def disconnect_for_remote_control(root: Path | None = None) -> dict:
+    """Alias compatible; desconectar el proxy es independiente de Remote Control."""
+    return disconnect_to_native_claude(root)
 
 
 def disconnect_proxy(root: Path | None = None) -> dict:
@@ -1224,16 +1486,18 @@ def list_models(
 ) -> list[str]:
     """Lista los modelos de un provider (dinamica: cache -> fetch -> conocida).
 
-    Para providers con familia declarada (minimax/zai) la lista ya NO es la
-    constante hardcodeada: se resuelve con la misma cascada del default
-    (cache compartido -> ``/v1/models`` real del provider -> lista conocida
-    como fallback offline). Providers "libres" (claude, ollama, lmstudio)
-    siguen devolviendo vacio; los sin familia devuelven su lista estatica.
+    La lista se resuelve con la misma cascada del default (cache compartido ->
+    endpoint ``/models`` solo para protocolos ya validados -> lista conocida como
+    fallback offline). Un provider sin familia también puede conservar una caché
+    oficial: la familia solo filtra catálogos que mezclan líneas ajenas.
 
     Args:
         provider_id: Id del provider (``minimax``, ``zai``, ...).
         root: Raiz del proyecto para leer la API key del ``.env`` (default: auto).
-        allow_fetch: ``False`` para contextos no bloqueantes (overview/UI).
+        allow_fetch: ``False`` para contextos no bloqueantes (overview/UI). Un
+            fetch genérico solo se permite cuando el catálogo declara una familia
+            compatible con el adaptador Chat actual; los demás usan caché oficial
+            o su lista validada.
 
     Returns:
         Ids ordenados newest-first, o vacia si el provider es libre/desconocido.
@@ -1244,21 +1508,27 @@ def list_models(
     cfg = PROVIDERS.get(pid)
     if cfg is None:
         return []
-    if not cfg.family:
-        # Sin familia no hay discovery confiable: estatica tal cual (o "libre").
-        return list(cfg.models)
-
     api_key = None
     if cfg.api_key_env:
         api_key = get_api_key_from_env(root or default_root(), cfg.api_key_env)
-    return model_resolver.resolve_models(
+    models = model_resolver.resolve_models(
         pid,
         known_models=cfg.models,
         base_url=cfg.base_url,
         api_key=api_key,
         family=cfg.family,
-        allow_fetch=allow_fetch,
+        # No todos los endpoints ``/models`` anuncian modelos servibles por el
+        # adaptador Chat de Nexus (pueden mezclar embeddings, audio o Responses).
+        # Los catálogos oficiales enriquecidos (OpenRouter/OpenCode) siguen
+        # funcionando desde cache aunque ``cfg.family`` sea vacío.
+        allow_fetch=allow_fetch and bool(cfg.family),
     )
+    if pid in STRICT_CHAT_CATALOG_PROVIDERS:
+        approved = [model for model in models if model in cfg.models]
+        # Un cache de una versión anterior puede mezclar modelos Messages o IDs
+        # sin ruta publicada. Nunca lo devolvemos al selector ni al proxy.
+        return approved or list(cfg.models)
+    return models
 
 
 def discover_models(provider_id: str, root: Path | None = None) -> dict:
@@ -1289,6 +1559,8 @@ def discover_models(provider_id: str, root: Path | None = None) -> dict:
 
     api_key = get_api_key_from_env(root, cfg.api_key_env) if cfg.api_key_env else None
     entries = model_resolver.fetch_remote_models(pid, cfg.base_url, api_key) if api_key else []
+    if pid in STRICT_CHAT_CATALOG_PROVIDERS:
+        entries = [(mid, created) for mid, created in entries if mid in cfg.models]
     live_ids = [mid for mid, _ in entries]
     best = model_resolver.best_entry(entries, cfg.family) if entries else None
     return {
@@ -1308,7 +1580,7 @@ def set_hotswap(provider_id: str, model: str | None = None, root: Path | None = 
     OAuth del gateway); nunca requiere reiniciar Claude Code.
 
     Args:
-        provider_id: claude | minimax | zai | nvidia | ollama | lmstudio.
+        provider_id: ID declarativo presente en ``PROVIDERS``.
         model: Modelo (default: el del provider).
         root: Raiz del proyecto (default: auto).
 
@@ -1328,20 +1600,36 @@ def set_hotswap(provider_id: str, model: str | None = None, root: Path | None = 
     if pid not in PROXY_ROUTABLE:
         raise ProviderError(
             f"{cfg.name} no se puede enrutar por el proxy todavia "
-            f"(formato OpenAI remoto sin bridge de traduccion). "
+            f"(protocolo o transporte sin adaptador de proxy). "
             f"Routables: {list(PROXY_ROUTABLE)}."
         )
+    connected, _scope = _proxy_connection_scope(
+        _read_json(user_settings_path()), _read_json(project_settings_path(root))
+    )
     if pid == "claude":
-        # Hot-swap a Claude via proxy (proxy-always): passthrough OAuth al gateway.
-        # Sin reinicio de Claude Code (la base URL no cambia).
-        return _activate_claude_via_proxy(root)
+        # Solo cambia la autoridad de routing. No escribe settings.json: un Claude
+        # Native con Remote Control debe seguir conectado directamente a
+        # claude.ai mientras sus llamadas delegadas cambian dentro de Nexus.
+        chosen = _resolve_model(cfg, model, root)
+        proxy_state.set_active(pid, chosen)
+        return {
+            "hotswap": True,
+            "active_provider": pid,
+            "active_provider_name": cfg.name,
+            "active_model": chosen,
+            "proxy_connected": connected,
+            "needs_restart": False,
+            "diagnosis": (
+                "Delegacion Nexus cambiada a Claude. No se modifico settings.json "
+                "ni el canal de Remote Control."
+            ),
+            "settings_path": str(proxy_state.state_path()),
+        }
     if cfg.api_key_env and not get_api_key_from_env(root, cfg.api_key_env):
         raise ProviderError(f"{cfg.api_key_env} no encontrada en {root / '.env'}")
     chosen = _resolve_model(cfg, model, root)
     proxy_state.set_active(pid, chosen)
-    # proxy_connected real: el hot-swap solo tiene efecto si CC apunta al proxy.
-    env = _read_json(user_settings_path()).get("env") or {}
-    connected = env.get("ANTHROPIC_BASE_URL") == PROXY_BASE_URL
+    # proxy_connected real: contempla tanto el override global como el del proyecto.
     logger.info("Hot-swap a %s (%s), proxy_connected=%s", cfg.name, chosen, connected)
     diagnosis = (
         f"Hot-swap a {cfg.name} ({chosen}). Efectivo en el proximo prompt, sin reiniciar."
@@ -1367,75 +1655,88 @@ def set_hotswap(provider_id: str, model: str | None = None, root: Path | None = 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
-def _print_human(result: dict, cmd: str) -> None:
-    """Imprime un resumen legible del resultado."""
-    if cmd == "models":
-        models = result.get("models", [])
-        print(f"Modelos de {result.get('provider')}: {', '.join(models) or '(libre)'}")
-        if "best" in result:
-            origen = "en vivo del provider" if result.get("live") else "fallback (sin red)"
-            print(f"Elegiria por defecto : {result['best']}  [{origen}]")
-        return
-    if cmd == "shadow" and "total" in result:
-        total = result["total"]
-        if not total:
-            print("Shadow report: sin comparaciones registradas todavia.")
-            print(f"log: {result.get('log_path')}")
-            return
-        lat = result["avg_latency_ms"]
-        chars = result["avg_text_chars"]
+def _print_models(result: dict) -> None:
+    """Imprime el listado de modelos de un provider (subcomando `models`)."""
+    models = result.get("models", [])
+    print(f"Modelos de {result.get('provider')}: {', '.join(models) or '(libre)'}")
+    if "best" in result:
+        origen = "en vivo del provider" if result.get("live") else "fallback (sin red)"
+        print(f"Elegiria por defecto : {result['best']}  [{origen}]")
+
+
+def _print_shadow_record(rec: dict) -> None:
+    """Imprime una comparacion individual del log de shadow mode."""
+    prompt = (rec.get("prompt_tail") or "").replace("\n", " ")[:80]
+    print(f"\n  [{rec.get('ts')}] prompt: {prompt}")
+    claude_text = (rec.get("claude_text") or "").replace("\n", " ")[:160]
+    shadow_text = (rec.get("shadow_text") or "").replace("\n", " ")[:160]
+    print(
+        f"    claude ({rec.get('claude_model')}, {rec.get('claude_latency_ms')}ms): {claude_text}"
+    )
+    if rec.get("shadow_status") == 200:
         print(
-            f"Shadow report — {total} comparaciones "
-            f"({result['shadow_ok']} ok, {result['shadow_failed']} fallidas)"
+            f"    shadow ({rec.get('shadow_model')}, {rec.get('shadow_latency_ms')}ms): {shadow_text}"
         )
+    else:
+        err = (rec.get("shadow_error") or "")[:120]
         print(
-            f"  latencia promedio : claude {lat['claude'] or '?'}ms vs shadow {lat['shadow'] or '?'}ms"
+            f"    shadow ({rec.get('shadow_model')}): FALLO status={rec.get('shadow_status')} {err}"
         )
-        print(
-            f"  largo promedio    : claude {chars['claude'] or '?'} chars vs shadow {chars['shadow'] or '?'} chars"
-        )
-        for key, count in sorted(result["by_shadow_model"].items()):
-            print(f"  {key}: {count}")
-        for rec in result.get("recent", []):
-            prompt = (rec.get("prompt_tail") or "").replace("\n", " ")[:80]
-            print(f"\n  [{rec.get('ts')}] prompt: {prompt}")
-            claude_text = (rec.get("claude_text") or "").replace("\n", " ")[:160]
-            shadow_text = (rec.get("shadow_text") or "").replace("\n", " ")[:160]
-            print(
-                f"    claude ({rec.get('claude_model')}, {rec.get('claude_latency_ms')}ms): {claude_text}"
-            )
-            if rec.get("shadow_status") == 200:
-                print(
-                    f"    shadow ({rec.get('shadow_model')}, {rec.get('shadow_latency_ms')}ms): {shadow_text}"
-                )
-            else:
-                err = (rec.get("shadow_error") or "")[:120]
-                print(
-                    f"    shadow ({rec.get('shadow_model')}): FALLO status={rec.get('shadow_status')} {err}"
-                )
-        print(f"\nlog: {result.get('log_path')}")
+
+
+def _print_shadow_report(result: dict) -> None:
+    """Imprime el reporte agregado de comparaciones de shadow mode."""
+    total = result["total"]
+    if not total:
+        print("Shadow report: sin comparaciones registradas todavia.")
+        print(f"log: {result.get('log_path')}")
         return
-    if cmd == "shadow":
-        st = result.get("shadow", {})
-        if st.get("enabled"):
-            model = st.get("model") or "(default del provider)"
-            print(f"Shadow mode: ON -> {st.get('provider')} {model}")
-            print("Cada turno de Claude se duplica al alternativo para comparar.")
-        else:
-            print("Shadow mode: OFF (modo normal, sin costo extra)")
-        print(f"log de comparaciones: {result.get('log_path')}")
-        return
-    if cmd == "route":
-        routes = result.get("routes", {})
-        if not routes:
-            print("Routing por clase: (vacio - todo el trafico va al backend activo)")
-        else:
-            print("Routing por clase de modelo:")
-            for cls, entry in routes.items():
-                model = entry.get("model") or "(default del provider)"
-                print(f"  {cls:<7} -> {entry.get('provider'):<8} {model}")
-        print(f"archivo: {result.get('routing_path')}")
-        return
+    lat = result["avg_latency_ms"]
+    chars = result["avg_text_chars"]
+    print(
+        f"Shadow report — {total} comparaciones "
+        f"({result['shadow_ok']} ok, {result['shadow_failed']} fallidas)"
+    )
+    print(
+        f"  latencia promedio : claude {lat['claude'] or '?'}ms vs shadow {lat['shadow'] or '?'}ms"
+    )
+    print(
+        f"  largo promedio    : claude {chars['claude'] or '?'} chars vs shadow {chars['shadow'] or '?'} chars"
+    )
+    for key, count in sorted(result["by_shadow_model"].items()):
+        print(f"  {key}: {count}")
+    for rec in result.get("recent", []):
+        _print_shadow_record(rec)
+    print(f"\nlog: {result.get('log_path')}")
+
+
+def _print_shadow_status(result: dict) -> None:
+    """Imprime el estado ON/OFF de shadow mode."""
+    st = result.get("shadow", {})
+    if st.get("enabled"):
+        model = st.get("model") or "(default del provider)"
+        print(f"Shadow mode: ON -> {st.get('provider')} {model}")
+        print("Cada turno de Claude se duplica al alternativo para comparar.")
+    else:
+        print("Shadow mode: OFF (modo normal, sin costo extra)")
+    print(f"log de comparaciones: {result.get('log_path')}")
+
+
+def _print_route(result: dict) -> None:
+    """Imprime el routing configurado por clase de modelo."""
+    routes = result.get("routes", {})
+    if not routes:
+        print("Routing por clase: (vacio - todo el trafico va al backend activo)")
+    else:
+        print("Routing por clase de modelo:")
+        for cls, entry in routes.items():
+            model = entry.get("model") or "(default del provider)"
+            print(f"  {cls:<7} -> {entry.get('provider'):<8} {model}")
+    print(f"archivo: {result.get('routing_path')}")
+
+
+def _print_switch_summary(result: dict) -> None:
+    """Imprime el resumen por defecto (status/switch/disable/hotswap/connect/disconnect)."""
     print(f"Provider activo : {result['active_provider_name']} ({result['active_provider']})")
     print(f"Modelo          : {result['active_model']}")
     print(f"Proxy conectado : {result.get('proxy_connected', False)}")
@@ -1452,8 +1753,25 @@ def _print_human(result: dict, cmd: str) -> None:
         print(f"  {mark} {p['id']:<9} {p['name']}{key}")
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Entry point de la CLI."""
+def _print_human(result: dict, cmd: str) -> None:
+    """Imprime un resumen legible del resultado."""
+    if cmd == "models":
+        _print_models(result)
+        return
+    if cmd == "shadow" and "total" in result:
+        _print_shadow_report(result)
+        return
+    if cmd == "shadow":
+        _print_shadow_status(result)
+        return
+    if cmd == "route":
+        _print_route(result)
+        return
+    _print_switch_summary(result)
+
+
+def _build_argument_parser() -> argparse.ArgumentParser:
+    """Construye el parser de argumentos de la CLI de provider_switch."""
     parser = argparse.ArgumentParser(
         description="Conmuta el provider IA de Claude Code via proxy (modelo proxy-always)."
     )
@@ -1464,7 +1782,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status", help="Mostrar provider activo + lista")
 
     switch = sub.add_parser("switch", help="Activar un provider por hot-swap via proxy")
-    switch.add_argument("provider", help="claude|minimax|zai|nvidia|ollama|lmstudio")
+    switch.add_argument("provider", help="ID de provider del catálogo declarativo")
     switch.add_argument("--model", default=None, help="Modelo (default: el del provider)")
     switch.add_argument(
         "--scope",
@@ -1492,7 +1810,7 @@ def main(argv: list[str] | None = None) -> int:
     hotswap = sub.add_parser(
         "hotswap", help="Cambiar backend del proxy en caliente (solo proxy_state)"
     )
-    hotswap.add_argument("provider", help="claude|minimax|zai|nvidia|ollama|lmstudio")
+    hotswap.add_argument("provider", help="ID de provider del catálogo declarativo")
     hotswap.add_argument("--model", default=None, help="Modelo (default: el del provider)")
 
     connect = sub.add_parser(
@@ -1509,7 +1827,10 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser(
         "disconnect",
-        help="Desconectar el proxy y volver a Claude nativo puro (requiere reinicio)",
+        help=(
+            "Desconectar el proxy y usar Claude nativo (borra ANTHROPIC_BASE_URL; "
+            "requiere reinicio; SIN failover mientras dure)"
+        ),
     )
 
     route = sub.add_parser(
@@ -1564,46 +1885,77 @@ def main(argv: list[str] | None = None) -> int:
         help="Comparaciones recientes a mostrar en 'report' (default: 3)",
     )
 
+    return parser
+
+
+def _dispatch_models(args: argparse.Namespace, root: Path) -> dict:
+    """Maneja el subcomando `models` (listado local o descubrimiento en vivo)."""
+    if getattr(args, "live", False):
+        return discover_models(args.provider, root)
+    return {"provider": args.provider.lower(), "models": list_models(args.provider)}
+
+
+def _dispatch_route(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
+    """Maneja el subcomando `route` (consultar, fijar o borrar rutas por clase)."""
+    if args.clear:
+        return clear_class_route(args.model_class)
+    if args.model_class and args.provider:
+        return route_class(args.model_class, args.provider, args.model)
+    if args.model_class:
+        parser.error("falta el provider destino (route <clase> <provider> [modelo])")
+    return get_class_routes()
+
+
+def _dispatch_shadow(args: argparse.Namespace) -> dict:
+    """Maneja el subcomando `shadow` (on/off/status/report)."""
+    if args.action.strip().lower() == "report":
+        return shadow_report(max(args.last, 0))
+    return shadow_mode(args.action, args.provider, args.model)
+
+
+def _dispatch_command(
+    args: argparse.Namespace, parser: argparse.ArgumentParser, root: Path
+) -> dict:
+    """Ejecuta el subcomando seleccionado y devuelve su resultado."""
+    if args.cmd == "status":
+        return get_overview(root)
+    if args.cmd == "switch":
+        return switch_provider(args.provider, args.model, root, scope=args.scope)
+    if args.cmd == "disable":
+        return disable_provider(root, scope=args.scope)
+    if args.cmd == "models":
+        return _dispatch_models(args, root)
+    if args.cmd == "hotswap":
+        return set_hotswap(args.provider, args.model, root)
+    if args.cmd == "connect":
+        provider = args.provider or "claude"
+        return switch_provider(provider, getattr(args, "model", None), root)
+    if args.cmd == "disconnect":
+        return disconnect_to_native_claude(root)
+    if args.cmd == "route":
+        return _dispatch_route(args, parser)
+    if args.cmd == "shadow":
+        return _dispatch_shadow(args)
+    parser.error("comando desconocido")  # pragma: no cover
+
+
+def _configure_utf8_stdio() -> None:
+    """Evita fallos CP932 al imprimir nombres y diagnosticos desde la CLI."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point de la CLI."""
+    _configure_utf8_stdio()
+    parser = _build_argument_parser()
     args = parser.parse_args(argv)
     root = Path(args.root) if args.root else default_root()
 
     try:
-        if args.cmd == "status":
-            result = get_overview(root)
-        elif args.cmd == "switch":
-            result = switch_provider(args.provider, args.model, root, scope=args.scope)
-        elif args.cmd == "disable":
-            result = disable_provider(root, scope=args.scope)
-        elif args.cmd == "models":
-            if getattr(args, "live", False):
-                result = discover_models(args.provider, root)
-            else:
-                result = {"provider": args.provider.lower(), "models": list_models(args.provider)}
-        elif args.cmd == "hotswap":
-            result = set_hotswap(args.provider, args.model, root)
-        elif args.cmd == "connect":
-            provider = args.provider or "claude"
-            result = switch_provider(provider, getattr(args, "model", None), root)
-        elif args.cmd == "disconnect":
-            result = disconnect_proxy(root)
-        elif args.cmd == "route":
-            if args.clear:
-                result = clear_class_route(args.model_class)
-            elif args.model_class and args.provider:
-                result = route_class(args.model_class, args.provider, args.model)
-            elif args.model_class:
-                parser.error("falta el provider destino (route <clase> <provider> [modelo])")
-                return 2
-            else:
-                result = get_class_routes()
-        elif args.cmd == "shadow":
-            if args.action.strip().lower() == "report":
-                result = shadow_report(max(args.last, 0))
-            else:
-                result = shadow_mode(args.action, args.provider, args.model)
-        else:  # pragma: no cover
-            parser.error("comando desconocido")
-            return 2
+        result = _dispatch_command(args, parser, root)
     except ProviderError as exc:
         logger.error("%s", exc)
         return 1

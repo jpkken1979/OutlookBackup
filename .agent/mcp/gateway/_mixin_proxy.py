@@ -18,7 +18,6 @@ import os
 import random
 import sys
 import time
-import uuid
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -39,6 +38,7 @@ from core import (  # noqa: E402
     provider_switch,
     proxy_state,
     routing_authority,
+    turn_checkpoint,
 )
 
 _log = logging.getLogger("antigravity-gateway.claudeproxy")
@@ -127,6 +127,145 @@ _SHADOW_ENABLED_SEEN: set[str] = set()
 # Registro de referencias fuertes a las shadow tasks para evitar que el GC las
 # recolecte antes de que terminen (Python 3.12+ garbage-collect tasks sin referencia).
 _SHADOW_TASKS: set[asyncio.Task] = set()  # type: ignore[type-arg]
+
+
+def _turn_context(request: Any) -> tuple[turn_checkpoint.TurnCheckpointStore, str] | None:
+    """Return checkpoint context attached by ``handle_claude_proxy``."""
+
+    try:
+        store = request.get("antigravity_turn_store")
+        trace_id = request.get("antigravity_trace_id")
+    except (AttributeError, TypeError):
+        return None
+    if isinstance(store, turn_checkpoint.TurnCheckpointStore) and isinstance(trace_id, str):
+        return store, trace_id
+    return None
+
+
+def _checkpoint_prepare(
+    request: Any,
+    raw_body: bytes,
+    provider: str,
+    model: str,
+) -> None:
+    try:
+        store = turn_checkpoint.get_turn_checkpoint_store()
+        trace_id = str(request["antigravity_trace_id"])
+        store.prepare(trace_id, raw_body, provider, model)
+        request["antigravity_turn_store"] = store
+        request["antigravity_turn_attempt"] = 0
+        request["antigravity_turn_provider"] = provider
+    except Exception as exc:  # noqa: BLE001 — observability must never block a turn
+        _log.warning("turn checkpoint prepare failed: %s", exc)
+
+
+def _checkpoint_begin_attempt(
+    request: Any,
+    target: dict[str, Any],
+    provider: str,
+    model: str,
+    *,
+    reason: str,
+    continuity: str,
+) -> None:
+    context = _turn_context(request)
+    if context is None:
+        return
+    store, trace_id = context
+    try:
+        attempt = store.begin_attempt(
+            trace_id,
+            provider,
+            model,
+            reason=reason,
+            continuity=continuity,
+        )
+        request["antigravity_turn_attempt"] = attempt.attempt
+        request["antigravity_turn_provider"] = provider
+        capabilities = routing_authority.provider_continuity_capabilities(provider)
+        if capabilities.idempotency_header:
+            target.setdefault("headers", {})[capabilities.idempotency_header] = (
+                attempt.idempotency_key
+            )
+    except Exception as exc:  # noqa: BLE001 — observability must never block a turn
+        _log.warning("turn checkpoint attempt failed: %s", exc)
+
+
+def _checkpoint_rotation(
+    request: Any,
+    from_provider: str,
+    to_provider: str,
+    reason: str,
+    continuity: str,
+) -> None:
+    context = _turn_context(request)
+    if context is None:
+        return
+    store, trace_id = context
+    try:
+        store.record_rotation(
+            trace_id,
+            from_provider=from_provider,
+            to_provider=to_provider,
+            reason=reason,
+            continuity=continuity,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("turn checkpoint rotation failed: %s", exc)
+
+
+def _checkpoint_streaming(request: Any) -> None:
+    context = _turn_context(request)
+    if context is None:
+        return
+    store, trace_id = context
+    try:
+        store.mark_streaming(trace_id, int(request.get("antigravity_turn_attempt", 0)))
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("turn checkpoint streaming failed: %s", exc)
+
+
+def _checkpoint_attempt_number(request: Any) -> int:
+    try:
+        return int(request.get("antigravity_turn_attempt", 0))
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
+def _checkpoint_complete(request: Any, *, reason: str = "stream_completed") -> None:
+    context = _turn_context(request)
+    if context is None:
+        return
+    store, trace_id = context
+    try:
+        store.complete(
+            trace_id,
+            _checkpoint_attempt_number(request),
+            reason=reason,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("turn checkpoint completion failed: %s", exc)
+
+
+def _checkpoint_fail(request: Any, *, reason: str, partial_stream: bool) -> None:
+    context = _turn_context(request)
+    if context is None:
+        return
+    store, trace_id = context
+    try:
+        provider = str(request.get("antigravity_turn_provider") or "")
+        resume_supported = routing_authority.provider_continuity_capabilities(
+            provider
+        ).stream_resume
+        store.fail(
+            trace_id,
+            _checkpoint_attempt_number(request),
+            reason=reason,
+            partial_stream=partial_stream,
+            resume_supported=resume_supported,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("turn checkpoint failure update failed: %s", exc)
 
 
 def _on_shadow_done(task: asyncio.Task) -> None:  # type: ignore[type-arg]
@@ -449,11 +588,13 @@ def _claude_transient_retry_enabled() -> bool:
 # Pasado el cooldown el circuito queda half-open: el proximo request pasa como
 # probe — si responde 200 el circuito se cierra (streak en 0), si falla se
 # reabre. Los 400/413/422 NO cuentan: son problemas del payload, no del backend.
-_CIRCUIT_ENV = "ANTIGRAVITY_PROXY_CIRCUIT"
-_CIRCUIT_THRESHOLD_ENV = "ANTIGRAVITY_PROXY_CIRCUIT_THRESHOLD"
-_CIRCUIT_COOLDOWN_ENV = "ANTIGRAVITY_PROXY_CIRCUIT_COOLDOWN_S"
-_DEFAULT_CIRCUIT_THRESHOLD = 3
-_DEFAULT_CIRCUIT_COOLDOWN_S = 60.0
+# Alias al unico lugar donde viven los knobs (`proxy_state`). El router decide
+# con el mismo umbral y el mismo cooldown leyendo el estado persistido.
+_CIRCUIT_ENV = proxy_state.CIRCUIT_ENV
+_CIRCUIT_THRESHOLD_ENV = proxy_state.CIRCUIT_THRESHOLD_ENV
+_CIRCUIT_COOLDOWN_ENV = proxy_state.CIRCUIT_COOLDOWN_ENV
+_DEFAULT_CIRCUIT_THRESHOLD = proxy_state.DEFAULT_CIRCUIT_THRESHOLD
+_DEFAULT_CIRCUIT_COOLDOWN_S = proxy_state.DEFAULT_CIRCUIT_COOLDOWN_S
 _CIRCUIT_FAILURE_STATUSES = _SERVER_ERROR_FALLBACK_STATUSES
 _FAILOVER_STATUSES = frozenset({429}) | _CIRCUIT_FAILURE_STATUSES
 # Estado en memoria (hot path). last-failure en EPOCH (time.time(), no monotonic)
@@ -483,7 +624,7 @@ _LAST_QUOTA_ROTATION: dict[str, float] = {}
 
 
 def _quota_threshold_pct() -> float:
-    """Umbral de % restante por debajo del cual se rota (editable en caliente).
+    """Umbral de % restante al alcanzarse o bajar del cual se rota.
 
     Precedencia:
       1. env ``ANTIGRAVITY_PROXY_QUOTA_THRESHOLD_PCT`` (override back-compat / CI).
@@ -535,11 +676,19 @@ def _quota_recovery_pct() -> float:
     Returns:
         Umbral de recuperación en [0, 100], nunca menor que ``umbral + 1``.
     """
-    raw = os.environ.get(_QUOTA_RECOVERY_ENV, str(_DEFAULT_QUOTA_RECOVERY_PCT))
-    try:
-        parsed = float(raw)
-    except ValueError:
-        parsed = _DEFAULT_QUOTA_RECOVERY_PCT
+    raw = os.environ.get(_QUOTA_RECOVERY_ENV)
+    if raw is None:
+        persisted = proxy_state.get_failover().get("recovery_threshold_pct")
+        parsed = (
+            float(persisted)
+            if isinstance(persisted, int | float) and not isinstance(persisted, bool)
+            else _DEFAULT_QUOTA_RECOVERY_PCT
+        )
+    else:
+        try:
+            parsed = float(raw)
+        except ValueError:
+            parsed = _DEFAULT_QUOTA_RECOVERY_PCT
     parsed = max(0.0, min(parsed, 100.0))
     return max(_quota_threshold_pct() + 1.0, parsed)
 
@@ -547,7 +696,9 @@ def _quota_recovery_pct() -> float:
 def _quota_auto_return_enabled() -> bool:
     """True si el proxy puede volver automáticamente a un provider de mayor prioridad."""
     raw = os.environ.get(_QUOTA_AUTO_RETURN_ENV, "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+    if raw:
+        return raw in {"1", "true", "yes", "on"}
+    return proxy_state.get_failover().get("auto_return") is True
 
 
 def _quota_remaining(provider: str) -> float | None:
@@ -564,7 +715,7 @@ def _quota_remaining(provider: str) -> float | None:
 
 
 def _quota_below_threshold(provider: str) -> bool:
-    """True si la cuota restante del provider es conocida y está bajo el umbral.
+    """True si la cuota restante es conocida y alcanzó o bajó del umbral.
 
     Cuota desconocida (``None``) → False: no se rota a ciegas.
 
@@ -572,10 +723,10 @@ def _quota_below_threshold(provider: str) -> bool:
         provider: Provider activo a evaluar.
 
     Returns:
-        True si ``remaining_percent`` es numérico y ``< umbral``.
+        True si ``remaining_percent`` es numérico y ``<= umbral``.
     """
     remaining = _quota_remaining(provider)
-    return remaining is not None and remaining < _quota_threshold_pct()
+    return remaining is not None and remaining <= _quota_threshold_pct()
 
 
 def _persisted_last_rotation(provider: str) -> float | None:
@@ -597,7 +748,11 @@ def _quota_in_cooldown(provider: str) -> bool:
 
     Considera el MÁXIMO entre el timestamp in-process y el persistido en disco, de modo
     que un restart del gateway no resetee el cooldown y re-rote al toque.
+    Si la cuota restante es <= 1.0% (agotada), NO aplica cooldown: rota de inmediato.
     """
+    remaining = _quota_remaining(provider)
+    if remaining is not None and remaining <= 1.0:
+        return False
     last = _LAST_QUOTA_ROTATION.get(provider, 0.0)
     persisted = _persisted_last_rotation(provider)
     if persisted is not None:
@@ -636,9 +791,12 @@ def _quota_available_providers(failed: str) -> set[str]:
         Set de provider ids elegibles como destino.
     """
     failed = failed.strip().lower()
+    configured = provider_cascade.configured_providers()
     avail: set[str] = set()
     for pid in provider_switch.PROXY_ROUTABLE:
         if pid == failed:
+            continue
+        if configured is not None and pid not in configured:
             continue
         if _quota_below_threshold(pid):
             continue
@@ -649,7 +807,7 @@ def _quota_available_providers(failed: str) -> set[str]:
 def _quota_rotation_target(provider: str) -> str | None:
     """Elige el destino de una rotación proactiva por cuota, o ``None`` si no rota.
 
-    Devuelve ``None`` (no rotar) si: la cuota del provider no está bajo el umbral,
+    Devuelve ``None`` (no rotar) si: la cuota supera el umbral,
     está en cooldown anti-rebote, o no hay ningún destino con cuota OK en la cascada
     (todos igual de agotados). Reusa ``provider_cascade.next_healthy_provider`` para
     respetar la cascada y los circuitos abiertos.
@@ -790,28 +948,17 @@ def _persist_circuit() -> None:
 
 def _circuit_enabled() -> bool:
     """Indica si el circuit breaker esta activo (default si; kill switch por env)."""
-    raw = os.environ.get(_CIRCUIT_ENV, "1").strip().lower()
-    return raw not in {"0", "false", "no", "off"}
+    return proxy_state.circuit_enabled()
 
 
 def _circuit_threshold() -> int:
     """Fallos consecutivos necesarios para abrir el circuito."""
-    raw = os.environ.get(_CIRCUIT_THRESHOLD_ENV, str(_DEFAULT_CIRCUIT_THRESHOLD))
-    try:
-        parsed = int(raw)
-    except ValueError:
-        parsed = _DEFAULT_CIRCUIT_THRESHOLD
-    return max(1, min(parsed, 20))
+    return proxy_state.circuit_threshold()
 
 
 def _circuit_cooldown_s() -> float:
     """Segundos con el circuito abierto antes de permitir un probe (half-open)."""
-    raw = os.environ.get(_CIRCUIT_COOLDOWN_ENV, str(_DEFAULT_CIRCUIT_COOLDOWN_S))
-    try:
-        parsed = float(raw)
-    except ValueError:
-        parsed = _DEFAULT_CIRCUIT_COOLDOWN_S
-    return max(0.0, min(parsed, 3600.0))
+    return proxy_state.circuit_cooldown_s()
 
 
 def _record_provider_failure(provider: str, reason: str) -> None:
@@ -854,12 +1001,7 @@ def _routing_trace_id(request: web.Request) -> str:
     get_value = getattr(request, "get", None)
     stored = get_value("antigravity_trace_id") if callable(get_value) else None
     headers = getattr(request, "headers", {})
-    return str(
-        stored
-        or headers.get("X-Request-Id")
-        or headers.get("X-Antigravity-Trace-Id")
-        or ""
-    )
+    return str(stored or headers.get("X-Request-Id") or headers.get("X-Antigravity-Trace-Id") or "")
 
 
 def _request_uses_routing_v2(request: web.Request) -> bool:
@@ -875,12 +1017,17 @@ def _record_routing_outcome(
     *,
     status_code: int | None = None,
     error_kind: str | None = None,
-    retry_after: str | None = None,
+    retry_after: str | int | None = None,
     latency_ms: int | None = None,
 ) -> None:
     """Best-effort SQLite telemetry; never changes a proxy response."""
     try:
-        retry_seconds = int(retry_after) if retry_after and retry_after.isdigit() else None
+        if isinstance(retry_after, int):
+            retry_seconds = max(1, retry_after)
+        elif isinstance(retry_after, str) and retry_after.isdigit():
+            retry_seconds = max(1, int(retry_after))
+        else:
+            retry_seconds = None
         routing_authority.get_routing_authority().store.record_outcome(
             provider,
             account_id=f"{provider}:default",
@@ -902,11 +1049,29 @@ def _circuit_open(provider: str) -> bool:
     """
     if provider == "claude" or not _circuit_enabled():
         return False
+    # Sincronizar con persistencia: si un switch manual borró la entrada,
+    # resetear memoria local. No usar ``circuit_open()`` para esta comprobación:
+    # un streak válido pero aún por debajo del umbral devuelve False y borrarlo
+    # aquí impediría que el breaker alcanzase cualquier threshold > 1.
+    persisted = proxy_state.get_circuit()
+    if provider not in persisted:
+        _CIRCUIT_STREAK.pop(provider, None)
+        _CIRCUIT_LAST_FAILURE.pop(provider, None)
+        return False
     _ensure_circuit_loaded()
     if _CIRCUIT_STREAK.get(provider, 0) < _circuit_threshold():
         return False
     last = _CIRCUIT_LAST_FAILURE.get(provider, 0.0)
     return (time.time() - last) < _circuit_cooldown_s()
+
+
+def reset_circuit_for_provider(provider: str) -> None:
+    """Limpia el breaker para UN provider especifico en memoria y disk (switch manual)."""
+    pid = provider.strip().lower()
+    _CIRCUIT_STREAK.pop(pid, None)
+    _CIRCUIT_LAST_FAILURE.pop(pid, None)
+    _LAST_QUOTA_ROTATION.pop(pid, None)
+    proxy_state.reset_provider_circuit(pid)
 
 
 def reset_circuit_state() -> None:
@@ -915,6 +1080,7 @@ def reset_circuit_state() -> None:
     _CIRCUIT_STREAK.clear()
     _CIRCUIT_LAST_FAILURE.clear()
     proxy_state.clear_circuit()
+
     # Estado conocido-vacio: no recargar del disco lo que acabamos de borrar.
     _CIRCUIT_LOADED = True
 
@@ -927,7 +1093,7 @@ def get_circuit_snapshot() -> dict[str, Any]:
         "threshold": _circuit_threshold(),
         "cooldown_s": _circuit_cooldown_s(),
         "streaks": dict(_CIRCUIT_STREAK),
-        "open": {p: _circuit_open(p) for p in _CIRCUIT_STREAK},
+        "open": {p: _circuit_open(p) for p in tuple(_CIRCUIT_STREAK)},
         "last_failure_at": {
             p: datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
             for p, ts in _CIRCUIT_LAST_FAILURE.items()
@@ -1005,6 +1171,136 @@ def _open_circuits() -> set[str]:
     return {p for p in provider_switch.PROXY_ROUTABLE if _circuit_open(p)}
 
 
+def _reroute_model(target: str, raw_body: bytes) -> str:
+    """Resuelve el modelo de un destino de failover sin alterar el request."""
+    if target == "claude":
+        return _extract_request_model(raw_body) or proxy_state.DEFAULT_MODEL
+    return provider_switch.resolve_provider_model(target)
+
+
+def _persist_automatic_reroute(target: str, model: str, log_prefix: str) -> None:
+    """Persist an automatic route in both runtime and visible delegation state.
+
+    ``proxy_state`` is the hot-path authority. When a manual delegation already
+    exists, keep its routing-store projection synchronized so Nexus and
+    ``X-Antigravity-Route: active`` describe the provider actually serving work.
+    Automatic profiles remain automatic: this helper never creates a manual
+    override where none existed.
+    """
+    try:
+        provider_switch.set_hotswap(target, model)
+    except Exception as exc:  # noqa: BLE001 — persistencia best-effort
+        _log.debug("%s: set_hotswap(%s) falló: %s", log_prefix, target, exc)
+        return
+    try:
+        store = routing_authority.get_routing_authority().store
+        if store.manual_override() is not None:
+            store.set_manual_override(target, model)
+    except Exception as exc:  # noqa: BLE001 — projection must not break routing
+        _log.debug("%s: routing projection update failed: %s", log_prefix, exc)
+
+
+def _quota_return_reroute(provider: str, raw_body: bytes) -> tuple[str, str] | None:
+    """Intenta volver al provider preferido cuando su cuota ya esta sana."""
+    if not _quota_auto_return_enabled():
+        return None
+    try:
+        return_target = _quota_return_target(provider)
+        if return_target is None:
+            return None
+        new_model = _reroute_model(return_target, raw_body)
+        _mark_quota_rotation(provider)
+        _persist_automatic_reroute(return_target, new_model, "quota-return")
+        _record_auto_recovery("auto_failover_quota_reroute", provider)
+        _log.info(
+            "quota-return: %s sano, volviendo de %s a %s/%s",
+            return_target,
+            provider,
+            return_target,
+            new_model,
+        )
+        return return_target, new_model
+    except Exception as exc:  # noqa: BLE001 — la cuota nunca rompe el proxy
+        _log.debug("quota-return: evaluación falló, sigo con downgrade: %s", exc)
+        return None
+
+
+def _quota_rotation_reroute(provider: str, raw_body: bytes) -> tuple[str, str] | None:
+    """Intenta rotar proactivamente cuando la cuota alcanza o baja del umbral."""
+    try:
+        quota_target = _quota_rotation_target(provider)
+        if quota_target is None:
+            return None
+        new_model = _reroute_model(quota_target, raw_body)
+        _mark_quota_rotation(provider)
+        _persist_automatic_reroute(quota_target, new_model, "quota-rotate")
+        _record_auto_recovery("auto_failover_quota_reroute", provider)
+        _log.info(
+            "quota-rotate: %s %.1f%% <= %.1f%% → %s/%s",
+            provider,
+            _quota_remaining(provider) or 0.0,
+            _quota_threshold_pct(),
+            quota_target,
+            new_model,
+        )
+        return quota_target, new_model
+    except Exception as exc:  # noqa: BLE001 — la cuota nunca rompe el proxy
+        _log.debug("quota-rotate: evaluación falló, sigo con circuito: %s", exc)
+        return None
+
+
+def _circuit_reroute(provider: str, model: str, raw_body: bytes) -> tuple[str, str]:
+    """Rerutea un provider cuyo circuito ya esta abierto."""
+    if not _circuit_open(provider):
+        return provider, model
+    target = provider_cascade.next_healthy_provider(
+        provider, _open_circuits(), provider_cascade.configured_providers()
+    )
+    if not target or target == provider:
+        return provider, model
+    new_model = _reroute_model(target, raw_body)
+    _persist_automatic_reroute(target, new_model, "circuit-reroute")
+    _record_auto_recovery("auto_failover_reroute", provider)
+    _log.info("auto-failover: %s (circuito abierto) -> %s/%s", provider, target, new_model)
+    return target, new_model
+
+
+def _resolve_effective_route(
+    request: web.Request,
+    raw_body: bytes,
+    provider: str,
+    model: str,
+    trace_id: str,
+) -> tuple[str, str]:
+    """Resuelve routing v2 o degrada al class-routing historico."""
+    if not routing_authority.routing_enabled():
+        return _resolve_class_route(provider, model, raw_body)
+    try:
+        decision = routing_authority.get_routing_authority().resolve_request(
+            raw_body,
+            provider,
+            model,
+            trace_id=trace_id,
+            route_hint=request.headers.get("X-Antigravity-Route"),
+        )
+        if decision is None:
+            return _resolve_class_route(provider, model, raw_body)
+        request["antigravity_routing_v2"] = True
+        _log.info(
+            "routing v2: trace=%s route=%s -> %s/%s score=%.3f manual=%s",
+            trace_id,
+            decision.route,
+            decision.provider,
+            decision.model,
+            decision.score,
+            decision.manual,
+        )
+        return decision.provider, decision.model
+    except (RuntimeError, ValueError) as exc:
+        _log.warning("routing v2 degradado a provider activo: %s", exc)
+        return _resolve_class_route(provider, model, raw_body)
+
+
 def _failover_reroute(provider: str, model: str, raw_body: bytes) -> tuple[str, str]:
     """Reruteo pre-flight al próximo provider sano si el failover automático está activo.
 
@@ -1029,78 +1325,18 @@ def _failover_reroute(provider: str, model: str, raw_body: bytes) -> tuple[str, 
         return provider, model
     # Vuelta al provider preferido: opt-in explícito. Sin esto, una selección manual
     # en Nexus (zai/minimax) puede volver sola a Claude apenas Claude aparezca sano.
-    if _quota_auto_return_enabled():
-        try:
-            return_target = _quota_return_target(provider)
-            if return_target is not None:
-                if return_target == "claude":
-                    new_model = _extract_request_model(raw_body) or proxy_state.DEFAULT_MODEL
-                else:
-                    new_model = provider_switch.resolve_provider_model(return_target)
-                _mark_quota_rotation(provider)
-                # Persistir el switch (best-effort: una key faltante no rompe este turno).
-                try:
-                    provider_switch.set_hotswap(return_target, new_model)
-                except Exception as exc:  # noqa: BLE001 — persistencia best-effort
-                    _log.debug("quota-return: set_hotswap(%s) falló: %s", return_target, exc)
-                # Reusa el MISMO evento que el downgrade (no crear uno nuevo, no tocar TS).
-                _record_auto_recovery("auto_failover_quota_reroute", provider)
-                _log.info(
-                    "quota-return: %s sano, volviendo de %s a %s/%s",
-                    return_target,
-                    provider,
-                    return_target,
-                    new_model,
-                )
-                return return_target, new_model
-        except Exception as exc:  # noqa: BLE001 — la cuota nunca rompe el proxy
-            _log.debug("quota-return: evaluación falló, sigo con downgrade: %s", exc)
+    quota_return = _quota_return_reroute(provider, raw_body)
+    if quota_return is not None:
+        return quota_return
     # Rotación PROACTIVA por cuota (Fase 1): si la cuota restante del provider activo
     # cayó bajo el umbral, rotar ANTES de chocar el 429 — sin esperar a que el circuito
     # se abra. No-op si la cuota es desconocida, está en cooldown, o no hay destino con
     # cuota OK (todos igual de agotados → quedarse donde está). Toda la evaluación va
     # bajo try: ante cualquier error, se cae al failover por circuito de abajo.
-    try:
-        quota_target = _quota_rotation_target(provider)
-        if quota_target is not None:
-            if quota_target == "claude":
-                new_model = _extract_request_model(raw_body) or proxy_state.DEFAULT_MODEL
-            else:
-                new_model = provider_switch.resolve_provider_model(quota_target)
-            _mark_quota_rotation(provider)
-            # Persistir el switch para que el próximo prompt arranque ya en el destino
-            # (best-effort: una key faltante no debe romper el reruteo de este turno).
-            try:
-                provider_switch.set_hotswap(quota_target, new_model)
-            except Exception as exc:  # noqa: BLE001 — persistencia best-effort
-                _log.debug("quota-rotate: set_hotswap(%s) falló: %s", quota_target, exc)
-            _record_auto_recovery("auto_failover_quota_reroute", provider)
-            _log.info(
-                "quota-rotate: %s %.1f%% < %.1f%% → %s/%s",
-                provider,
-                _quota_remaining(provider) or 0.0,
-                _quota_threshold_pct(),
-                quota_target,
-                new_model,
-            )
-            return quota_target, new_model
-    except Exception as exc:  # noqa: BLE001 — la cuota nunca rompe el proxy
-        _log.debug("quota-rotate: evaluación falló, sigo con circuito: %s", exc)
-    if not _circuit_open(provider):
-        return provider, model
-    target = provider_cascade.next_healthy_provider(
-        provider, _open_circuits(), provider_cascade.configured_providers()
-    )
-    if not target or target == provider:
-        return provider, model
-    if target == "claude":
-        # Passthrough: Claude usa el modelo pedido por Claude Code (no se pisa).
-        new_model = _extract_request_model(raw_body) or proxy_state.DEFAULT_MODEL
-    else:
-        new_model = provider_switch.resolve_provider_model(target)
-    _record_auto_recovery("auto_failover_reroute", provider)
-    _log.info("auto-failover: %s (circuito abierto) -> %s/%s", provider, target, new_model)
-    return target, new_model
+    quota_rotation = _quota_rotation_reroute(provider, raw_body)
+    if quota_rotation is not None:
+        return quota_rotation
+    return _circuit_reroute(provider, model, raw_body)
 
 
 def _messages_count_tokens_url(messages_url: str) -> str:
@@ -1203,6 +1439,29 @@ def _humanize_rate_limit(
     minutes = max(1, (remaining_seconds + 59) // 60)
     local = reset_dt.astimezone(_JST).strftime("%H:%M")
     return f"Limite alcanzado. Reintenta en ~{minutes} min ({local} JST)."
+
+
+def _retry_after_seconds(
+    reset_raw: str | None,
+    retry_after: str | None,
+    *,
+    now: datetime | None = None,
+) -> int | None:
+    """Normalize provider reset hints to an exact account cooldown in seconds."""
+    current = now or datetime.now(UTC)
+    if reset_raw:
+        try:
+            parsed = datetime.fromisoformat(reset_raw.strip().replace("Z", "+00:00"))
+            reset_dt = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+            return max(1, int((reset_dt - current).total_seconds()))
+        except ValueError:
+            pass
+    if retry_after:
+        try:
+            return max(1, int(float(retry_after.strip())))
+        except ValueError:
+            pass
+    return None
 
 
 def _record_auto_recovery(event: str, provider: str | None = None) -> None:
@@ -1513,6 +1772,18 @@ def _is_midstream_provider_error(
     return _chunk_has_recoverable_sse_error(chunk)
 
 
+def _has_sse_event(payload: bytes, event_name: str) -> bool:
+    """Match an SSE ``event:`` field without trusting text inside ``data:``."""
+
+    expected = event_name.encode()
+    normalized = payload.replace(b"\r\n", b"\n")
+    for line in normalized.split(b"\n"):
+        field, separator, value = line.partition(b":")
+        if separator and field == b"event" and value.removeprefix(b" ") == expected:
+            return True
+    return False
+
+
 def _alt_precompact_enabled() -> bool:
     """Indica si se pre-compacta el contexto de backends alternativos."""
     raw = os.environ.get(_ALT_PRECOMPACT_ENV, "1").strip().lower()
@@ -1643,6 +1914,32 @@ def _upstream_error_log_path() -> Path:
     return Path.home() / ".antigravity" / "proxy" / "upstream_errors.jsonl"
 
 
+def _count_payload_block(summary: dict[str, Any], block: Any) -> None:
+    """Acumula en el resumen el tipo de un bloque Anthropic."""
+    if not isinstance(block, dict):
+        return
+    block_type = block.get("type")
+    if block_type == "tool_use":
+        summary["n_tool_use"] += 1
+    elif block_type == "tool_result":
+        summary["n_tool_result"] += 1
+    elif block_type in ("thinking", "redacted_thinking"):
+        summary["n_thinking"] += 1
+
+
+def _count_payload_message(summary: dict[str, Any], message: Any) -> None:
+    """Acumula un mensaje y sus bloques sin leer contenido sensible."""
+    if not isinstance(message, dict):
+        return
+    if message.get("role") == "system":
+        summary["n_system"] += 1
+    content = message.get("content")
+    if not isinstance(content, list):
+        return
+    for block in content:
+        _count_payload_block(summary, block)
+
+
 def _payload_summary(raw_body: bytes) -> dict[str, Any]:
     """Resume la forma del payload SIN exponer contenido ni secretos.
 
@@ -1673,28 +1970,65 @@ def _payload_summary(raw_body: bytes) -> dict[str, Any]:
     messages = payload.get("messages")
     if isinstance(messages, list):
         summary["n_messages"] = len(messages)
-        for msg in messages:
-            if not isinstance(msg, dict):
-                continue
-            if msg.get("role") == "system":
-                summary["n_system"] += 1
-            content = msg.get("content")
-            if not isinstance(content, list):
-                continue
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
-                btype = block.get("type")
-                if btype == "tool_use":
-                    summary["n_tool_use"] += 1
-                elif btype == "tool_result":
-                    summary["n_tool_result"] += 1
-                elif btype in ("thinking", "redacted_thinking"):
-                    summary["n_thinking"] += 1
-    if isinstance(payload.get("system"), (list, str)) and payload.get("system"):
+        for message in messages:
+            _count_payload_message(summary, message)
+    if isinstance(payload.get("system"), list | str) and payload.get("system"):
         summary["n_system"] += 1
     summary["has_tools"] = bool(payload.get("tools"))
     return summary
+
+
+def _precompact_alt_payload(payload: dict[str, Any], provider: str) -> dict[str, Any]:
+    """Recorta preventivamente mensajes para un provider alternativo."""
+    if not _alt_precompact_enabled():
+        return payload
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return payload
+    limit = _alt_precompact_max_messages()
+    if len(messages) <= limit:
+        return payload
+    compacted = dict(payload)
+    compacted["messages"] = messages[-limit:]
+    _record_auto_recovery("precompact_alt_provider", provider)
+    _log.info(
+        "pre-compact %s: %d -> %d mensajes (umbral %d)",
+        provider,
+        len(messages),
+        limit,
+        limit,
+    )
+    return compacted
+
+
+def _build_openai_post_payload(
+    payload: dict[str, Any],
+    provider: str,
+    model: str,
+) -> dict[str, Any] | web.StreamResponse:
+    """Reconcilia y traduce un payload Anthropic a Chat Completions."""
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        payload = {
+            **payload,
+            "messages": message_sanitizer.reconcile_tool_blocks(messages),
+        }
+    try:
+        openai_payload = openai_translator.anthropic_to_openai(
+            payload, model=model, provider=provider
+        )
+    except Exception as exc:  # noqa: BLE001 — boundary de traduccion
+        _log.error(
+            "falla traducir payload Anthropic->OpenAI (%s): %s | payload_keys=%s",
+            provider,
+            exc,
+            list(payload.keys()),
+        )
+        return web.json_response(
+            {"error": f"proxy ({provider}): payload no traducible a OpenAI: {exc}"},
+            status=400,
+        )
+    return {"json": openai_payload}
 
 
 def _payload_has_tool_history(raw_body: bytes) -> bool:
@@ -2014,16 +2348,304 @@ class _ProxyMixin:
             La respuesta del próximo provider sano de la cascada, o el rescate
             histórico de un solo salto a Claude si la cascada está OFF o agotada.
         """
-        if (
-            provider_cascade.is_auto_failover_enabled()
-            or _request_uses_routing_v2(request)
-        ):
+        if provider_cascade.is_auto_failover_enabled() or _request_uses_routing_v2(request):
             rotated = await self._failover_to_next_healthy(
                 request, None, raw_body, provider, reason, {provider}
             )
             if rotated is not None:
                 return rotated
         return await self._fallback_to_claude(request, None, raw_body, provider, reason)
+
+    async def _check_stream_content_type_recovery(
+        self,
+        request: web.Request,
+        upstream: Any,
+        fallback_from: str | None,
+        raw_body: bytes | None,
+        provider: str | None,
+    ) -> tuple[web.StreamResponse | None, Any, bool]:
+        """Captura cuota y rescata un HTTP 200 con content-type no valido."""
+        if provider and provider_cascade.is_auto_failover_enabled():
+            _capture_quota_headers(provider, getattr(upstream, "headers", {}))
+        upstream_content_type = getattr(upstream, "content_type", _SSE_GUARD_MISSING)
+        is_json_content_type = "application/json" in str(upstream_content_type).lower()
+        if (
+            not fallback_from
+            and provider
+            and provider != "claude"
+            and raw_body is not None
+            and _auto_fallback_enabled()
+            and upstream_content_type is not _SSE_GUARD_MISSING
+            and not _response_is_sse(upstream_content_type)
+            and not is_json_content_type
+        ):
+            _record_provider_failure(provider, "status-200-no-sse")
+            rescued = await self._rescue_provider_failure(
+                request, raw_body, provider, "upstream-200-no-sse"
+            )
+            return rescued, upstream_content_type, is_json_content_type
+        return None, upstream_content_type, is_json_content_type
+
+    async def _empty_stream_response(
+        self,
+        request: web.Request,
+        fallback_from: str | None,
+        raw_body: bytes | None,
+        provider: str | None,
+    ) -> web.StreamResponse:
+        """Rescata o reporta un upstream HTTP 200 sin chunks."""
+        _log.error("upstream SSE termino sin enviar chunks")
+        if (
+            not fallback_from
+            and provider
+            and provider != "claude"
+            and raw_body is not None
+            and _auto_fallback_enabled()
+        ):
+            _record_provider_failure(provider, "status-200-empty-stream")
+            return await self._rescue_provider_failure(
+                request, raw_body, provider, "upstream-200-empty-stream"
+            )
+        return web.json_response(
+            {
+                "error": "backend devolvio un stream vacio",
+                "detail": "El upstream respondio HTTP 200 pero no envio eventos SSE validos.",
+            },
+            status=502,
+        )
+
+    async def _check_malformed_first_chunk_recovery(
+        self,
+        request: web.Request,
+        first_chunk: bytes,
+        upstream_content_type: Any,
+        is_json_content_type: bool,
+        fallback_from: str | None,
+        raw_body: bytes | None,
+        provider: str | None,
+    ) -> web.StreamResponse | None:
+        """Rescata SSE-error o JSON-error antes de comprometer headers."""
+        if (
+            not fallback_from
+            and provider
+            and provider != "claude"
+            and raw_body is not None
+            and _auto_fallback_enabled()
+            and _response_is_sse(str(upstream_content_type))
+            and _chunk_has_recoverable_sse_error(first_chunk)
+            and not _chunk_has_context_limit_error(first_chunk)
+        ):
+            _record_provider_failure(provider, "status-200-sse-error")
+            return await self._rescue_provider_failure(
+                request, raw_body, provider, "upstream-200-sse-error"
+            )
+
+        if (
+            not fallback_from
+            and provider
+            and provider != "claude"
+            and raw_body is not None
+            and _auto_fallback_enabled()
+            and is_json_content_type
+            and _json_has_top_level_error(first_chunk)
+            and not _chunk_has_context_limit_error(first_chunk)
+            and not _chunk_has_context_limit_stop_reason(first_chunk)
+        ):
+            _record_provider_failure(provider, "status-200-json-error")
+            return await self._rescue_provider_failure(
+                request, raw_body, provider, "upstream-200-json-error"
+            )
+        return None
+
+    @staticmethod
+    async def _write_translated_chunks(
+        response: web.StreamResponse,
+        translated_chunks: list[bytes],
+        tee_buffer: list[bytes] | None,
+    ) -> None:
+        """Escribe deltas traducidos y los copia al tee shadow opcional."""
+        for translated in translated_chunks:
+            if tee_buffer is not None:
+                tee_buffer.append(translated)
+            await response.write(translated)
+
+    async def _stream_openai_chunks(
+        self,
+        request: web.Request,
+        upstream: Any,
+        response: web.StreamResponse,
+        translator: openai_translator.OpenAiStreamTranslator,
+        provider: str | None,
+        model: str | None,
+        raw_body: bytes | None,
+        fallback_from: str | None,
+        tee_buffer: list[bytes] | None,
+    ) -> bool:
+        """Transmite chunks OpenAI; True indica cierre por error mid-stream."""
+        async for chunk in upstream.content.iter_any():
+            if not chunk:
+                continue
+            if _is_midstream_provider_error(chunk, provider, fallback_from):
+                await self._close_stream_with_provider_error(
+                    request, response, provider, model, raw_body, chunk
+                )
+                return True
+            await self._write_translated_chunks(response, translator.feed(chunk), tee_buffer)
+        return False
+
+    @staticmethod
+    async def _finish_openai_stream(
+        request: web.Request,
+        response: web.StreamResponse,
+        translator: openai_translator.OpenAiStreamTranslator,
+        provider: str | None,
+        model: str | None,
+    ) -> None:
+        """Registra usage, cierra EOF y marca el checkpoint OpenAI."""
+        try:
+            _log_turn_usage(
+                provider or "",
+                model or "",
+                translator._input_tokens,
+                translator._output_tokens,
+            )
+        except Exception:  # noqa: BLE001 — telemetría best-effort, nunca rompe
+            pass
+        await response.write_eof()
+        if translator.completed_cleanly:
+            _checkpoint_complete(request)
+        else:
+            _checkpoint_fail(
+                request,
+                reason="openai-stream-ended-without-finish",
+                partial_stream=True,
+            )
+
+    async def _stream_openai_response(
+        self,
+        request: web.Request,
+        upstream: Any,
+        response: web.StreamResponse,
+        first_chunk: bytes,
+        fallback_from: str | None,
+        raw_body: bytes | None,
+        provider: str | None,
+        model: str | None,
+        tee_buffer: list[bytes] | None,
+    ) -> web.StreamResponse:
+        """Traduce y transmite un stream Chat Completions como Anthropic SSE."""
+        translator = openai_translator.OpenAiStreamTranslator(model=model or "")
+        await self._write_translated_chunks(response, translator.feed(first_chunk), tee_buffer)
+        closed_with_error = await self._stream_openai_chunks(
+            request,
+            upstream,
+            response,
+            translator,
+            provider,
+            model,
+            raw_body,
+            fallback_from,
+            tee_buffer,
+        )
+        if closed_with_error:
+            return response
+        await self._write_translated_chunks(response, translator.flush(), tee_buffer)
+        await self._finish_openai_stream(request, response, translator, provider, model)
+        return response
+
+    @staticmethod
+    def _record_anthropic_usage(
+        first_chunk: bytes,
+        last_chunk: bytes,
+        provider: str | None,
+        model: str | None,
+    ) -> None:
+        """Registra best-effort el usage visible en los extremos del stream."""
+        try:
+            input_tokens, output_tokens = _extract_anthropic_usage([first_chunk, last_chunk])
+            _log_turn_usage(provider or "", model or "", input_tokens, output_tokens)
+        except Exception:  # noqa: BLE001 — telemetría best-effort, nunca rompe
+            pass
+
+    async def _stream_anthropic_response(
+        self,
+        request: web.Request,
+        upstream: Any,
+        response: web.StreamResponse,
+        first_chunk: bytes,
+        fallback_from: str | None,
+        raw_body: bytes | None,
+        provider: str | None,
+        model: str | None,
+        tee_buffer: list[bytes] | None,
+    ) -> web.StreamResponse:
+        """Transmite el SSE Anthropic conservando deteccion mid-stream y usage."""
+        if tee_buffer is not None:
+            tee_buffer.append(first_chunk)
+        await response.write(first_chunk)
+        last_chunk = first_chunk
+        stream_tail = first_chunk[-8192:]
+        async for chunk in upstream.content.iter_any():
+            if not chunk:
+                continue
+            if _is_midstream_provider_error(chunk, provider, fallback_from):
+                await self._close_stream_with_provider_error(
+                    request, response, provider, model, raw_body, chunk
+                )
+                return response
+            if tee_buffer is not None:
+                tee_buffer.append(chunk)
+            last_chunk = chunk
+            stream_tail = (stream_tail + chunk)[-8192:]
+            await response.write(chunk)
+        self._record_anthropic_usage(first_chunk, last_chunk, provider, model)
+        await response.write_eof()
+        if _has_sse_event(stream_tail, "message_stop"):
+            _checkpoint_complete(request)
+        else:
+            _checkpoint_fail(
+                request,
+                reason="anthropic-stream-ended-without-message-stop",
+                partial_stream=True,
+            )
+        return response
+
+    async def _stream_provider_response(
+        self,
+        request: web.Request,
+        upstream: Any,
+        response: web.StreamResponse,
+        first_chunk: bytes,
+        fallback_from: str | None,
+        raw_body: bytes | None,
+        provider: str | None,
+        model: str | None,
+        tee_buffer: list[bytes] | None,
+    ) -> web.StreamResponse:
+        """Elige la transmision OpenAI-compatible o Anthropic sin alterar orden."""
+        if provider and provider_router.is_openai_compatible(provider):
+            return await self._stream_openai_response(
+                request,
+                upstream,
+                response,
+                first_chunk,
+                fallback_from,
+                raw_body,
+                provider,
+                model,
+                tee_buffer,
+            )
+        return await self._stream_anthropic_response(
+            request,
+            upstream,
+            response,
+            first_chunk,
+            fallback_from,
+            raw_body,
+            provider,
+            model,
+            tee_buffer,
+        )
 
     async def _stream_upstream(
         self,
@@ -2059,24 +2681,15 @@ class _ProxyMixin:
         # Captura passiva de cuota: el provider activo expone su rate-limit unificado
         # en los headers de la respuesta 200. Señal real-time para el auto-rotate.
         # Gateada por opt-in: con la feature OFF, cero I/O extra en el hot path.
-        if provider and provider_cascade.is_auto_failover_enabled():
-            _capture_quota_headers(provider, getattr(upstream, "headers", {}))
-        _upstream_ct = getattr(upstream, "content_type", _SSE_GUARD_MISSING)
-        _is_json_ct = "application/json" in str(_upstream_ct).lower()
-        if (
-            not fallback_from
-            and provider
-            and provider != "claude"
-            and raw_body is not None
-            and _auto_fallback_enabled()
-            and _upstream_ct is not _SSE_GUARD_MISSING
-            and not _response_is_sse(_upstream_ct)
-            and not _is_json_ct
-        ):
-            _record_provider_failure(provider, "status-200-no-sse")
-            return await self._rescue_provider_failure(
-                request, raw_body, provider, "upstream-200-no-sse"
-            )
+        (
+            rescued,
+            upstream_content_type,
+            is_json_content_type,
+        ) = await self._check_stream_content_type_recovery(
+            request, upstream, fallback_from, raw_body, provider
+        )
+        if rescued is not None:
+            return rescued
 
         headers = {
             "Content-Type": "text/event-stream",
@@ -2094,30 +2707,7 @@ class _ProxyMixin:
             first_chunk = await self._read_first_chunk(upstream)
 
             if first_chunk is None:
-                _log.error("upstream SSE termino sin enviar chunks")
-                # Mismo camino de rescate que los otros 200-malformados (no-SSE /
-                # SSE-error / JSON-error): cascada o fallback a Claude. Antes era
-                # el unico caso que moria en 502 seco hacia Claude Code.
-                if (
-                    not fallback_from
-                    and provider
-                    and provider != "claude"
-                    and raw_body is not None
-                    and _auto_fallback_enabled()
-                ):
-                    _record_provider_failure(provider, "status-200-empty-stream")
-                    return await self._rescue_provider_failure(
-                        request, raw_body, provider, "upstream-200-empty-stream"
-                    )
-                return web.json_response(
-                    {
-                        "error": "backend devolvio un stream vacio",
-                        "detail": (
-                            "El upstream respondio HTTP 200 pero no envio eventos SSE validos."
-                        ),
-                    },
-                    status=502,
-                )
+                return await self._empty_stream_response(request, fallback_from, raw_body, provider)
 
             recovered = await self._check_first_chunk_recovery(
                 request, first_chunk, raw_body, provider, auto_recovery_remaining
@@ -2129,107 +2719,38 @@ class _ProxyMixin:
             # arrancan con `event: error` (p.ej. provider sobrecargado). Claude
             # Code lo ve como respuesta 200 malformada; rescatar antes de pasar
             # ese stream conserva viva la sesion. Los rate limits se dejan crudos.
-            if (
-                not fallback_from
-                and provider
-                and provider != "claude"
-                and raw_body is not None
-                and _auto_fallback_enabled()
-                and _response_is_sse(str(_upstream_ct))
-                and _chunk_has_recoverable_sse_error(first_chunk)
-                and not _chunk_has_context_limit_error(first_chunk)
-            ):
-                _record_provider_failure(provider, "status-200-sse-error")
-                return await self._rescue_provider_failure(
-                    request, raw_body, provider, "upstream-200-sse-error"
-                )
-
-            # Si el upstream es JSON no-SSE y trae error top-level (no context-limit),
-            # tratarlo como fallo del provider y rescatar via Claude.
-            if (
-                not fallback_from
-                and provider
-                and provider != "claude"
-                and raw_body is not None
-                and _auto_fallback_enabled()
-                and _is_json_ct
-                and _json_has_top_level_error(first_chunk)
-                and not _chunk_has_context_limit_error(first_chunk)
-                and not _chunk_has_context_limit_stop_reason(first_chunk)
-            ):
-                _record_provider_failure(provider, "status-200-json-error")
-                return await self._rescue_provider_failure(
-                    request, raw_body, provider, "upstream-200-json-error"
-                )
+            recovered = await self._check_malformed_first_chunk_recovery(
+                request,
+                first_chunk,
+                upstream_content_type,
+                is_json_content_type,
+                fallback_from,
+                raw_body,
+                provider,
+            )
+            if recovered is not None:
+                return recovered
 
             await response.prepare(request)
             prepared = True
+            _checkpoint_streaming(request)
 
             # Backends OpenAI-compatible: el upstream responde Chat Completions SSE
             # (data: {choices:[{delta:{content}}]...}), que hay que traducir a eventos
             # Anthropic (message_start/content_block_delta/...) para Claude Code. Los
             # chunks se alimentan al traductor y este emite los SSE Anthropic ya
             # serializados; el tee_buffer (shadow mode) recoge la salida traducida.
-            if provider and provider_router.is_openai_compatible(provider):
-                translator = openai_translator.OpenAiStreamTranslator(model=model or "")
-                # `feed()` es sincrono y devuelve list[bytes]; solo el upstream
-                # (iter_any) es async. Por eso `for` sobre feed() y `async for`
-                # sobre el stream.
-                for translated in translator.feed(first_chunk):
-                    if tee_buffer is not None:
-                        tee_buffer.append(translated)
-                    await response.write(translated)
-                async for chunk in upstream.content.iter_any():
-                    if not chunk:
-                        continue
-                    if _is_midstream_provider_error(chunk, provider, fallback_from):
-                        await self._close_stream_with_provider_error(
-                            request, response, provider, model, raw_body, chunk
-                        )
-                        return response
-                    for translated in translator.feed(chunk):
-                        if tee_buffer is not None:
-                            tee_buffer.append(translated)
-                        await response.write(translated)
-                for translated in translator.flush():
-                    if tee_buffer is not None:
-                        tee_buffer.append(translated)
-                    await response.write(translated)
-                try:
-                    _log_turn_usage(
-                        provider or "",
-                        model or "",
-                        translator._input_tokens,
-                        translator._output_tokens,
-                    )
-                except Exception:  # noqa: BLE001 — telemetría best-effort, nunca rompe
-                    pass
-                await response.write_eof()
-                return response
-
-            if tee_buffer is not None:
-                tee_buffer.append(first_chunk)
-            await response.write(first_chunk)
-            last_chunk = first_chunk
-            async for chunk in upstream.content.iter_any():
-                if not chunk:
-                    continue
-                if _is_midstream_provider_error(chunk, provider, fallback_from):
-                    await self._close_stream_with_provider_error(
-                        request, response, provider, model, raw_body, chunk
-                    )
-                    return response
-                if tee_buffer is not None:
-                    tee_buffer.append(chunk)
-                last_chunk = chunk
-                await response.write(chunk)
-            try:
-                in_t, out_t = _extract_anthropic_usage([first_chunk, last_chunk])
-                _log_turn_usage(provider or "", model or "", in_t, out_t)
-            except Exception:  # noqa: BLE001 — telemetría best-effort, nunca rompe
-                pass
-            await response.write_eof()
-            return response
+            return await self._stream_provider_response(
+                request,
+                upstream,
+                response,
+                first_chunk,
+                fallback_from,
+                raw_body,
+                provider,
+                model,
+                tee_buffer,
+            )
         except ConnectionResetError as exc:
             # El cliente (Claude Code) corto la conexion antes de recibir la
             # respuesta — Esc, prompt nuevo encima o timeout del lado del cliente.
@@ -2241,12 +2762,22 @@ class _ProxyMixin:
                 provider or "-",
                 exc,
             )
+            _checkpoint_fail(
+                request,
+                reason="client-disconnect",
+                partial_stream=prepared,
+            )
             closed = await self._finalize_stream_after_error(response, prepared)
             if closed is not None:
                 return closed
             raise
         except Exception:
             _log.exception("error transmitiendo stream SSE upstream")
+            _checkpoint_fail(
+                request,
+                reason="stream-transport-error",
+                partial_stream=prepared,
+            )
             closed = await self._finalize_stream_after_error(response, prepared)
             if closed is not None:
                 return closed
@@ -2294,6 +2825,11 @@ class _ProxyMixin:
             "transparente posible post-commit del 200)",
             provider or "-",
         )
+        _checkpoint_fail(
+            request,
+            reason="status-200-midstream-error",
+            partial_stream=True,
+        )
         await response.write(
             _anthropic_error_sse(
                 f"El proveedor '{provider}' falló a mitad de la respuesta. "
@@ -2327,6 +2863,18 @@ class _ProxyMixin:
                     reason,
                 )
 
+        if provider_cascade.is_auto_failover_enabled() and _quota_below_threshold("claude"):
+            rotated = await self._failover_to_next_healthy(
+                request,
+                session,
+                raw_body,
+                "claude",
+                f"claude-quota-depleted-{reason}",
+                tried={failed_provider, "claude"},
+            )
+            if rotated is not None:
+                return rotated
+
         try:
             target = provider_router.resolve_target("claude", dict(request.headers))
         except provider_router.RouterError as exc:
@@ -2353,11 +2901,36 @@ class _ProxyMixin:
             reason,
             _fallback_sticky_enabled(),
         )
+        continuity = (
+            turn_checkpoint.CONTINUITY_NEXT_TURN
+            if _checkpoint_attempt_number(request) == 0
+            else turn_checkpoint.CONTINUITY_FULL_RETRY
+        )
+        _checkpoint_rotation(
+            request,
+            failed_provider,
+            "claude",
+            reason,
+            continuity,
+        )
+        _checkpoint_begin_attempt(
+            request,
+            target,
+            "claude",
+            proxy_state.DEFAULT_MODEL,
+            reason=f"fallback-{reason}",
+            continuity=continuity,
+        )
 
         async with session.post(
             target["url"], headers=target["headers"], data=raw_body
         ) as upstream:
             if upstream.status != 200:
+                _checkpoint_fail(
+                    request,
+                    reason=f"upstream-{upstream.status}",
+                    partial_stream=False,
+                )
                 text = await upstream.text()
                 _log.error(
                     "fallback claude fallo despues de %s status=%d: %r",
@@ -2432,10 +3005,30 @@ class _ProxyMixin:
         if isinstance(built, web.StreamResponse):
             return built
         new_target, post_kwargs = built
+        _checkpoint_rotation(
+            request,
+            failed_provider,
+            target,
+            reason,
+            turn_checkpoint.CONTINUITY_FULL_RETRY,
+        )
+        _checkpoint_begin_attempt(
+            request,
+            new_target,
+            target,
+            model,
+            reason=f"failover-{reason}",
+            continuity=turn_checkpoint.CONTINUITY_FULL_RETRY,
+        )
         async with session.post(
             new_target["url"], headers=new_target["headers"], **post_kwargs
         ) as upstream:
             if upstream.status != 200:
+                _checkpoint_fail(
+                    request,
+                    reason=f"upstream-{upstream.status}",
+                    partial_stream=False,
+                )
                 if upstream.status in _CIRCUIT_FAILURE_STATUSES:
                     _record_provider_failure(target, f"status-{upstream.status}")
                 _record_routing_outcome(
@@ -2455,6 +3048,7 @@ class _ProxyMixin:
                 )
             _record_provider_success(target)
             _record_routing_outcome(request, target, status_code=200)
+            _persist_automatic_reroute(target, model, "inflight-reroute")
             return await self._stream_upstream(
                 request,
                 upstream,
@@ -2551,8 +3145,50 @@ class _ProxyMixin:
             except provider_router.RouterError as exc:
                 return web.json_response({"error": f"proxy ({provider}): {exc}"}, status=502)
 
+        payload = await self._parse_alternative_payload(request, provider, raw_body)
+        if isinstance(payload, web.StreamResponse):
+            return payload
+
+        # Pre-compactacion PREVENTIVA: si el historial supera el umbral, recortarlo
+        # antes de mandarlo al backend alternativo. Evita el 400 por context-limit
+        # (MiniMax-M3 ~256k vs el contexto mayor de Claude) y el fallback reactivo.
+        payload = _precompact_alt_payload(payload, provider)
+
         try:
-            payload = json.loads(raw_body)
+            target = provider_router.resolve_target(provider, dict(request.headers))
+        except provider_router.RouterError as exc:
+            return web.json_response({"error": f"proxy ({provider}): {exc}"}, status=502)
+
+        # Backends OpenAI-compatible (ollama, lmstudio): el sanitizer asume forma
+        # Anthropic (messages con content blocks, tools con input_schema), asi que
+        # se salta y se traduce el payload a Chat Completions. El stream de vuelta
+        # tambien se traduce en _stream_upstream (ver `openai_stream` mas abajo).
+        if provider_router.is_openai_compatible(provider):
+            # Reconciliar pares tool_use/tool_result huerfanos ANTES de traducir: el
+            # historial puede degenerar tras truncado/hot-swap y los providers OpenAI
+            # estrictos (OpenCode Go / Kimi -> "tool_call_id is not found"; MiniMax ->
+            # 2013) rechazan un role:tool sin su tool_call. La rama Anthropic ya lo hace
+            # via sanitize_anthropic_payload; aca lo aplicamos a mano (el traductor es puro).
+            post_payload = _build_openai_post_payload(payload, provider, model)
+            if isinstance(post_payload, web.StreamResponse):
+                return post_payload
+            return target, post_payload
+
+        try:
+            sanitized = message_sanitizer.sanitize_anthropic_payload(payload, provider, model)
+            return target, {"json": sanitized}
+        except provider_router.RouterError as exc:
+            return web.json_response({"error": f"proxy ({provider}): {exc}"}, status=502)
+
+    async def _parse_alternative_payload(
+        self,
+        request: web.Request,
+        provider: str,
+        raw_body: bytes,
+    ) -> dict[str, Any] | web.StreamResponse:
+        """Parsea el body alternativo o ejecuta su fallback por JSON invalido."""
+        try:
+            return json.loads(raw_body)
         except Exception as exc:  # noqa: BLE001 — boundary HTTP
             if not _auto_fallback_enabled():
                 _log.error(
@@ -2580,67 +3216,6 @@ class _ProxyMixin:
                     provider,
                     f"invalid-json: {exc}",
                 )
-
-        # Pre-compactacion PREVENTIVA: si el historial supera el umbral, recortarlo
-        # antes de mandarlo al backend alternativo. Evita el 400 por context-limit
-        # (MiniMax-M3 ~256k vs el contexto mayor de Claude) y el fallback reactivo.
-        if _alt_precompact_enabled():
-            messages = payload.get("messages")
-            if isinstance(messages, list):
-                limit = _alt_precompact_max_messages()
-                if len(messages) > limit:
-                    payload = dict(payload)
-                    payload["messages"] = messages[-limit:]
-                    _record_auto_recovery("precompact_alt_provider", provider)
-                    _log.info(
-                        "pre-compact %s: %d -> %d mensajes (umbral %d)",
-                        provider,
-                        len(messages),
-                        limit,
-                        limit,
-                    )
-
-        try:
-            target = provider_router.resolve_target(provider, dict(request.headers))
-        except provider_router.RouterError as exc:
-            return web.json_response({"error": f"proxy ({provider}): {exc}"}, status=502)
-
-        # Backends OpenAI-compatible (ollama, lmstudio): el sanitizer asume forma
-        # Anthropic (messages con content blocks, tools con input_schema), asi que
-        # se salta y se traduce el payload a Chat Completions. El stream de vuelta
-        # tambien se traduce en _stream_upstream (ver `openai_stream` mas abajo).
-        if provider_router.is_openai_compatible(provider):
-            # Reconciliar pares tool_use/tool_result huerfanos ANTES de traducir: el
-            # historial puede degenerar tras truncado/hot-swap y los providers OpenAI
-            # estrictos (OpenCode Go / Kimi -> "tool_call_id is not found"; MiniMax ->
-            # 2013) rechazan un role:tool sin su tool_call. La rama Anthropic ya lo hace
-            # via sanitize_anthropic_payload; aca lo aplicamos a mano (el traductor es puro).
-            messages = payload.get("messages")
-            if isinstance(messages, list):
-                payload = {
-                    **payload,
-                    "messages": message_sanitizer.reconcile_tool_blocks(messages),
-                }
-            try:
-                oai = openai_translator.anthropic_to_openai(payload, model=model, provider=provider)
-            except Exception as exc:  # noqa: BLE001 — boundary de traduccion
-                _log.error(
-                    "falla traducir payload Anthropic->OpenAI (%s): %s | payload_keys=%s",
-                    provider,
-                    exc,
-                    list(payload.keys()),
-                )
-                return web.json_response(
-                    {"error": f"proxy ({provider}): payload no traducible a OpenAI: {exc}"},
-                    status=400,
-                )
-            return target, {"json": oai}
-
-        try:
-            sanitized = message_sanitizer.sanitize_anthropic_payload(payload, provider, model)
-            return target, {"json": sanitized}
-        except provider_router.RouterError as exc:
-            return web.json_response({"error": f"proxy ({provider}): {exc}"}, status=502)
 
     @staticmethod
     def _auto_recovery_limit_response(provider: str) -> web.StreamResponse:
@@ -2696,6 +3271,14 @@ class _ProxyMixin:
             return self._auto_recovery_limit_response(provider)
         _record_auto_recovery("compact_retry_status_context_limit", provider)
         auto_recovery_remaining -= 1
+        _checkpoint_begin_attempt(
+            request,
+            target,
+            provider,
+            provider_switch.resolve_provider_model(provider),
+            reason="compact-retry",
+            continuity=turn_checkpoint.CONTINUITY_FULL_RETRY,
+        )
         async with session.post(
             target["url"],
             headers=target["headers"],
@@ -2707,6 +3290,11 @@ class _ProxyMixin:
                     retry_upstream,
                     auto_recovery_remaining=auto_recovery_remaining,
                 )
+            _checkpoint_fail(
+                request,
+                reason=f"upstream-{retry_upstream.status}",
+                partial_stream=False,
+            )
             retry_text = await retry_upstream.text()
             _log.error(
                 "auto-compact retry fallo status=%d: %r",
@@ -2822,12 +3410,25 @@ class _ProxyMixin:
             return None
         _record_auto_recovery("aggressive_retry_400", provider)
         _log.warning("retry agresivo (purga tool blocks) para %s tras 400", provider)
+        _checkpoint_begin_attempt(
+            request,
+            target,
+            provider,
+            model,
+            reason="aggressive-retry",
+            continuity=turn_checkpoint.CONTINUITY_FULL_RETRY,
+        )
         async with session.post(
             target["url"], headers=target["headers"], json=sanitized
         ) as retry_upstream:
             if retry_upstream.status == 200:
                 _record_provider_success(provider)
                 return await self._stream_upstream(request, retry_upstream)
+            _checkpoint_fail(
+                request,
+                reason=f"upstream-{retry_upstream.status}",
+                partial_stream=False,
+            )
             retry_text = await retry_upstream.text()
             _log.error(
                 "retry agresivo fallo %s status=%d: %r",
@@ -2892,10 +3493,23 @@ class _ProxyMixin:
         await asyncio.sleep(_CLAUDE_TRANSIENT_RETRY_DELAY_S)
         _log.warning("retry transitorio claude tras status=%d (1 reintento)", first_status)
         try:
+            _checkpoint_begin_attempt(
+                request,
+                target,
+                "claude",
+                model,
+                reason=f"transient-retry-{first_status}",
+                continuity=turn_checkpoint.CONTINUITY_FULL_RETRY,
+            )
             async with session.post(
                 target["url"], headers=target["headers"], data=raw_body
             ) as upstream:
                 if upstream.status != 200:
+                    _checkpoint_fail(
+                        request,
+                        reason=f"upstream-{upstream.status}",
+                        partial_stream=False,
+                    )
                     text = await upstream.text()
                     _log.error(
                         "retry transitorio claude fallo status=%d: %r",
@@ -2987,6 +3601,14 @@ class _ProxyMixin:
             current_max_tokens,
             new_max_tokens,
         )
+        _checkpoint_begin_attempt(
+            request,
+            target,
+            provider,
+            model,
+            reason="context-overflow-retry",
+            continuity=turn_checkpoint.CONTINUITY_FULL_RETRY,
+        )
         async with session.post(
             target["url"], headers=target["headers"], **post_kwargs
         ) as retry_upstream:
@@ -2999,6 +3621,11 @@ class _ProxyMixin:
                     provider=provider,
                     model=model,
                 )
+            _checkpoint_fail(
+                request,
+                reason=f"upstream-{retry_upstream.status}",
+                partial_stream=False,
+            )
             retry_text = await retry_upstream.text()
             _log.error(
                 "context-overflow retry fallo %s status=%d: %r",
@@ -3007,6 +3634,171 @@ class _ProxyMixin:
                 retry_text[:1000],
             )
         return None
+
+    async def _observe_upstream_error(
+        self,
+        request: web.Request,
+        target: dict[str, Any],
+        provider: str,
+        model: str,
+        raw_body: bytes,
+        upstream: Any,
+    ) -> tuple[str, str | None, str | None]:
+        """Registra un error upstream antes de aplicar recuperaciones."""
+        text = await upstream.text()
+        _checkpoint_fail(
+            request,
+            reason=f"upstream-{upstream.status}",
+            partial_stream=False,
+        )
+        if provider_cascade.is_auto_failover_enabled():
+            _capture_quota_headers(provider, upstream.headers)
+        retry_after = upstream.headers.get("Retry-After")
+        reset_raw = (
+            upstream.headers.get("anthropic-ratelimit-unified-reset")
+            or upstream.headers.get("anthropic-ratelimit-tokens-reset")
+            or upstream.headers.get("anthropic-ratelimit-requests-reset")
+        )
+        _record_routing_outcome(
+            request,
+            provider,
+            status_code=upstream.status,
+            retry_after=_retry_after_seconds(reset_raw, retry_after),
+        )
+        _log.error(
+            "upstream %s (%s) status=%d: %r",
+            provider,
+            target["url"],
+            upstream.status,
+            text[:1000],
+        )
+        if provider != "claude" and upstream.status == 400:
+            _log_upstream_error(provider, model, upstream.status, text, raw_body)
+        if upstream.status in _CIRCUIT_FAILURE_STATUSES:
+            _record_provider_failure(provider, f"status-{upstream.status}")
+        return text, retry_after, reset_raw
+
+    async def _try_claude_transient_recovery(
+        self,
+        request: web.Request,
+        session: ClientSession,
+        target: dict[str, Any],
+        provider: str,
+        model: str,
+        raw_body: bytes,
+        status: int,
+    ) -> web.StreamResponse | None:
+        """Reintenta una vez un blip transitorio del passthrough Claude."""
+        if (
+            provider == "claude"
+            and status in _CLAUDE_TRANSIENT_RETRY_STATUSES
+            and _claude_transient_retry_enabled()
+        ):
+            return await self._retry_claude_transient(
+                request, session, target, raw_body, model, status
+            )
+        return None
+
+    async def _try_inflight_failover(
+        self,
+        request: web.Request,
+        session: ClientSession,
+        provider: str,
+        raw_body: bytes,
+        status: int,
+    ) -> web.StreamResponse | None:
+        """Continua la cascada ante un fallo de salud del alternativo."""
+        if (
+            provider_cascade.is_auto_failover_enabled() or _request_uses_routing_v2(request)
+        ) and status in _FAILOVER_STATUSES:
+            return await self._failover_to_next_healthy(
+                request, session, raw_body, provider, f"upstream-{status}", {provider}
+            )
+        return None
+
+    async def _try_alt_context_recovery(
+        self,
+        request: web.Request,
+        session: ClientSession,
+        provider: str,
+        model: str,
+        raw_body: bytes,
+        status: int,
+        text: str,
+    ) -> web.StreamResponse | None:
+        """Ajusta localmente max_tokens ante context overflow alternativo."""
+        if provider != "claude" and status == 400:
+            return await self._try_context_overflow_retry(
+                request, session, provider, model, raw_body, status, text
+            )
+        return None
+
+    async def _try_status_fallback(
+        self,
+        request: web.Request,
+        session: ClientSession,
+        provider: str,
+        raw_body: bytes,
+        status: int,
+        text: str,
+        auto_recovery_remaining: int,
+    ) -> web.StreamResponse | None:
+        """Aplica el fallback historico por status o limite de contexto."""
+        if not _should_fallback_to_claude(provider, status, text):
+            return None
+        if auto_recovery_remaining <= 0:
+            return self._auto_recovery_limit_response(provider)
+        _record_auto_recovery("fallback_status_context_limit", provider)
+        return await self._fallback_to_claude(
+            request,
+            session,
+            raw_body,
+            provider,
+            f"upstream-{status}",
+        )
+
+    async def _try_aggressive_history_recovery(
+        self,
+        request: web.Request,
+        session: ClientSession,
+        provider: str,
+        model: str,
+        raw_body: bytes,
+        status: int,
+        aggressive_retry_remaining: int,
+    ) -> web.StreamResponse | None:
+        """Purga una vez historial tool/thinking ante un 400 inexplicado."""
+        if (
+            provider != "claude"
+            and status == 400
+            and aggressive_retry_remaining > 0
+            and _payload_has_tool_history(raw_body)
+        ):
+            return await self._try_aggressive_retry(request, session, provider, model, raw_body)
+        return None
+
+    async def _try_compact_history_recovery(
+        self,
+        request: web.Request,
+        session: ClientSession,
+        target: dict[str, Any],
+        provider: str,
+        raw_body: bytes,
+        status: int,
+        text: str,
+        auto_recovery_remaining: int,
+    ) -> web.StreamResponse | None:
+        """Reintenta con body compactado cuando la politica historica aplica."""
+        if not _should_auto_compact_retry(provider, status, text):
+            return None
+        return await self._try_auto_compact_retry(
+            request,
+            session,
+            target,
+            provider,
+            raw_body,
+            auto_recovery_remaining,
+        )
 
     async def _handle_upstream_error(
         self,
@@ -3039,90 +3831,44 @@ class _ProxyMixin:
         Returns:
             La respuesta resultante: fallback, reintento, limite alcanzado o error.
         """
-        text = await upstream.text()
-        # Captura passiva de cuota desde los headers del error (un 429 suele traer
-        # remaining=0): alimenta el auto-rotate proactivo del próximo turno.
-        # Gateada por opt-in: con la feature OFF no toca disco en el hot path.
-        if provider_cascade.is_auto_failover_enabled():
-            _capture_quota_headers(provider, upstream.headers)
-        retry_after = upstream.headers.get("Retry-After")
-        _record_routing_outcome(
-            request,
-            provider,
-            status_code=upstream.status,
-            retry_after=retry_after,
+        text, retry_after, reset_raw = await self._observe_upstream_error(
+            request, target, provider, model, raw_body, upstream
         )
-        # Anthropic indica cuando se resetea la ventana de uso via headers RFC 3339;
-        # `unified` cubre el limite combinado del plan de suscripcion (ventana 5h).
-        reset_raw = (
-            upstream.headers.get("anthropic-ratelimit-unified-reset")
-            or upstream.headers.get("anthropic-ratelimit-tokens-reset")
-            or upstream.headers.get("anthropic-ratelimit-requests-reset")
-        )
-        _log.error(
-            "upstream %s (%s) status=%d: %r",
-            provider,
-            target["url"],
-            upstream.status,
-            text[:1000],
-        )
-        # Observabilidad dedicada del 400 de un alternativo: log estructural sin
-        # secretos para diagnosticar por que rechazo el historial.
-        if provider != "claude" and upstream.status == 400:
-            _log_upstream_error(provider, model, upstream.status, text, raw_body)
-        # Solo los fallos de SALUD (429/5xx) alimentan el breaker; los 4xx de
-        # payload son por-request y no dicen nada del estado del backend.
-        if upstream.status in _CIRCUIT_FAILURE_STATUSES:
-            _record_provider_failure(provider, f"status-{upstream.status}")
         # Passthrough claude con blip de sobrecarga: UN reintento antes de
         # devolver el error (que tumba el clasificador de auto mode del cliente).
-        if (
-            provider == "claude"
-            and upstream.status in _CLAUDE_TRANSIENT_RETRY_STATUSES
-            and _claude_transient_retry_enabled()
-        ):
-            retried = await self._retry_claude_transient(
-                request, session, target, raw_body, model, upstream.status
-            )
-            if retried is not None:
-                return retried
+        recovered = await self._try_claude_transient_recovery(
+            request, session, target, provider, model, raw_body, upstream.status
+        )
+        if recovered is not None:
+            return recovered
         # Auto-failover in-flight (opt-in): ante un fallo de salud (429/5xx) del
         # alternativo, rotar al próximo sano de la cascada en este mismo turno —
         # antes de rebotar a Claude. Si la cascada no tiene sano, devuelve None y
         # sigue el manejo histórico.
-        if (
-            provider != "claude"
-            and (
-                provider_cascade.is_auto_failover_enabled()
-                or _request_uses_routing_v2(request)
-            )
-            and upstream.status in _FAILOVER_STATUSES
-        ):
-            rotated = await self._failover_to_next_healthy(
-                request, session, raw_body, provider, f"upstream-{upstream.status}", {provider}
-            )
-            if rotated is not None:
-                return rotated
+        recovered = await self._try_inflight_failover(
+            request, session, provider, raw_body, upstream.status
+        )
+        if recovered is not None:
+            return recovered
         # Context_overflow de un alternativo: probar PRIMERO el ajuste local de
         # max_tokens (UN retry contra el mismo backend) antes de rebotar a
         # Claude. Si no aplica o vuelve a fallar, sigue el flujo historico.
-        if provider != "claude" and upstream.status == 400:
-            context_retry = await self._try_context_overflow_retry(
-                request, session, provider, model, raw_body, upstream.status, text
-            )
-            if context_retry is not None:
-                return context_retry
-        if _should_fallback_to_claude(provider, upstream.status, text):
-            if auto_recovery_remaining <= 0:
-                return self._auto_recovery_limit_response(provider)
-            _record_auto_recovery("fallback_status_context_limit", provider)
-            return await self._fallback_to_claude(
-                request,
-                session,
-                raw_body,
-                provider,
-                f"upstream-{upstream.status}",
-            )
+        recovered = await self._try_alt_context_recovery(
+            request, session, provider, model, raw_body, upstream.status, text
+        )
+        if recovered is not None:
+            return recovered
+        recovered = await self._try_status_fallback(
+            request,
+            session,
+            provider,
+            raw_body,
+            upstream.status,
+            text,
+            auto_recovery_remaining,
+        )
+        if recovered is not None:
+            return recovered
         # Red de seguridad ante 400 inexplicado de un alternativo (sin marker de
         # contexto): UN retry agresivo purgando el historial de herramientas. Tope
         # estricto de 1 via aggressive_retry_remaining (guard explicito, sin loops).
@@ -3132,28 +3878,29 @@ class _ProxyMixin:
         # (modelo mal escrito, param no soportado), no del historial, y debe volver
         # crudo al usuario (preserva el contrato de _CONTEXT_LIMIT_MARKERS). Purgar
         # un historial sin tools no cambiaria nada -> reintentar seria inutil.
-        if (
-            provider != "claude"
-            and upstream.status == 400
-            and aggressive_retry_remaining > 0
-            and _payload_has_tool_history(raw_body)
-        ):
-            aggressive = await self._try_aggressive_retry(
-                request, session, provider, model, raw_body
-            )
-            if aggressive is not None:
-                return aggressive
-        if _should_auto_compact_retry(provider, upstream.status, text):
-            retried = await self._try_auto_compact_retry(
-                request,
-                session,
-                target,
-                provider,
-                raw_body,
-                auto_recovery_remaining,
-            )
-            if retried is not None:
-                return retried
+        recovered = await self._try_aggressive_history_recovery(
+            request,
+            session,
+            provider,
+            model,
+            raw_body,
+            upstream.status,
+            aggressive_retry_remaining,
+        )
+        if recovered is not None:
+            return recovered
+        recovered = await self._try_compact_history_recovery(
+            request,
+            session,
+            target,
+            provider,
+            raw_body,
+            upstream.status,
+            text,
+            auto_recovery_remaining,
+        )
+        if recovered is not None:
+            return recovered
         return self._build_upstream_error_response(
             provider, upstream.status, text, retry_after, reset_raw
         )
@@ -3244,87 +3991,83 @@ class _ProxyMixin:
                 {"error": f"count_tokens proxy ({provider}) fallo: {exc}"}, status=502
             )
 
-    async def handle_claude_proxy(self, request: web.Request) -> web.StreamResponse:
-        """POST /claudeproxy/v1/messages — proxy Anthropic con backend mutable.
-
-        Lee el backend activo. Para Claude nativo reenvia el body crudo; para
-        backends compatibles sanea JSON antes del passthrough SSE.
-        """
+    async def _prepare_proxy_request(
+        self,
+        request: web.Request,
+    ) -> tuple[web.Request, bytes, str, str, str, str]:
+        """Lee el body, resuelve routing y prepara el checkpoint del turno."""
         active = proxy_state.get_active()
         provider, model = active["provider"], active["model"]
-        auto_recovery_remaining = _auto_recovery_max_retries()
-        trace_id = (
-            request.headers.get("X-Request-Id")
-            or request.headers.get("X-Antigravity-Trace-Id")
-            or f"route-{uuid.uuid4().hex}"
+        trace_id = turn_checkpoint.normalize_trace_id(
+            request.headers.get("X-Request-Id") or request.headers.get("X-Antigravity-Trace-Id")
         )
 
-        # El client_max_size de la app (1MB, hardening REST) aplicaria en read();
-        # las rutas del proxy necesitan el limite real de la API (32MB).
         request = request.clone(client_max_size=_proxy_max_body_bytes())
         request["antigravity_trace_id"] = trace_id
-        request["antigravity_routing_v2"] = bool(
-            request.headers.get("X-Antigravity-Route")
-        )
+        request["antigravity_routing_v2"] = bool(request.headers.get("X-Antigravity-Route"))
         raw_body = await request.read()
-        if routing_authority.routing_enabled():
-            try:
-                decision = routing_authority.get_routing_authority().resolve_request(
-                    raw_body,
-                    provider,
-                    model,
-                    trace_id=trace_id,
-                    route_hint=request.headers.get("X-Antigravity-Route"),
-                )
-                if decision is not None:
-                    request["antigravity_routing_v2"] = True
-                    provider, model = decision.provider, decision.model
-                    _log.info(
-                        "routing v2: trace=%s route=%s -> %s/%s score=%.3f manual=%s",
-                        trace_id,
-                        decision.route,
-                        provider,
-                        model,
-                        decision.score,
-                        decision.manual,
-                    )
-                else:
-                    provider, model = _resolve_class_route(provider, model, raw_body)
-            except (RuntimeError, ValueError) as exc:
-                _log.warning("routing v2 degradado a provider activo: %s", exc)
-                provider, model = _resolve_class_route(provider, model, raw_body)
-        else:
-            provider, model = _resolve_class_route(provider, model, raw_body)
+        provider, model = _resolve_effective_route(request, raw_body, provider, model, trace_id)
 
-        # Auto-failover (opt-in): si el provider activo tiene el circuito abierto,
-        # rerutear al proximo sano de la cascada en vez de rebotar siempre a Claude.
+        checkpoint_provider, checkpoint_model = provider, model
+        _checkpoint_prepare(
+            request,
+            raw_body,
+            checkpoint_provider,
+            checkpoint_model,
+        )
         provider, model = _failover_reroute(provider, model, raw_body)
-
-        # Circuito abierto: no pagar el timeout contra un backend caido — rescate
-        # directo a Claude (o 503 explicito si el auto-fallback esta apagado).
-        if _circuit_open(provider):
-            _record_auto_recovery("circuit_open_skip", provider)
-            if _auto_fallback_enabled():
-                return await self._fallback_to_claude(
-                    request, None, raw_body, provider, "circuit-open"
-                )
-            return web.json_response(
-                {
-                    "error": f"backend {provider} con circuito abierto (fallos consecutivos)",
-                    "code": "CIRCUIT_OPEN",
-                    "provider": provider,
-                    "hint": "Reintentar tras el cooldown o cambiar de provider.",
-                },
-                status=503,
+        if provider != checkpoint_provider:
+            _checkpoint_rotation(
+                request,
+                checkpoint_provider,
+                provider,
+                "preflight-quota-or-circuit",
+                turn_checkpoint.CONTINUITY_NEXT_TURN,
             )
+        request["antigravity_turn_model"] = model
+        return request, raw_body, provider, model, checkpoint_provider, trace_id
 
-        built = await self._build_proxy_request(request, provider, model, raw_body)
-        if isinstance(built, web.StreamResponse):
-            return built
-        target, post_kwargs = built
+    async def _circuit_open_proxy_response(
+        self,
+        request: web.Request,
+        raw_body: bytes,
+        provider: str,
+    ) -> web.StreamResponse | None:
+        """Rescata o rechaza un turno cuyo circuito ya esta abierto."""
+        if not _circuit_open(provider):
+            return None
+        _record_auto_recovery("circuit_open_skip", provider)
+        if provider_cascade.is_auto_failover_enabled():
+            rotated = await self._failover_to_next_healthy(
+                request, None, raw_body, provider, "circuit-open", tried={provider}
+            )
+            if rotated is not None:
+                return rotated
+        if _auto_fallback_enabled():
+            return await self._fallback_to_claude(request, None, raw_body, provider, "circuit-open")
 
-        # Shadow mode: duplicar el turno al alternativo en paralelo (nunca bloquea
-        # ni afecta la respuesta real; el resultado va al shadow log).
+        _checkpoint_fail(
+            request,
+            reason="circuit-open",
+            partial_stream=False,
+        )
+        return web.json_response(
+            {
+                "error": f"backend {provider} con circuito abierto (fallos consecutivos)",
+                "code": "CIRCUIT_OPEN",
+                "provider": provider,
+                "hint": "Reintentar tras el cooldown o cambiar de provider.",
+            },
+            status=503,
+        )
+
+    @staticmethod
+    def _start_shadow_request(
+        request: web.Request,
+        provider: str,
+        raw_body: bytes,
+    ) -> tuple[dict | None, asyncio.Task[dict] | None, list[bytes] | None, float]:
+        """Inicia el shadow opcional y devuelve su estado de finalizacion."""
         shadow_plan = _plan_shadow(provider, raw_body)
         shadow_task: asyncio.Task[dict] | None = None
         tee_buffer: list[bytes] | None = None
@@ -3333,91 +4076,202 @@ class _ProxyMixin:
             _SHADOW_TOTAL["started"] += 1
             shadow_task = asyncio.create_task(_run_shadow(dict(request.headers), shadow_plan))
             tee_buffer = []
+        return shadow_plan, shadow_task, tee_buffer, turn_start
 
+    async def _dispatch_proxy_upstream(
+        self,
+        request: web.Request,
+        target: dict[str, Any],
+        post_kwargs: dict[str, Any],
+        provider: str,
+        model: str,
+        raw_body: bytes,
+        auto_recovery_remaining: int,
+        tee_buffer: list[bytes] | None,
+        turn_start: float,
+    ) -> web.StreamResponse:
+        """Ejecuta el POST upstream y despacha error o streaming exitoso."""
         timeout = _proxy_client_timeout()
-        try:
-            async with ClientSession(timeout=timeout) as session:
-                async with session.post(
-                    target["url"], headers=target["headers"], **post_kwargs
-                ) as upstream:
-                    if upstream.status != 200:
-                        return await self._handle_upstream_error(
-                            request,
-                            session,
-                            target,
-                            provider,
-                            raw_body,
-                            upstream,
-                            auto_recovery_remaining,
-                            model=model,
-                            aggressive_retry_remaining=1,
-                        )
-                    _record_provider_success(provider)
-                    _record_routing_outcome(
+        async with ClientSession(timeout=timeout) as session:
+            async with session.post(
+                target["url"], headers=target["headers"], **post_kwargs
+            ) as upstream:
+                if upstream.status != 200:
+                    return await self._handle_upstream_error(
                         request,
+                        session,
+                        target,
                         provider,
-                        status_code=200,
-                        latency_ms=round((time.monotonic() - turn_start) * 1000),
-                    )
-                    return await self._stream_upstream(
-                        request,
+                        raw_body,
                         upstream,
-                        raw_body=raw_body,
-                        provider=provider,
+                        auto_recovery_remaining,
                         model=model,
-                        auto_recovery_remaining=auto_recovery_remaining,
-                        tee_buffer=tee_buffer,
+                        aggressive_retry_remaining=1,
                     )
+                _record_provider_success(provider)
+                _record_routing_outcome(
+                    request,
+                    provider,
+                    status_code=200,
+                    latency_ms=round((time.monotonic() - turn_start) * 1000),
+                )
+                return await self._stream_upstream(
+                    request,
+                    upstream,
+                    raw_body=raw_body,
+                    provider=provider,
+                    model=model,
+                    auto_recovery_remaining=auto_recovery_remaining,
+                    tee_buffer=tee_buffer,
+                )
+
+    @staticmethod
+    def _client_disconnect_response(
+        request: web.Request,
+        provider: str,
+        exc: ConnectionResetError,
+    ) -> web.StreamResponse:
+        """Convierte un cancel previo al stream en el 499 historico."""
+        _log.warning("conexion reseteada por el cliente hacia %s: %s", provider, exc)
+        _checkpoint_fail(
+            request,
+            reason="client-disconnect-before-stream",
+            partial_stream=False,
+        )
+        return web.json_response(
+            {"error": "cliente cerro la conexion", "code": "CLIENT_DISCONNECT"},
+            status=499,
+        )
+
+    async def _transport_error_response(
+        self,
+        request: web.Request,
+        raw_body: bytes,
+        provider: str,
+        trace_id: str,
+        turn_start: float,
+        exc: Exception,
+    ) -> web.StreamResponse:
+        """Registra un fallo de transporte y continua la cascada si aplica."""
+        _log.exception("error en proxy hacia %s", provider)
+        error_reason = f"transport-{type(exc).__name__}"
+        _record_provider_failure(provider, error_reason)
+        _checkpoint_fail(
+            request,
+            reason=error_reason,
+            partial_stream=False,
+        )
+        _record_routing_outcome(
+            request,
+            provider,
+            error_kind=("timeout" if isinstance(exc, TimeoutError) else "transport"),
+            latency_ms=round((time.monotonic() - turn_start) * 1000),
+        )
+        if provider_cascade.is_auto_failover_enabled() or _request_uses_routing_v2(request):
+            rotated = await self._failover_to_next_healthy(
+                request,
+                None,
+                raw_body,
+                provider,
+                error_reason,
+                {provider},
+            )
+            if rotated is not None:
+                return rotated
+        return web.json_response(
+            {
+                "error": f"proxy ({provider}) fallo antes del primer token",
+                "code": "PROVIDER_TRANSPORT_ERROR",
+                "retryable": True,
+                "trace_id": trace_id,
+            },
+            status=502,
+        )
+
+    @staticmethod
+    def _schedule_shadow_finalization(
+        shadow_task: asyncio.Task[dict] | None,
+        shadow_plan: dict | None,
+        tee_buffer: list[bytes] | None,
+        turn_start: float,
+    ) -> None:
+        """Programa el registro fire-and-forget del shadow del turno."""
+        if shadow_task is None or shadow_plan is None:
+            return
+        claude_latency_ms = round((time.monotonic() - turn_start) * 1000)
+        task = asyncio.create_task(
+            _finalize_shadow(shadow_task, tee_buffer or [], shadow_plan, claude_latency_ms)
+        )
+        _SHADOW_TASKS.add(task)
+        task.add_done_callback(_on_shadow_done)
+
+    async def handle_claude_proxy(self, request: web.Request) -> web.StreamResponse:
+        """POST /claudeproxy/v1/messages — proxy Anthropic con backend mutable.
+
+        Lee el backend activo. Para Claude nativo reenvia el body crudo; para
+        backends compatibles sanea JSON antes del passthrough SSE.
+        """
+        auto_recovery_remaining = _auto_recovery_max_retries()
+        (
+            request,
+            raw_body,
+            provider,
+            model,
+            checkpoint_provider,
+            trace_id,
+        ) = await self._prepare_proxy_request(request)
+
+        circuit_response = await self._circuit_open_proxy_response(request, raw_body, provider)
+        if circuit_response is not None:
+            return circuit_response
+
+        built = await self._build_proxy_request(request, provider, model, raw_body)
+        if isinstance(built, web.StreamResponse):
+            _checkpoint_fail(
+                request,
+                reason="provider-request-build-failed",
+                partial_stream=False,
+            )
+            return built
+        target, post_kwargs = built
+        _checkpoint_begin_attempt(
+            request,
+            target,
+            provider,
+            model,
+            reason="initial-dispatch",
+            continuity=(
+                turn_checkpoint.CONTINUITY_NEXT_TURN
+                if provider != checkpoint_provider
+                else turn_checkpoint.CONTINUITY_INITIAL
+            ),
+        )
+
+        shadow_plan, shadow_task, tee_buffer, turn_start = self._start_shadow_request(
+            request, provider, raw_body
+        )
+        try:
+            return await self._dispatch_proxy_upstream(
+                request,
+                target,
+                post_kwargs,
+                provider,
+                model,
+                raw_body,
+                auto_recovery_remaining,
+                tee_buffer,
+                turn_start,
+            )
         except ConnectionResetError as exc:
             # Cancel del cliente propagado desde _stream_upstream antes de
             # preparar la respuesta. 499 (Client Closed Request) distingue este
             # caso del 502 real del backend y evita el ruido de un traceback.
-            _log.warning("conexion reseteada por el cliente hacia %s: %s", provider, exc)
-            return web.json_response(
-                {"error": "cliente cerro la conexion", "code": "CLIENT_DISCONNECT"},
-                status=499,
-            )
+            return self._client_disconnect_response(request, provider, exc)
         except Exception as exc:  # noqa: BLE001 — boundary HTTP
-            _log.exception("error en proxy hacia %s", provider)
-            # Errores de transporte (DNS, conexion rechazada, timeout) son fallos
-            # de salud del backend: alimentan el breaker igual que un 5xx.
-            _record_provider_failure(provider, f"transport-{type(exc).__name__}")
-            _record_routing_outcome(
-                request,
-                provider,
-                error_kind=("timeout" if isinstance(exc, TimeoutError) else "transport"),
-                latency_ms=round((time.monotonic() - turn_start) * 1000),
-            )
-            if (
-                provider_cascade.is_auto_failover_enabled()
-                or _request_uses_routing_v2(request)
-            ):
-                rotated = await self._failover_to_next_healthy(
-                    request,
-                    None,
-                    raw_body,
-                    provider,
-                    f"transport-{type(exc).__name__}",
-                    {provider},
-                )
-                if rotated is not None:
-                    return rotated
-            return web.json_response(
-                {
-                    "error": f"proxy ({provider}) fallo antes del primer token",
-                    "code": "PROVIDER_TRANSPORT_ERROR",
-                    "retryable": True,
-                    "trace_id": trace_id,
-                },
-                status=502,
+            return await self._transport_error_response(
+                request, raw_body, provider, trace_id, turn_start, exc
             )
         finally:
             # El registro shadow se completa fire-and-forget en TODOS los caminos
             # de salida (stream OK, error, cancel): jamas bloquea la respuesta.
-            if shadow_task is not None and shadow_plan is not None:
-                claude_latency_ms = round((time.monotonic() - turn_start) * 1000)
-                _t = asyncio.create_task(
-                    _finalize_shadow(shadow_task, tee_buffer or [], shadow_plan, claude_latency_ms)
-                )
-                _SHADOW_TASKS.add(_t)
-                _t.add_done_callback(_on_shadow_done)
+            self._schedule_shadow_finalization(shadow_task, shadow_plan, tee_buffer, turn_start)

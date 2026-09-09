@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 from collections.abc import Callable
 from datetime import datetime
@@ -51,8 +52,37 @@ from .models import (
     ExecutionPlan,
 )
 from .registry import AGENT_REGISTRY
+from .strategies import (
+    StrategyChain,
+    CrewAIStrategy,
+    AutonomousLoopStrategy,
+    ScriptStrategy,
+    SimulatedStrategy,
+)
 
 logger = logging.getLogger("antigravity.orchestrator")
+
+
+# These are the provider signals understood by the delegation tiers below.
+# Library availability alone is not enough: LangGraph has a rule-based fallback,
+# but constructing its LLM client without a configured route can block on a
+# network request and leave callers waiting for the full provider timeout.
+_LLM_PROVIDER_ENV_KEYS = (
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "OPENROUTER_API_KEY",
+    "XAI_API_KEY",
+    "OLLAMA_BASE_URL",
+)
+
+
+def _has_configured_llm_provider() -> bool:
+    """Return whether an external or local LLM route is explicitly available."""
+    if os.getenv("ANTIGRAVITY_LLM_PROVIDER_ID", "").strip():
+        return True
+    return any(os.getenv(key, "").strip() for key in _LLM_PROVIDER_ENV_KEYS)
 
 
 class AntigravityOrchestrator:
@@ -97,6 +127,30 @@ class AntigravityOrchestrator:
         self._plugin_manager: Any | None = self._init_plugin_manager()
 
         logger.info("Orchestrator initialized with %d agents", len(self.agents))
+
+    def get_agent_registry(self) -> dict[str, AgentConfig]:
+        """Return the live agent registry used by this orchestrator.
+
+        This compatibility accessor keeps older SDK consumers working while
+        preserving ``agents`` as the canonical in-process registry.
+        """
+        return self.agents
+
+    @property
+    def strategy_chain(self) -> StrategyChain:
+        """Build the execution chain from the providers available right now."""
+        strategies = [
+            CrewAIStrategy(verbose=self.verbose),
+            ScriptStrategy(verbose=self.verbose),
+            SimulatedStrategy(verbose=self.verbose),
+        ]
+        if _has_configured_llm_provider():
+            strategies.insert(1, AutonomousLoopStrategy(verbose=self.verbose))
+        return StrategyChain(
+            strategies=strategies,
+            intelligence_hub=self._intelligence_hub,
+            verbose=self.verbose,
+        )
 
     def _init_intelligence_hub(self) -> "IntelligenceHub | None":  # noqa: UP037
         """Initialize Intelligence Hub for data-driven agent selection."""
@@ -557,8 +611,6 @@ class AntigravityOrchestrator:
         Returns:
             Tupla (skip_external_llm, llm_enabled, llm_mode).
         """
-        import os
-
         llm_enabled = os.getenv("ANTIGRAVITY_LLM_ENABLED", "true").lower() not in (
             "false",
             "0",
@@ -568,9 +620,9 @@ class AntigravityOrchestrator:
         llm_mode = os.getenv("ANTIGRAVITY_LLM_MODE", "auto").lower()
 
         skip = not llm_enabled or llm_mode == "ide"
-        if not HAS_CREWAI:
-            skip = True
         if not str(context_input).strip():
+            skip = True
+        if not _has_configured_llm_provider():
             skip = True
         # Only skip ALL tiers if BOTH engines are missing
         if not HAS_CREWAI and not HAS_AUTONOMOUS_LOOP:
@@ -596,8 +648,8 @@ class AntigravityOrchestrator:
                 quality_score=quality_score,
                 duration_ms=int(duration * 1000),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("No se pudo registrar outcome en Intelligence Hub: %s", e)
 
     async def _try_crewai_execution(
         self,
@@ -612,6 +664,12 @@ class AntigravityOrchestrator:
             Dict resultado si exitoso, None si falla o no aplica.
         """
         import os
+
+        # Catalog-routed providers are executed by AutonomousLoop, whose client
+        # layer understands the Nexus provider id and endpoint. CrewAI would
+        # otherwise silently choose whichever unrelated canonical key it finds.
+        if os.getenv("ANTIGRAVITY_LLM_PROVIDER_ID"):
+            return None
 
         if not (
             HAS_CREWAI
@@ -730,6 +788,7 @@ class AntigravityOrchestrator:
                 or os.getenv("GOOGLE_API_KEY")
                 or os.getenv("OPENROUTER_API_KEY")
                 or os.getenv("XAI_API_KEY")
+                or os.getenv("ANTIGRAVITY_LLM_PROVIDER_ID")
             )
         ):
             return None
@@ -835,7 +894,7 @@ class AntigravityOrchestrator:
         callback: Callable[[str], Any] | None = None,
         context_input: str = "",
     ) -> dict[str, Any]:
-        """Execute a single agent's task."""
+        """Execute a single agent's task using strategy chain fallback."""
         agent_name: str | None = agent_info.get("agent")
         agent_config: AgentConfig | None = self.agents.get(agent_name) if agent_name else None
 
@@ -843,56 +902,47 @@ class AntigravityOrchestrator:
             callback(f"Executing {agent_name}...")
 
         logger.info(f"Agent {agent_name} starting execution")
-        start_time = datetime.now()
 
-        skip_external_llm, llm_enabled, llm_mode = self._should_skip_external_llm(context_input)
-
-        if skip_external_llm:
-            logger.info(
-                f"Agent {agent_name}: LLM external disabled "
-                f"(llm_enabled={llm_enabled}, llm_mode={llm_mode}, context_input={bool(str(context_input).strip())}). "
-                f"Skipping CrewAI/AutonomousLoop."
-            )
-
-        # Tier 1: CrewAI
-        if not skip_external_llm:
-            crewai_result = await self._try_crewai_execution(
+        if not _has_configured_llm_provider():
+            direct_result = await self._try_script_execution(
                 agent_name,
-                agent_config,
                 context_input,
-                start_time,
+                datetime.now(),
             )
-            if crewai_result:
-                return crewai_result
+            if direct_result is not None:
+                return direct_result
 
-        # Tier 1.5: LangGraph
-        if not skip_external_llm and HAS_LANGGRAPH:
-            langgraph_result = await self._try_langgraph_execution(
-                agent_name, context_input, start_time
+        chain = self.strategy_chain
+
+        try:
+            result = await chain.execute(
+                agent_name=agent_name or "unknown",
+                task_description=context_input,
+                agent_config=agent_config,
+                context_input=context_input,
             )
-            if langgraph_result:
-                return langgraph_result
 
-        # Tier 2: AutonomousLoop
-        if not skip_external_llm:
-            auto_result = await self._try_autonomous_loop_execution(
-                agent_name,
-                agent_config,
-                context_input,
-                start_time,
-            )
-            if auto_result:
-                return auto_result
+            if "status" not in result:
+                result["status"] = "completed"
+            if "execution_mode" not in result:
+                result["execution_mode"] = result.get("strategy_used", "unknown")
+            if "output" not in result:
+                result["output"] = result.get("result", "")
+            if "duration_seconds" not in result:
+                duration_ms = result.get("duration_ms", 0)
+                result["duration_seconds"] = float(duration_ms) / 1000
 
-        # Tier 3: Script directo
-        script_result = await self._try_script_execution(agent_name, context_input, start_time)
-        if script_result:
-            return script_result
+            return result
 
-        # Fallback 4: IDE passthrough or simulated result
-        return await self._build_agent_fallback_result(
-            agent_name, context_input, start_time, skip_external_llm, llm_mode
-        )
+        except RuntimeError as e:
+            logger.error(f"Agent {agent_name}: all execution strategies failed: {e}")
+            return {
+                "agent": agent_name,
+                "status": "failed",
+                "error": str(e),
+                "execution_mode": "all_strategies_failed",
+                "output": f"Failed to execute {agent_name}: {e}",
+            }
 
     async def _try_langgraph_execution(
         self, agent_name: str | None, context_input: str, start_time: datetime
@@ -1042,8 +1092,8 @@ class AntigravityOrchestrator:
                     quality_score=0.3,
                     duration_ms=int(duration * 1000),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo registrar outcome de fallback en Intelligence Hub: %s", e)
 
         return result
 

@@ -92,7 +92,15 @@ def sync_local_skills(
             if not skill_md.exists():
                 continue
             preferred_name = slugify(skill_dir.name)
-            destination_name = resolve_destination_name(skills_root, preferred_name)
+            # `.agent/skills-custom` is the same canonical source copied by
+            # sync_commands.py. It must keep the exact directory name; prefixing it
+            # creates duplicate catalog entries with identical frontmatter names.
+            is_custom = source_root.name == "skills-custom"
+            destination_name = (
+                preferred_name
+                if is_custom
+                else resolve_destination_name(skills_root, preferred_name)
+            )
             destination_dir = skills_root / destination_name
             copy_skill_directory(skill_dir, destination_dir)
             write_marker(
@@ -127,6 +135,12 @@ def sync_claude_commands(
 
     for command_file in sorted(commands_root.glob("*.md")):
         command_name = slugify(command_file.stem)
+        canonical_skill = repo_root / ".agent" / "skills-custom" / command_name / "SKILL.md"
+        if canonical_skill.is_file():
+            # Prefer the maintained skill over a lossy generated wrapper. In
+            # particular, `/finalize` owns references and safety guarantees that a
+            # copied command body cannot preserve on its own.
+            continue
         destination_name = resolve_destination_name(skills_root, command_name)
         destination_dir = skills_root / destination_name
         if destination_dir.exists():

@@ -745,6 +745,7 @@ NOTEBOOKLM_COMMAND_FILES = [
     "notebooklm-ask.md",
     "notebooklm-doctor.md",
     "notebooklm-project.md",
+    "notebooklmsyn.md",
 ]
 
 AUTO_RECALL_HOOK_COMMAND = (
@@ -851,6 +852,7 @@ def inject_command(args: argparse.Namespace) -> int:
         SCRIPT_DIR / "notebooklm_workflow.py",
         SCRIPT_DIR / "notebooklm_bridge.py",
         SCRIPT_DIR / "notebooklm_auto_recall.py",
+        SCRIPT_DIR / "notebooklm_sync_all.py",
     ]
     for source in script_files:
         target = target_root / ".agent" / "scripts" / source.name

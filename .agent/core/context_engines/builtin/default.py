@@ -7,7 +7,12 @@ fallback si la seleccion falla.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ..base import ContextEngineInput, ContextEngineMetadata
+
+if TYPE_CHECKING:
+    from ..context_injection import InjectionContext
 
 
 class DefaultContextEngine:
@@ -25,7 +30,9 @@ class DefaultContextEngine:
             version="1.0.0",
         )
 
-    async def prepare(self, inp: ContextEngineInput, base=None):  # type: ignore[no-untyped-def]
+    async def prepare(
+        self, inp: ContextEngineInput, base: InjectionContext | None = None
+    ) -> InjectionContext:
         if base is not None:
             return base
         # Import tardio para romper ciclo: context_injection -> registry -> default

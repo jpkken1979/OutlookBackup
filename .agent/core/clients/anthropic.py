@@ -18,13 +18,16 @@ class AnthropicClient(BaseLLMClient):
         super().__init__(config)
         self._client = None
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         """Lazy load Anthropic client."""
         if self._client is None:
             try:
                 from anthropic import Anthropic
 
-                self._client = Anthropic(api_key=self.config.api_key)  # type: ignore[assignment]  # anthropic: dep opcional
+                kwargs: dict[str, Any] = {"api_key": self.config.api_key}
+                if self.config.base_url:
+                    kwargs["base_url"] = self.config.base_url
+                self._client = Anthropic(**kwargs)  # type: ignore[assignment]  # anthropic: dep opcional
             except ImportError:
                 raise ImportError(
                     "anthropic package not installed. Run: pip install anthropic"

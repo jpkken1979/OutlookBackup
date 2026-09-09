@@ -468,26 +468,30 @@ Busca en `HKCU\Software\Microsoft\Office\{ver}\Outlook\Profiles` (ver=16.0, 15.0
 ## Integracion Antigravity
 
 Proyecto integrado con **Antigravity v6.1.4**.
-Instalado por Nexus el 2026-07-24.
+Instalado por Nexus el 2026-08-13.
 
 ### Persona activa: gentleman
 
 El estilo de comunicacion de la IA se adapta segun el modo de persona.
 Modos disponibles: `gentleman` (detallado, pedagogico), `neutral` (factual),
-`conciso` (minimalista). Configurar via `ANTIGRAVITY_PERSONA` env var o
-`.antigravity/config.json`. Ver `.claude/rules/persona.md` para detalles.
+`conciso` (minimalista). Configurar el runtime via `ANTIGRAVITY_PERSONA`.
+`personaConfig` en `.antigravity/config.json` es metadata del adaptador y no
+reemplaza la variable de entorno. Ver `.claude/rules/persona.md` para detalles.
 
-### Runtime MCP-first
+### Nexus discovery (MCP-first)
 
-```
-.agent/
-  agents/ skills/ skills-custom/ workflows/
-  scripts/ core/ mcp/ plugins/
-.claude/
-  settings.json hooks/ rules/
-.antigravity/
-  config.json sdk/ ai_manifest.json rules.md
-```
+- Nexus is the shared control plane. Its small, versioned client adapter lives at
+  `.antigravity/nexus-client.json`.
+- Discover the live contract through `GET /v1/nexus/manifest`; authenticate only
+  through the credential reference declared by the adapter. Never copy a token
+  into this document or into generated client configuration.
+- Connect through the single MCP broker named `antigravity`. Start with
+  `antigravity_search`, inspect with `antigravity_describe`, then run the selected
+  agent or skill.
+- Agents and skills remain in Nexus and are loaded on demand. Do not bulk-copy
+  the catalog into this project. An offline bundle is an explicit opt-in.
+- Local and web gateways expose the same adapter contract, so changing transport
+  does not change how the client discovers capabilities.
 
 ### Clientes compatibles
 
@@ -496,7 +500,10 @@ Modos disponibles: `gentleman` (detallado, pedagogico), `neutral` (factual),
 - Windsurf: `.windsurf/mcp.json` + `.windsurfrules`
 - VS Code / Roo / Cline: `.vscode/mcp.json` y `.vscode/cline_mcp_settings.json`
 - Zed: `.zed/settings.json`
-- Cualquier IA/IDE con MCP: `.mcp.json` y `.antigravity/ai_manifest.json`
+- OpenCode: `opencode.json`
+- Cualquier IA/IDE con MCP: `.mcp.json` y `.antigravity/nexus-client.json`
+
+### SDK
 
 ### SDK Python
 
@@ -506,11 +513,12 @@ client = Client()
 result = client.run("explorer", "analiza el repo")
 ```
 
-### Memoria
+### Memoria y reglas
 
-- Memoria MCP: `antigravity-memory` (mem0)
+- Memoria MCP: se descubre como conector del broker; no es un servidor separado.
 - Memoria de proyecto: `ESTADO_PROYECTO.md`
-- Reglas compartidas: `.claude/rules/` y `.antigravity/rules.md`
+- Reglas efectivas: manifiesto Nexus, reglas globales editables y reglas locales
+  del proyecto. Las reglas locales tienen precedencia cuando son mas estrictas.
 
 <!-- ANTIGRAVITY-END -->
 ---

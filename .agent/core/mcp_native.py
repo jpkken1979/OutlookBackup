@@ -214,12 +214,12 @@ class MCPAgentRegistry:
             cls._instance._wrappers = {}
         return cls._instance
 
-    def register_agent(self, name: str, description: str, parameters: dict = None):
+    def register_agent(self, name: str, description: str, parameters: dict = None) -> None:
         """Metodo para compatibilidad con tests."""
 
         # Crear un dummy agent para el wrapper
         class DummyAgent:
-            def __init__(self, name, role, goal):
+            def __init__(self, name: str, role: str, goal: str):
                 self.identity = type("obj", (object,), {"name": name, "role": role, "goal": goal})
                 self.capabilities = type("obj", (object,), {"domains": []})
                 self.intelligence = None
@@ -297,7 +297,7 @@ def expose_agent_as_mcp(agent: AntigravityAgent) -> MCPToolDefinition:
     return registry.register(agent)
 
 
-def mcp_exportable(cls):
+def mcp_exportable(cls: type[AntigravityAgent]) -> type[AntigravityAgent]:
     """
     Decorador que hace a una clase de agente exportable como MCP.
 
@@ -313,11 +313,11 @@ def mcp_exportable(cls):
     original_init = cls.__init__
 
     @wraps(original_init)
-    def new_init(self, *args, **kwargs):
+    def new_init(self: AntigravityAgent, *args, **kwargs) -> None:
         original_init(self, *args, **kwargs)
         self._mcp_exposed = False
 
-    def expose_as_mcp(self) -> MCPToolDefinition:
+    def expose_as_mcp(self: AntigravityAgent) -> MCPToolDefinition:
         """Exponer este agente como herramienta MCP."""
         if not self._mcp_exposed:
             tool = expose_agent_as_mcp(self)
@@ -417,7 +417,7 @@ if __name__ == "__main__":
 # =============================================================================
 
 
-async def main():
+async def main() -> None:
     """CLI para testing."""
     import argparse
 

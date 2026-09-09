@@ -31,6 +31,13 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+VALID_PROTOCOLS = frozenset(
+    {"anthropic_messages", "openai_chat", "openai_responses", "local_openai"}
+)
+VALID_TRANSPORTS = frozenset({"remote", "loopback", "native"})
+VALID_REMOTE_CONTROL = frozenset({"native_only", "current_session", "unsupported"})
+VALID_CATEGORIES = frozenset({"native", "cloud", "aggregator", "local", "bridge"})
+
 
 @dataclass(frozen=True)
 class ProviderConfig:
@@ -48,6 +55,14 @@ class ProviderConfig:
             ``provider_router.is_openai_compatible`` (openai => requiere traduccion).
         routable: Si el proxy lo puede activar como backend (default True). De aca deriva
             ``provider_switch.PROXY_ROUTABLE``.
+        auth_mode: Mecanismo de acceso mostrado por Nexus
+            (``oauth`` | ``oauth_bridge`` | ``api_key`` | ``local``).
+        setup_hint: Instruccion breve y segura para habilitar el provider.
+        protocol: Contrato de payload del upstream, mas preciso que ``wire``.
+        transport: Donde vive el upstream (remoto, loopback o cliente nativo).
+        remote_control: Compatibilidad con el Remote Control de la sesion actual.
+        category: Grupo de presentación en Nexus.
+        default_visible: Si Nexus muestra el provider en la lista compacta inicial.
     """
 
     id: str
@@ -59,6 +74,13 @@ class ProviderConfig:
     family: str = ""
     wire: str = "anthropic"
     routable: bool = True
+    auth_mode: str = "api_key"
+    setup_hint: str = ""
+    protocol: str = "anthropic_messages"
+    transport: str = "remote"
+    remote_control: str = "current_session"
+    category: str = "cloud"
+    default_visible: bool = False
 
 
 # Dict embebido de fallback: replica EXACTAMENTE el catalogo de
@@ -66,7 +88,53 @@ class ProviderConfig:
 # garantiza que ``provider_switch.PROVIDERS`` siempre tenga un valor valido. Mantener en
 # sync con el JSON (el test de paridad lo verifica).
 _EMBEDDED_PROVIDERS: dict[str, ProviderConfig] = {
-    "claude": ProviderConfig("claude", "Claude (Anthropic)", "", "", "claude-sonnet-4-6"),
+    "claude": ProviderConfig(
+        "claude",
+        "Claude (Anthropic)",
+        "",
+        "",
+        "claude-sonnet-4-6",
+        auth_mode="oauth",
+        setup_hint="Usa la sesión OAuth de Claude Code; no necesita API key.",
+        protocol="anthropic_messages",
+        transport="native",
+        remote_control="native_only",
+        category="native",
+        default_visible=True,
+    ),
+    "openai": ProviderConfig(
+        "openai",
+        "OpenAI API",
+        "https://api.openai.com/v1",
+        "OPENAI_API_KEY",
+        "gpt-4o",
+        ("gpt-4o", "gpt-4o-mini"),
+        wire="openai",
+        setup_hint=(
+            "Configura OPENAI_API_KEY. Este camino usa Chat Completions; "
+            "GPT-5.6 Sol requiere el flujo Responses/Codex."
+        ),
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="cloud",
+        default_visible=False,
+    ),
+    "gemini": ProviderConfig(
+        "gemini",
+        "Google Gemini",
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        "GEMINI_API_KEY",
+        "gemini-3.6-flash",
+        ("gemini-3.6-flash",),
+        wire="openai",
+        setup_hint="Configura GEMINI_API_KEY desde Google AI Studio.",
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="cloud",
+        default_visible=False,
+    ),
     "minimax": ProviderConfig(
         "minimax",
         "MiniMax",
@@ -84,6 +152,11 @@ _EMBEDDED_PROVIDERS: dict[str, ProviderConfig] = {
             "MiniMax-M2",
         ),
         family="MiniMax",
+        protocol="anthropic_messages",
+        transport="remote",
+        remote_control="current_session",
+        category="cloud",
+        default_visible=False,
     ),
     "zai": ProviderConfig(
         "zai",
@@ -102,6 +175,71 @@ _EMBEDDED_PROVIDERS: dict[str, ProviderConfig] = {
             "glm-4.5-air",
         ),
         family="glm",
+        protocol="anthropic_messages",
+        transport="remote",
+        remote_control="current_session",
+        category="cloud",
+        default_visible=False,
+    ),
+    "deepseek": ProviderConfig(
+        "deepseek",
+        "DeepSeek",
+        "https://api.deepseek.com",
+        "DEEPSEEK_API_KEY",
+        "deepseek-v4-pro",
+        ("deepseek-v4-pro", "deepseek-v4-flash"),
+        wire="openai",
+        setup_hint="Configura DEEPSEEK_API_KEY; usa modelos V4 vigentes.",
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="cloud",
+        default_visible=False,
+    ),
+    "groq": ProviderConfig(
+        "groq",
+        "Groq",
+        "https://api.groq.com/openai/v1",
+        "GROQ_API_KEY",
+        "openai/gpt-oss-120b",
+        ("openai/gpt-oss-120b", "llama-3.3-70b-versatile"),
+        wire="openai",
+        setup_hint="Configura GROQ_API_KEY desde Groq Console.",
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="cloud",
+        default_visible=False,
+    ),
+    "mistral": ProviderConfig(
+        "mistral",
+        "Mistral AI",
+        "https://api.mistral.ai/v1",
+        "MISTRAL_API_KEY",
+        "mistral-large-latest",
+        ("mistral-large-latest", "mistral-small-latest"),
+        wire="openai",
+        setup_hint="Configura MISTRAL_API_KEY desde La Plateforme.",
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="cloud",
+        default_visible=False,
+    ),
+    "xai": ProviderConfig(
+        "xai",
+        "xAI",
+        "https://api.x.ai/v1",
+        "XAI_API_KEY",
+        "grok-4.5",
+        ("grok-4.5",),
+        wire="openai",
+        setup_hint="Configura XAI_API_KEY desde xAI Console.",
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="cloud",
+        default_visible=False,
     ),
     "nvidia": ProviderConfig(
         "nvidia",
@@ -111,9 +249,96 @@ _EMBEDDED_PROVIDERS: dict[str, ProviderConfig] = {
         "nvidia/llama-3.1-nemotron-70b-instruct",
         wire="openai",
         routable=True,
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="cloud",
+        default_visible=False,
+    ),
+    "cerebras": ProviderConfig(
+        "cerebras",
+        "Cerebras Inference",
+        "https://api.cerebras.ai/v1",
+        "CEREBRAS_API_KEY",
+        "gpt-oss-120b",
+        ("gpt-oss-120b", "zai-glm-4.7"),
+        wire="openai",
+        setup_hint="Configura CEREBRAS_API_KEY desde Cerebras Cloud.",
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="cloud",
+        default_visible=False,
+    ),
+    "together": ProviderConfig(
+        "together",
+        "Together AI",
+        "https://api.together.xyz/v1",
+        "TOGETHER_API_KEY",
+        "Qwen/Qwen3.5-9B",
+        (
+            "Qwen/Qwen3.5-9B",
+            "moonshotai/Kimi-K2.6",
+            "deepseek-ai/DeepSeek-V4-Pro",
+        ),
+        wire="openai",
+        setup_hint="Configura TOGETHER_API_KEY; revisa deprecaciones del catálogo.",
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="cloud",
+        default_visible=False,
+    ),
+    "fireworks": ProviderConfig(
+        "fireworks",
+        "Fireworks AI",
+        "https://api.fireworks.ai/inference/v1",
+        "FIREWORKS_API_KEY",
+        "accounts/fireworks/models/kimi-k2-instruct-0905",
+        ("accounts/fireworks/models/kimi-k2-instruct-0905",),
+        wire="openai",
+        setup_hint="Configura FIREWORKS_API_KEY desde Fireworks AI.",
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="cloud",
+        default_visible=False,
+    ),
+    "huggingface": ProviderConfig(
+        "huggingface",
+        "Hugging Face Router",
+        "https://router.huggingface.co/v1",
+        "HF_TOKEN",
+        "openai/gpt-oss-120b:fastest",
+        (
+            "openai/gpt-oss-120b:fastest",
+            "deepseek-ai/DeepSeek-V4-Pro:fastest",
+        ),
+        wire="openai",
+        setup_hint=(
+            "Configura HF_TOKEN con permiso para Inference Providers; "
+            "puedes usar sufijos :fastest, :cheapest o :preferred."
+        ),
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="aggregator",
+        default_visible=False,
     ),
     "ollama": ProviderConfig(
-        "ollama", "Ollama (local)", "http://localhost:11434", "", "llama3", wire="openai"
+        "ollama",
+        "Ollama (local)",
+        "http://localhost:11434",
+        "",
+        "llama3",
+        wire="openai",
+        auth_mode="local",
+        setup_hint="Inicia Ollama y carga un modelo de chat con soporte de herramientas.",
+        protocol="local_openai",
+        transport="loopback",
+        remote_control="current_session",
+        category="local",
+        default_visible=True,
     ),
     "lmstudio": ProviderConfig(
         "lmstudio",
@@ -122,14 +347,92 @@ _EMBEDDED_PROVIDERS: dict[str, ProviderConfig] = {
         "",
         "lmstudio-model",
         wire="openai",
+        auth_mode="local",
+        setup_hint="Inicia el servidor local OpenAI-compatible de LM Studio.",
+        protocol="local_openai",
+        transport="loopback",
+        remote_control="current_session",
+        category="local",
+        default_visible=True,
     ),
     "opencodex": ProviderConfig(
         "opencodex",
-        "OpenCodex Bridge (opcional)",
+        "OpenAI / Codex OAuth",
         "http://127.0.0.1:10100/v1",
         "",
-        "default",
+        "gpt-5.6-sol",
+        (
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+            "gpt-5.3-codex-spark",
+        ),
         wire="openai",
+        auth_mode="oauth_bridge",
+        setup_hint=(
+            "Usa el inicio de sesión ChatGPT de Codex mediante el puente local "
+            "OpenCodex; requiere que el servicio escuche en :10100."
+        ),
+        # El router actual envia /v1/chat/completions. Declarar Responses sin
+        # un adaptador real haria que la UI prometiera una compatibilidad falsa.
+        protocol="openai_chat",
+        transport="loopback",
+        remote_control="current_session",
+        category="bridge",
+        default_visible=True,
+    ),
+    "antigravity": ProviderConfig(
+        "antigravity",
+        "Google Antigravity (OAuth)",
+        "http://127.0.0.1:10100/v1",
+        "",
+        "google-antigravity/gemini-3.6-flash",
+        (
+            "google-antigravity/gemini-3.6-flash",
+            "google-antigravity/gemini-3.1-pro",
+            "google-antigravity/claude-sonnet-4-6",
+            "google-antigravity/claude-opus-4-6-thinking",
+            "google-antigravity/gpt-oss-120b-medium",
+        ),
+        family="google-antigravity",
+        wire="openai",
+        auth_mode="oauth_bridge",
+        setup_hint=(
+            "Inicia OAuth de Google Antigravity desde OpenCodex. Nexus no guarda ni "
+            "muestra el token; esta integración externa puede estar sujeta a las "
+            "condiciones de Google."
+        ),
+        protocol="openai_chat",
+        transport="loopback",
+        remote_control="current_session",
+        category="bridge",
+        default_visible=False,
+    ),
+    "github-copilot": ProviderConfig(
+        "github-copilot",
+        "GitHub Copilot (OAuth)",
+        "http://127.0.0.1:10100/v1",
+        "",
+        "github-copilot/claude-sonnet-4",
+        (
+            "github-copilot/claude-sonnet-4",
+            "github-copilot/gemini-2.5-pro",
+            "github-copilot/gpt-4.1",
+            "github-copilot/gpt-4.1-mini",
+            "github-copilot/gpt-4o",
+        ),
+        family="github-copilot",
+        wire="openai",
+        auth_mode="oauth_bridge",
+        setup_hint=(
+            "Inicia OAuth de GitHub Copilot desde OpenCodex. Nexus no guarda ni muestra el token."
+        ),
+        protocol="openai_chat",
+        transport="loopback",
+        remote_control="current_session",
+        category="bridge",
+        default_visible=False,
     ),
     "openrouter": ProviderConfig(
         "openrouter",
@@ -148,41 +451,46 @@ _EMBEDDED_PROVIDERS: dict[str, ProviderConfig] = {
             "deepseek/deepseek-v4-pro",
             "google/gemini-3.1-pro-preview",
         ),
-        family="openrouter",
+        family="",
         wire="openai",
         routable=True,
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="aggregator",
+        default_visible=True,
     ),
     "opencode": ProviderConfig(
         "opencode",
-        "OpenCode Go",
+        "OpenCode Go (remoto)",
         "https://opencode.ai/zen/go/v1",
         "OPENCODE_API_KEY",
-        "kimi-k2.7-code",
+        "glm-5.2",
         (
-            "kimi-k2.7-code",
             "glm-5.2",
+            "kimi-k3",
+            "kimi-k2.7-code",
+            "kimi-k2.6",
             "glm-5.1",
-            "glm-5",
-            "minimax-m3",
-            "minimax-m2.7",
-            "minimax-m2.5",
             "deepseek-v4-pro",
             "deepseek-v4-flash",
-            "qwen3.7-max",
-            "qwen3.7-plus",
-            "qwen3.6-plus",
-            "qwen3.5-plus",
-            "kimi-k2.6",
-            "kimi-k2.5",
             "mimo-v2.5-pro",
             "mimo-v2.5",
-            "mimo-v2-pro",
-            "mimo-v2-omni",
-            "hy3-preview",
+            "hy3",
+            "grok-4.5",
         ),
-        family="opencode",
+        family="",
         wire="openai",
         routable=True,
+        setup_hint=(
+            "Plan OpenCode Go. Nexus solo muestra los modelos Chat verificados; "
+            "usa OpenCode directo para los modelos Zen con otros protocolos."
+        ),
+        protocol="openai_chat",
+        transport="remote",
+        remote_control="current_session",
+        category="aggregator",
+        default_visible=True,
     ),
 }
 
@@ -273,9 +581,29 @@ def _embedded_catalog() -> dict:
             "base_url": cfg.base_url,
             "api_key_env": cfg.api_key_env,
             "family": cfg.family,
+            "auth_mode": cfg.auth_mode,
+            "setup_hint": cfg.setup_hint,
+            "protocol": cfg.protocol,
+            "transport": cfg.transport,
+            "remote_control": cfg.remote_control,
+            "category": cfg.category,
+            "default_visible": cfg.default_visible,
             "models": models,
         }
     return {"version": 1, "order": list(_EMBEDDED_PROVIDERS), "providers": providers}
+
+
+def _validated_enum(
+    entry: dict,
+    field: str,
+    allowed: frozenset[str],
+    default: str,
+) -> str:
+    """Valida un campo contractual del catalogo sin aceptar valores ambiguos."""
+    value = str(entry.get(field) or default)
+    if value not in allowed:
+        raise ValueError(f"{field} desconocido para provider: {value}")
+    return value
 
 
 def _provider_from_entry(pid: str, entry: dict) -> ProviderConfig:
@@ -310,16 +638,45 @@ def _provider_from_entry(pid: str, entry: dict) -> ProviderConfig:
     if not default_model and model_ids:
         default_model = model_ids[0]
 
+    wire = str(entry.get("wire") or "anthropic")
+    base_url = str(entry.get("base_url") or "")
+    default_protocol = "anthropic_messages" if wire == "anthropic" else "openai_chat"
+    default_transport = (
+        "native"
+        if not base_url
+        else "loopback"
+        if any(host in base_url for host in ("localhost", "127.0.0.1", "::1"))
+        else "remote"
+    )
+    default_remote_control = "native_only" if pid == "claude" else "current_session"
+
     return ProviderConfig(
         id=pid,
         name=str(entry.get("label") or pid),
-        base_url=str(entry.get("base_url") or ""),
+        base_url=base_url,
         api_key_env=str(entry.get("api_key_env") or ""),
         default_model=default_model,
         models=tuple(model_ids),
         family=str(entry.get("family") or ""),
-        wire=str(entry.get("wire") or "anthropic"),
+        wire=wire,
         routable=bool(entry.get("routable", True)),
+        auth_mode=str(entry.get("auth_mode") or "api_key"),
+        setup_hint=str(entry.get("setup_hint") or ""),
+        protocol=_validated_enum(entry, "protocol", VALID_PROTOCOLS, default_protocol),
+        transport=_validated_enum(entry, "transport", VALID_TRANSPORTS, default_transport),
+        remote_control=_validated_enum(
+            entry,
+            "remote_control",
+            VALID_REMOTE_CONTROL,
+            default_remote_control,
+        ),
+        category=_validated_enum(
+            entry,
+            "category",
+            VALID_CATEGORIES,
+            "cloud",
+        ),
+        default_visible=bool(entry.get("default_visible", False)),
     )
 
 
@@ -346,7 +703,15 @@ def build_providers(path: Path | None = None) -> dict[str, ProviderConfig]:
     for pid, entry in providers_raw.items():
         if not isinstance(pid, str) or not isinstance(entry, dict):
             continue
-        result[pid] = _provider_from_entry(pid, entry)
+        try:
+            result[pid] = _provider_from_entry(pid, entry)
+        except ValueError as exc:
+            logger.warning(
+                "Contrato invalido en provider %s (%s); usando catalogo embebido completo.",
+                pid,
+                exc,
+            )
+            return dict(_EMBEDDED_PROVIDERS)
 
     if not result:
         logger.warning("Catalogo de providers no produjo entradas validas; usando embebido.")

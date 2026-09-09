@@ -57,6 +57,8 @@ class MetricType(Enum):
 class TestStatus(Enum):
     """Status of an A/B test."""
 
+    __test__ = False  # Domain enum, not a pytest test container.
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"

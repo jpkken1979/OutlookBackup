@@ -449,6 +449,7 @@ class AgentObservatory:
         try:
             self._subscribers.remove(queue)
         except ValueError:
+            # ponytail: queue already removed (double-unsubscribe); no-op is correct.
             pass
 
     # --------------------------------------------------------

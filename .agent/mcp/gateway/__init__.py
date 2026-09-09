@@ -16,6 +16,7 @@ from ._mixin_observatory import _ObservatoryMixin
 from ._mixin_resilience import _ResilienceMixin
 from ._mixin_advanced import _AdvancedMixin
 from ._mixin_brain import _BrainMixin
+from ._mixin_plan_review import _PlanReviewMixin
 
 __all__ = [
     "_SystemMixin",
@@ -30,4 +31,5 @@ __all__ = [
     "_ResilienceMixin",
     "_AdvancedMixin",
     "_BrainMixin",
+    "_PlanReviewMixin",
 ]

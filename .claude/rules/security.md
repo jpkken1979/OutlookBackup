@@ -1,41 +1,22 @@
-# Regla: Seguridad
+# Regla: seguridad del repositorio
 
-Aplica a todo el código Python, TypeScript y Bash del repositorio.
+- Nunca hardcodear, imprimir o documentar secrets, tokens o claves privadas.
+- No añadir nuevos secretos al historial Git.
+- `.env` es una excepción histórica intencional de este repo privado: no mostrar
+  su contenido, copiarlo ni cambiar su política durante una tarea ajena. Sacarlo
+  de Git requiere plan de migración, rotación y aprobación del propietario.
+- Validar y normalizar entradas externas.
+- Resolver y comprobar paths antes de I/O sensible, incluidos symlinks y reparse
+  points.
+- Evitar `shell=True` y concatenación de comandos con datos no confiables.
+- Sanitizar errores que crucen límites de confianza.
+- Aplicar autenticación, CORS y rate limiting según la exposición real.
 
-## Obligatorio
+## Tauri
 
-- **NUNCA** hardcodear secrets, tokens o API keys en código fuente — usar variables de entorno
-- **NUNCA** usar `shell=True` en subprocess — siempre `shlex.split()` + `shell=False`
-- `.env` puede commitearse SOLO en este repo porque es **privado** y la decisión está
-  documentada explícitamente en `.gitignore`. Para forks, repos
-  públicos o cualquier mirror externo, sacar `.env` del tracking inmediatamente con
-  `git rm --cached .env` y rotar todos los tokens. `.env.example` sigue siendo la
-  plantilla pública sin secretos.
-- NotebookLM usa política `private_repo_trusted` en este repo privado: reportes
-  internos, Excel, DBs de trabajo y documentos de nómina pueden subirse/trackearse
-  sin repetir advertencias de "datos sensibles". Mantener bloqueos solo para
-  credenciales técnicas reales: cookies, claves privadas, tokens embebidos y
-  archivos de entorno fuera de la decisión explícita del repo.
-- **NUNCA** borrar ni sobreescribir snapshots de cuentas Codex en `~/.codex/accounts/`
-  sin backup explícito. Mantener `index.json` y los `*.json` de cuentas para permitir
-  switch inmediato entre perfiles en Nexus.
-- Validar y sanear inputs del usuario antes de cualquier procesamiento
-- Datos sensibles UNS (`UNS_BANK_*`, `UNS_DISPATCH_LICENSE`) solo en env vars
-- IPC inputs validados en el preload bridge antes de llegar al proceso principal
-- Gateway valida paths para prevenir directory traversal
+- Validar inputs de comandos Rust y respuestas enviadas al renderer.
+- Mantener capabilities y acceso filesystem en mínimo privilegio.
+- No reintroducir instrucciones Electron/preload: Nexus activo es Tauri 2.
 
-## Patrón correcto para subprocess
-
-```python
-# MAL
-subprocess.run(command, shell=True)
-
-# BIEN
-import shlex
-result = subprocess.run(shlex.split(command), shell=False, capture_output=True)
-```
-
-## Electron
-
-- `contextIsolation: true`, `nodeIntegration: false` siempre
-- Solo IPC a través del bridge de preload — nunca exponer Node APIs directamente
+Antes de tocar credenciales, certificados, auth o distribución, leer la guía del
+dominio y registrar PASS/SKIP sin revelar valores sensibles.

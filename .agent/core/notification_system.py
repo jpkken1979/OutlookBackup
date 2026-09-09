@@ -143,9 +143,11 @@ class NotificationSystem:
                             filters=config.get("filters", []),
                         )
                     except ValueError:
+                        # ponytail: nombre de canal desconocido en el config
+                        # persistido — se omite ese canal, el resto se carga igual.
                         pass
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("No se pudo cargar la configuración de notificaciones: %s", e)
 
     def _setup_default_channels(self) -> None:
         """Configurar canales por defecto"""
@@ -278,7 +280,8 @@ class NotificationSystem:
                 timeout=5,
             )
         except Exception:
-            # Fallback a consola
+            # ponytail: notify-send no disponible (no-Linux o no instalado) —
+            # la notificación de consola ya la maneja el caller por separado.
             pass
 
     def _send_slack(self, notification: Notification) -> None:
@@ -376,8 +379,8 @@ class NotificationSystem:
         try:
             with urllib.request.urlopen(req, timeout=10) as response:
                 return response.read()
-        except urllib.error.URLError:
-            pass
+        except urllib.error.URLError as e:
+            logger.warning("No se pudo entregar la notificación HTTP a %s: %s", url, e)
 
     def subscribe(self, event: str, callback: Callable[[Notification], None]) -> None:
         """Suscribirse a eventos de notificación"""
@@ -390,14 +393,16 @@ class NotificationSystem:
         for callback in self.subscribers.get("all", []):
             try:
                 callback(notification)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Subscriber callback falló para evento 'all': %s", e)
 
         for callback in self.subscribers.get(notification.level.value, []):
             try:
                 callback(notification)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(
+                    "Subscriber callback falló para nivel '%s': %s", notification.level.value, e
+                )
 
     def get_history(
         self, level: NotificationLevel | None = None, source: str | None = None, limit: int = 50
@@ -414,19 +419,19 @@ class NotificationSystem:
         return result[-limit:]
 
     # Métodos de conveniencia
-    def info(self, title: str, message: str = "", **kwargs):
+    def info(self, title: str, message: str = "", **kwargs: Any) -> bool:
         return self.notify(title, message, NotificationLevel.INFO, **kwargs)
 
-    def success(self, title: str, message: str = "", **kwargs):
+    def success(self, title: str, message: str = "", **kwargs: Any) -> bool:
         return self.notify(title, message, NotificationLevel.SUCCESS, **kwargs)
 
-    def warning(self, title: str, message: str = "", **kwargs):
+    def warning(self, title: str, message: str = "", **kwargs: Any) -> bool:
         return self.notify(title, message, NotificationLevel.WARNING, **kwargs)
 
-    def error(self, title: str, message: str = "", **kwargs):
+    def error(self, title: str, message: str = "", **kwargs: Any) -> bool:
         return self.notify(title, message, NotificationLevel.ERROR, **kwargs)
 
-    def critical(self, title: str, message: str = "", **kwargs):
+    def critical(self, title: str, message: str = "", **kwargs: Any) -> bool:
         return self.notify(title, message, NotificationLevel.CRITICAL, **kwargs)
 
 
@@ -448,7 +453,7 @@ def get_notification_system() -> NotificationSystem:
 
 
 # Funciones de conveniencia globales
-def notify(title: str, message: str = "", level: str = "info", **kwargs):
+def notify(title: str, message: str = "", level: str = "info", **kwargs: Any) -> bool:
     """Enviar notificación rápida"""
     ns = get_notification_system()
     level_enum = NotificationLevel(level)

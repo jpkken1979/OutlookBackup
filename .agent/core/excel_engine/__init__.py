@@ -4,12 +4,8 @@ Single source of truth for all Excel parse/write/automate operations.
 Exposed via MCP stdio server and Gateway HTTP endpoints.
 """
 
-try:
-    from excel_engine.engine import ExcelEngine
-except ImportError:
-    ExcelEngine = None  # type: ignore[assignment,misc]
-
-from excel_engine.types import (
+from .engine import ExcelEngine
+from .types import (
     Backend,
     CellFormat,
     ErrorInfo,

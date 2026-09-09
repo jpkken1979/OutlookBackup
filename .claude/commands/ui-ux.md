@@ -1,6 +1,6 @@
-Activar el sistema definitivo de diseño UI/UX (ui-ux-superskill).
+Activar el sistema definitivo de diseño UI/UX (ui-ux-pro-max).
 
-Leer `.agent/skills/ui-ux-superskill/SKILL.md` y aplicar el flujo de 10 módulos:
+Leer `.agent/skills/ui-ux-pro-max/SKILL.md` y aplicar el flujo de 10 módulos:
 
 1. **Arquetipo** — Elegir dirección estética (Editorial, Brutalist, Minimalist, etc.)
 2. **Tokens** — Generar design tokens W3C (color OKLCH, spacing, typography)

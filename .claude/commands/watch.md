@@ -1,4 +1,6 @@
-Lanzar procesos en background con matching reactivo de patrones via MCP `antigravity-watcher`.
+Lanzar procesos en background con matching reactivo mediante los endpoints
+`http://127.0.0.1:4747/v1/watcher/*`. El adaptador MCP independiente se conserva
+como legacy interno y no se agrega a `.mcp.json`.
 
 ## Cuando usarlo
 
@@ -85,11 +87,10 @@ Lanzar procesos en background con matching reactivo de patrones via MCP `antigra
    (o inferilos por heuristica: si el comando es `make`, `pytest`, `npm run`, ya
    tenes defaults sensibles).
 
-4. Ejecuta `watch_spawn` y devolve el `watch_id` al usuario.
+4. Ejecuta `POST /v1/watcher/spawn` con la autenticación local y devuelve el `watch_id` al usuario.
 
-5. Si el usuario pide `status`, `tail`, `matches`, `kill`, `cleanup`, `stats`:
-   llama la tool MCP correspondiente y presenta el resultado de forma tabular
-   y breve.
+5. Para `status`, `tail`, `matches`, `kill`, `cleanup` o `stats`, usa el endpoint
+   `/v1/watcher/*` correspondiente y presenta el resultado de forma tabular y breve.
 
 ## Formato de presentacion
 
@@ -123,7 +124,7 @@ Estado individual:
 ## Reglas
 
 - Responder en espanol.
-- Usar las tools MCP directamente (no shell `bash run_in_background`).
+- Usar el daemon Watcher del gateway; no registrar otro servidor MCP.
 - Si el usuario no especifica `importance`, usar `high` para keywords de error.
 - Al spawnear, recordarle al usuario el `watch_id` y como ver tail/matches.
 - Si falla el spawn, no reintentar silenciosamente — mostrar el error y sugerir fix.

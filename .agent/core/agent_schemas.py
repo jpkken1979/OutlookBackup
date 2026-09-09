@@ -258,7 +258,7 @@ def validate_agent_task(func: Callable) -> Callable:
     """
 
     @functools.wraps(func)
-    async def wrapper(self, input: AgentInput | dict | str, **kwargs) -> AgentOutput:
+    async def wrapper(self: Any, input: AgentInput | dict | str, **kwargs) -> AgentOutput:
         import time
 
         start = time.perf_counter()
@@ -300,7 +300,7 @@ def validate_agent_task(func: Callable) -> Callable:
     return wrapper
 
 
-def validate_input(input_class: type[BaseModel]):
+def validate_input(input_class: type[BaseModel]) -> Callable[[Callable], Callable]:
     """
     Decorator to validate input with a specific schema.
 
@@ -312,7 +312,7 @@ def validate_input(input_class: type[BaseModel]):
 
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
-        async def wrapper(self, input: dict | BaseModel, **kwargs):
+        async def wrapper(self: Any, input: dict | BaseModel, **kwargs) -> Any:
             if isinstance(input, dict):
                 input = input_class(**input)
             elif not isinstance(input, input_class):

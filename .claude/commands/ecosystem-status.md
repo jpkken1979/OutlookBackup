@@ -10,7 +10,7 @@ Muestra el estado completo del ecosistema:
 3. **Skills**: contar por categoría (base, custom, plugins)
 4. **MCP Servers**: verificar cuáles están activos en `.mcp.json`
 5. **Tests**: ejecutar `make test-quick` y reportar resultados
-6. **Memoria**: verificar estado de antigravity-memory
+6. **Memoria**: verificar `/v1/mem0/stats` en el gateway
 7. **Nexus**: verificar si compila (`cd nexus-app && npm run ts:app`)
 
 Formato: tabla resumen con indicadores verde/rojo.

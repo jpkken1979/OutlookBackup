@@ -16,7 +16,7 @@ logger = logging.getLogger("antigravity.autonomous")
 
 # Default models per provider (models with good Tool Use support)
 _DEFAULT_MODELS = {
-    "anthropic": "claude-sonnet-4-20250514",
+    "anthropic": "claude-sonnet-4-6",
     "openai": "gpt-4o",
     "gemini": "gemini-2.0-flash",
     "ollama": "llama3.1",
@@ -57,6 +57,56 @@ def detect_best_provider(
         provider = LLMProvider(provider_override)
         model = model_override or _DEFAULT_MODELS.get(provider_override, "")
         return LLMConfig(provider=provider, model=model)
+
+    # A route selected by Nexus/Remote Control delegation has priority over
+    # ambient API keys. The provider id stays catalog-native (``zai``,
+    # ``minimax``, etc.) while this engine receives the compatible SDK family.
+    selected_provider = os.environ.get("ANTIGRAVITY_LLM_PROVIDER_ID", "").strip().lower()
+    if selected_provider and selected_provider != "claude":
+        try:
+            from .. import provider_switch
+
+            config = provider_switch.PROVIDERS.get(selected_provider)
+            if config is not None:
+                if config.wire == "anthropic":
+                    runtime_provider = LLMProvider.ANTHROPIC
+                elif selected_provider == "ollama":
+                    runtime_provider = LLMProvider.OLLAMA
+                else:
+                    runtime_provider = LLMProvider.OPENAI
+
+                api_key = None
+                if config.api_key_env:
+                    api_key = provider_switch.get_api_key_from_env(
+                        provider_switch.default_root(),
+                        config.api_key_env,
+                    )
+                    if not api_key:
+                        logger.warning(
+                            "Selected provider %s has no configured credential; "
+                            "falling back to environment detection.",
+                            selected_provider,
+                        )
+                        raise LookupError("provider credential unavailable")
+                elif runtime_provider == LLMProvider.OPENAI and config.transport == "loopback":
+                    # The OpenAI SDK requires a non-empty value even when the
+                    # local OAuth bridge authenticates upstream on its own.
+                    # This fixed placeholder is not a credential.
+                    api_key = "local-bridge"  # pragma: allowlist secret
+
+                model = (
+                    model_override
+                    or os.environ.get("ANTIGRAVITY_LLM_MODEL")
+                    or config.default_model
+                )
+                return LLMConfig(
+                    provider=runtime_provider,
+                    model=model,
+                    api_key=api_key,
+                    base_url=config.base_url or None,
+                )
+        except (ImportError, LookupError) as exc:
+            logger.debug("Delegation provider route unavailable: %s", exc)
 
     # Auto-detect from environment
     for provider_name, env_keys in _PROVIDER_ENV_KEYS:

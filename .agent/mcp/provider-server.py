@@ -5,6 +5,17 @@ Antigravity Provider Switch MCP Server
 Servidor MCP que expone la conmutacion del backend de Claude Code entre providers
 (Claude / MiniMax / GLM / NVIDIA / Ollama / LM Studio).
 
+NO BORRAR aunque `.mcp.json` no lo registre. Desde la migracion a broker v2
+(2026-07-27) el perfil por defecto es una sola entrada `antigravity`, asi que este
+server queda fuera. Pero sigue siendo parte del **perfil legacy de rollback**:
+`get_mcp_servers(..., legacy_profile=True)` lo genera como `antigravity-provider`
+(ver `mcp_injector/mcp_config.py:641`), que es la via de vuelta atras con
+`ANTIGRAVITY_MCP_LEGACY_PROFILE=1`.
+
+En el perfil normal la misma capacidad se consume por REST
+(`/v1/provider/{status,switch,disable,hotswap,refresh-models,reset}`) o desde el
+panel de Nexus.
+
 Permite que, desde cualquier chat, le pidas "cambia a MiniMax" y se ejecute como
 tool MCP — reusando exactamente la misma logica que el CLI y el endpoint del gateway
 (core.provider_switch), que a su vez replica provider_manager.rs de Nexus.

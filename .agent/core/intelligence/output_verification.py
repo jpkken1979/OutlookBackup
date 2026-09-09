@@ -5,9 +5,12 @@ Asegura calidad de outputs mediante verificaciones automaticas.
 """
 
 import ast
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class VerificationType(Enum):
@@ -241,8 +244,8 @@ class OutputVerification:
                         )
                     )
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("No se pudo parsear el código para el chequeo de seguridad: %s", e)
 
         return issues
 

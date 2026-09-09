@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Literal
 
-from excel_engine.types import Backend, SessionId, SessionInfo, SessionState
+from .types import Backend, SessionId, SessionInfo, SessionState
 
 logger = logging.getLogger(__name__)
 

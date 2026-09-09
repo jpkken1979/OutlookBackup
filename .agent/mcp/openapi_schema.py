@@ -186,6 +186,33 @@ def build_openapi_schema(
                         "include_prompt": {"type": "boolean", "default": False},
                     },
                 },
+                "GlobalRule": {
+                    "type": "object",
+                    "required": ["id", "title", "enabled", "scope", "text"],
+                    "properties": {
+                        "id": {"type": "string", "maxLength": 64},
+                        "title": {"type": "string", "maxLength": 120},
+                        "enabled": {"type": "boolean"},
+                        "scope": {
+                            "type": "string",
+                            "enum": ["universal", "workspace"],
+                        },
+                        "text": {"type": "string", "maxLength": 2000},
+                    },
+                },
+                "GlobalRulesUpdate": {
+                    "type": "object",
+                    "required": ["expected_version", "rules"],
+                    "properties": {
+                        "expected_version": {"type": "integer", "minimum": 1},
+                        "rules": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 50,
+                            "items": {"$ref": "#/components/schemas/GlobalRule"},
+                        },
+                    },
+                },
             },
         },
         "paths": {
@@ -193,6 +220,48 @@ def build_openapi_schema(
             "/health": {"get": {"summary": "Liveness check", "tags": ["Gateway"]}},
             "/ready": {"get": {"summary": "Readiness check", "tags": ["Gateway"]}},
             "/metrics": {"get": {"summary": "Metricas Prometheus", "tags": ["Observability"]}},
+            "/nexus/manifest": {
+                "get": {
+                    "summary": "Descubrir capacidades y endpoints de Nexus",
+                    "tags": ["Gateway"],
+                }
+            },
+            "/rules/global": {
+                "get": {
+                    "summary": "Leer reglas globales editables",
+                    "tags": ["Rules"],
+                },
+                "put": {
+                    "summary": "Actualizar reglas globales con control de versión",
+                    "tags": ["Rules"],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/GlobalRulesUpdate"}
+                            }
+                        },
+                    },
+                },
+            },
+            "/routing/turns": {
+                "get": {
+                    "summary": "Listar checkpoints redactados y continuidad de turnos",
+                    "tags": ["Routing"],
+                    "parameters": [
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "schema": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 500,
+                                "default": 100,
+                            },
+                        }
+                    ],
+                }
+            },
             "/agents": {
                 "get": {
                     "summary": "Listar agentes",
@@ -299,6 +368,12 @@ def build_openapi_schema(
                             "schema": {"type": "integer", "default": 50},
                         },
                     ],
+                }
+            },
+            "/skills/reload": {
+                "post": {
+                    "summary": "Refrescar el catálogo de skills",
+                    "tags": ["Skills"],
                 }
             },
             "/skills/{name}": {"get": {"summary": "Leer SKILL.md", "tags": ["Skills"]}},
